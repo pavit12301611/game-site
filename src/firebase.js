@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
+import { GoogleAuthProvider, getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 
 let app = null;
@@ -23,6 +23,12 @@ if (rawConfig) {
   }
 } else {
   firebaseError = 'Firebase is not configured yet. You can still browse and practice locally.';
+}
+
+export function createGoogleProvider() {
+  const provider = new GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: 'select_account' });
+  return provider;
 }
 
 export { app, auth, db, firebaseError };

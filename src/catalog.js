@@ -482,3 +482,171 @@ export function getQuizQuestion(index) {
 export function getMemoryCardIcon(index) {
   return memoryIcons[index % memoryIcons.length];
 }
+
+export const GAME_COVERS = {
+  Arcade: '/images/cover-arcade.jpg',
+  Strategy: '/images/cover-strategy.jpg',
+  Puzzle: '/images/cover-puzzle.jpg',
+  Party: '/images/cover-party.jpg',
+  Multiplayer: '/images/cover-multiplayer.jpg',
+  Hero: '/images/hero-arcade.jpg',
+};
+
+const ENGINE_LABELS = {
+  line: 'GRID TACTICS',
+  drop: 'DROP BOARD',
+  memory: 'MEMORY MATRIX',
+  race: 'SPEED SPRINT',
+  rps: 'QUICK DUEL',
+  quiz: 'BRAIN ROUND',
+  maze: 'LABYRINTH DASH',
+  battle: 'FLEET RADAR',
+  rally: 'COURT VOLLEY',
+  code: 'CIPHER LOGIC',
+};
+
+const FOCAL_POSITIONS = [
+  'center 40%',
+  '35% 50%',
+  '65% 45%',
+  '50% 62%',
+  '42% 35%',
+  '58% 58%',
+];
+
+export function getGameArtwork(gameOrId) {
+  const game = typeof gameOrId === 'string' ? getGame(gameOrId) : gameOrId;
+  if (!game) {
+    return {
+      src: GAME_COVERS.Arcade,
+      focal: 'center center',
+      engineLabel: 'ARCADE',
+    };
+  }
+  const index = Math.max(0, GAMES.findIndex((entry) => entry.id === game.id));
+  let src = GAME_COVERS[game.category] || GAME_COVERS.Arcade;
+  if (game.engine === 'rally' || (game.engine === 'battle' && game.category === 'Arcade')) {
+    src = index % 2 === 0 ? GAME_COVERS.Multiplayer : src;
+  }
+  return {
+    src,
+    focal: FOCAL_POSITIONS[index % FOCAL_POSITIONS.length],
+    engineLabel: ENGINE_LABELS[game.engine] || 'ARCADE MODE',
+  };
+}
+
+export function getGameGuide(gameOrId) {
+  const game = typeof gameOrId === 'string' ? getGame(gameOrId) : gameOrId;
+  if (!game) return null;
+  const opts = game.options || {};
+
+  switch (game.engine) {
+    case 'line':
+      return {
+        mode: `${opts.size}×${opts.size} Tactical Grid`,
+        goal: `Line up ${opts.connect} of your marks horizontally, vertically, or diagonally before your rivals.`,
+        controls: 'Click or tap any empty grid cell when it is your turn.',
+        rules: `2–3 players rotate turns on the shared board. Filling every cell without ${opts.connect} in a row results in a draw.`,
+        shortcut: 'Tap / Click cell',
+      };
+    case 'drop':
+      return {
+        mode: `${opts.cols}×${opts.rows} Gravity Board`,
+        goal: `Connect ${opts.connect} of your tokens in a row (horizontal, vertical, or diagonal).`,
+        controls: 'Click or tap a column drop arrow (↓) at the top to drop a token into the lowest open slot.',
+        rules: 'Players alternate turns. Full columns lock automatically.',
+        shortcut: 'Tap / Click column ↓',
+      };
+    case 'memory':
+      return {
+        mode: `${opts.pairs} Pairs (${opts.pairs * 2} Cards)`,
+        goal: 'Uncover and collect the most matching symbol pairs by the time the deck is cleared.',
+        controls: 'Click or tap two face-down (?) cards on your turn to reveal them.',
+        rules: 'Scoring a match awards +1 point and grants an immediate bonus turn! Mismatches pass the turn.',
+        shortcut: 'Tap / Click 2 cards',
+      };
+    case 'race':
+      return {
+        mode: `First to ${opts.target} Boosts`,
+        goal: `Sprint ahead of the lobby and be the first player to fill your meter to ${opts.target}.`,
+        controls: 'Click or tap the BOOST button rapidly, or press the Spacebar on your keyboard.',
+        rules: 'Simultaneous real-time race—no turns! Every tap adds +1 boost to your lane.',
+        shortcut: 'Spacebar or Tap BOOST',
+      };
+    case 'rps': {
+      if (opts.mode === 'coin') {
+        return {
+          mode: `Best-of Coin Clash (First to ${opts.target})`,
+          goal: `Be the first player to score ${opts.target} round points by calling the coin flip.`,
+          controls: 'Click or tap Heads or Tails to lock in your secret call for the round.',
+          rules: 'Reveals once all players lock in. A sole correct caller wins +1 point for the round.',
+          shortcut: 'Tap Heads / Tails',
+        };
+      }
+      if (opts.mode === 'dice') {
+        return {
+          mode: `High-Roll Duel (First to ${opts.target})`,
+          goal: `Reach ${opts.target} points by locking in the highest die face in each showdown.`,
+          controls: 'Click or tap a die value (1–6) to lock in your roll for the round.',
+          rules: 'Choices reveal simultaneously once everyone locks in. An uncontested high roll scores +1 point.',
+          shortcut: 'Tap Roll 1–6',
+        };
+      }
+      return {
+        mode: `Simultaneous Duel (First to ${opts.target})`,
+        goal: `Outread your opponents and be the first to win ${opts.target} rounds.`,
+        controls: 'Click or tap Rock (✊), Paper (✋), or Scissors (✌) to lock in your hidden move.',
+        rules: 'Rock beats Scissors, Scissors beats Paper, Paper beats Rock. Reveals when all players lock in.',
+        shortcut: 'Tap Rock / Paper / Scissors',
+      };
+    }
+    case 'quiz':
+      return {
+        mode: `${opts.rounds}-Round Trivia Showdown`,
+        goal: `Score the most correct answers across ${opts.rounds} fast-paced questions.`,
+        controls: 'Click or tap answer choice A, B, C, or D, then press Next question once all answers reveal.',
+        rules: 'Everyone answers each question before results reveal. Each correct pick earns +1 point.',
+        shortcut: 'Tap A / B / C / D',
+      };
+    case 'maze':
+      return {
+        mode: `${opts.width}×${opts.height} Labyrinth Race`,
+        goal: 'Navigate around the walls and be the first player to tag the glowing star gate (✦).',
+        controls: 'Use the on-screen directional buttons (↑ ← ↓ →) or your keyboard Arrow keys.',
+        rules: 'Simultaneous movement—no turn waiting! Dark tiles are solid walls.',
+        shortcut: 'Arrow keys ↑ ← ↓ →',
+      };
+    case 'battle':
+      return {
+        mode: `${opts.board}×${opts.board} Radar (${opts.fleet} Fleet Units)`,
+        goal: `Locate and sink all ${opts.fleet} hidden fleet cells on every rival's radar grid.`,
+        controls: 'Select a rival under FIRE AT, then click or tap an untargeted radar square on your turn.',
+        rules: 'Turns rotate after each shot. Direct hits mark ✹ and misses mark ·.',
+        shortcut: 'Select target + Tap cell',
+      };
+    case 'rally':
+      return {
+        mode: `Court Rally (First to ${opts.target})`,
+        goal: `Trade clean volleys and be the first player to reach ${opts.target} points.`,
+        controls: 'On your turn, click or tap UP (↗), CENTER (→), or DOWN (↘) to return the puck.',
+        rules: 'Players alternate volleys in turn order until one player hits the target score.',
+        shortcut: 'Tap UP / CENTER / DOWN',
+      };
+    case 'code':
+      return {
+        mode: `${opts.digits}-Digit Cipher (${opts.maxGuesses} Max Guesses)`,
+        goal: `Crack the secret ${opts.digits}-digit code (digits 0–5) before the ${opts.maxGuesses}-guess limit runs out.`,
+        controls: 'Click or tap each digit slot to cycle 0–5, then press Try code on your turn.',
+        rules: 'EXACT = right digit in the right position; NEAR = right digit in a different position.',
+        shortcut: 'Cycle digits 0–5 + Try code',
+      };
+    default:
+      return {
+        mode: 'Arcade Match',
+        goal: game.blurb,
+        controls: 'Use the on-screen controls to make your move.',
+        rules: 'Follow the turn indicator at the top of the stage.',
+        shortcut: 'Tap / Click',
+      };
+  }
+}

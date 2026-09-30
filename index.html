@@ -3,10 +3,23 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#07152d" />
+    <meta name="theme-color" content="#07152d" id="meta-theme-color" />
     <meta name="description" content="PSD-gaming — a pocket-sized retro arcade for friends, wherever they are." />
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='11' fill='%23065ed2'/%3E%3Cpath d='M10 15 15 8h10l5 7-2 16H12z' fill='white'/%3E%3Cpath d='M11 16h18l-2 8H13z' fill='%23081c38'/%3E%3C/svg%3E" />
     <title>PSD-gaming — Play together, anywhere</title>
+    <script>
+      (function () {
+        try {
+          var pref = localStorage.getItem('psd-theme-preference');
+          var sysLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
+          var theme = pref === 'light' || pref === 'dark' ? pref : sysLight ? 'light' : 'dark';
+          document.documentElement.dataset.theme = theme;
+          document.documentElement.style.colorScheme = theme;
+          var meta = document.getElementById('meta-theme-color');
+          if (meta) meta.setAttribute('content', theme === 'light' ? '#f3f7ff' : '#07152d');
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="app"></div>
