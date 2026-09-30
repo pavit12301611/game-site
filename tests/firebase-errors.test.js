@@ -71,8 +71,8 @@ test('other Firestore codes get plain-language messages', () => {
 });
 
 test('API key and project setup problems say what to change', () => {
-  assert.match(describeFirebaseError(authError('auth/invalid-api-key')), /API key in VITE_FIREBASE_CONFIG.*redeploy/s);
-  assert.match(describeFirebaseError(authError('auth/api-key-not-valid.-please-pass-a-valid-api-key.')), /API key in VITE_FIREBASE_CONFIG/);
+  assert.match(describeFirebaseError(authError('auth/invalid-api-key')), /API key in VITE_FIREBASE_API_KEY.*redeploy/s);
+  assert.match(describeFirebaseError(authError('auth/api-key-not-valid.-please-pass-a-valid-api-key.')), /API key in VITE_FIREBASE_API_KEY/);
   assert.match(describeFirebaseError(authError('auth/configuration-not-found')), /Authentication.*Get started/);
   assert.match(describeFirebaseError(authError('auth/app-not-authorized')), /API key/);
   assert.match(describeFirebaseError(authError('auth/web-storage-unsupported')), /storage/);

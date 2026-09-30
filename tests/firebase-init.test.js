@@ -33,7 +33,7 @@ test('Firebase is not initialized at all when the config is missing', () => {
   assert.equal(result.db, null);
   assert.equal(getApps().length, 0, 'initializeApp must not run without a valid config');
   assert.equal(result.setup.status, 'missing');
-  assert.equal(result.setup.message, 'Firebase config is missing from this deployment. Add VITE_FIREBASE_CONFIG in Vercel and redeploy.');
+  assert.equal(result.setup.message, 'Firebase config is missing from this deployment. Add the VITE_FIREBASE_* variables (VITE_FIREBASE_API_KEY, VITE_FIREBASE_AUTH_DOMAIN, VITE_FIREBASE_PROJECT_ID, VITE_FIREBASE_APP_ID …) in Vercel and redeploy.');
   // production: a never-set variable is a warning, not an error
   assert.equal(logger.calls.warn.length, 1);
   assert.equal(logger.calls.error.length, 0);
@@ -114,5 +114,38 @@ test('the module-level exports report "not ready" when there is no Vite environm
   assert.equal(firebaseReady, false);
   assert.equal(firebaseSetup.status, 'missing');
   assert.equal(firebaseError, firebaseSetup.message);
-  assert.equal(firebaseError, 'Firebase config is missing from this deployment. Add VITE_FIREBASE_CONFIG in Vercel and redeploy.');
+  assert.equal(firebaseError, 'Firebase config is missing from this deployment. Add the VITE_FIREBASE_* variables (VITE_FIREBASE_API_KEY, VITE_FIREBASE_AUTH_DOMAIN, VITE_FIREBASE_PROJECT_ID, VITE_FIREBASE_APP_ID …) in Vercel and redeploy.');
+});
+
+test('an env object with one variable per field starts Firebase', () => {
+  const env = {
+    VITE_FIREBASE_API_KEY: VALID.apiKey,
+    VITE_FIREBASE_AUTH_DOMAIN: VALID.authDomain,
+    VITE_FIREBASE_PROJECT_ID: VALID.projectId,
+    VITE_FIREBASE_STORAGE_BUCKET: VALID.storageBucket,
+    VITE_FIREBASE_MESSAGING_SENDER_ID: VALID.messagingSenderId,
+    VITE_FIREBASE_APP_ID: VALID.appId,
+  };
+  const logger = recordingLogger();
+  const result = initializeFirebase(env, { logger });
+  assert.equal(result.ready, true);
+  assert.equal(result.app.options.projectId, 'psd-arcade-test');
+  assert.equal(result.app.options.apiKey, VALID.apiKey);
+  assert.equal(logger.calls.error.length + logger.calls.warn.length, 0);
+});
+
+test('an incomplete env object never reaches Firebase and names the missing variables', () => {
+  const logger = recordingLogger();
+  const result = initializeFirebase({ VITE_FIREBASE_API_KEY: VALID.apiKey }, { logger });
+  assert.equal(result.ready, false);
+  assert.equal(getApps().length, 0);
+  assert.equal(result.setup.code, 'missing-fields');
+  assert.match(result.setup.message, /VITE_FIREBASE_AUTH_DOMAIN, VITE_FIREBASE_PROJECT_ID, VITE_FIREBASE_APP_ID/);
+  assert.equal(logger.calls.error.length, 1);
+  assert.doesNotMatch(JSON.stringify(logger.calls), /test-api-key-123/);
+});
+
+test('an env object with the legacy VITE_FIREBASE_CONFIG keeps working', () => {
+  const result = initializeFirebase({ VITE_FIREBASE_CONFIG: JSON.stringify(VALID) }, { logger: recordingLogger() });
+  assert.equal(result.ready, true);
 });

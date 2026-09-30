@@ -13,6 +13,23 @@
 export const FIREBASE_CONFIG_ENV_NAME = 'VITE_FIREBASE_CONFIG';
 export const REQUIRED_FIREBASE_FIELDS = Object.freeze(['apiKey', 'authDomain', 'projectId', 'appId']);
 
+/**
+ * One environment variable per Firebase Web config field (the recommended setup on Vercel).
+ * Keys are the field names of the Firebase config object, values are the variable names.
+ * Only the four REQUIRED_FIREBASE_FIELDS have to be set; the rest are optional.
+ */
+export const FIREBASE_ENV_VARS = Object.freeze({
+  apiKey: 'VITE_FIREBASE_API_KEY',
+  authDomain: 'VITE_FIREBASE_AUTH_DOMAIN',
+  projectId: 'VITE_FIREBASE_PROJECT_ID',
+  storageBucket: 'VITE_FIREBASE_STORAGE_BUCKET',
+  messagingSenderId: 'VITE_FIREBASE_MESSAGING_SENDER_ID',
+  appId: 'VITE_FIREBASE_APP_ID',
+  measurementId: 'VITE_FIREBASE_MEASUREMENT_ID',
+});
+/** Every variable name the app reads (the per-field ones plus the legacy one-line JSON one). */
+export const FIREBASE_ENV_NAMES = Object.freeze([...Object.values(FIREBASE_ENV_VARS), FIREBASE_CONFIG_ENV_NAME]);
+
 const ENV = FIREBASE_CONFIG_ENV_NAME;
 
 // Key names that only exist in service-account key files / OAuth client files, never in a
@@ -83,18 +100,18 @@ function isPlaceholder(value) {
 
 function missingHint(dev) {
   return dev
-    ? 'Copy .env.example to .env.local, paste your Firebase Web app config as one line of JSON, then restart the dev server.'
-    : 'In Vercel: Project → Settings → Environment Variables → add it for the environment you are viewing (Production and/or Preview), then redeploy. Vite embeds VITE_* values at build time.';
+    ? 'Copy .env.example to .env.local, fill in the VITE_FIREBASE_* values from your Firebase Web app config, then restart the dev server.'
+    : 'In Vercel: Project → Settings → Environment Variables → add the VITE_FIREBASE_* variables for the environment you are viewing (Production and/or Preview), then redeploy. Vite embeds VITE_* values at build time.';
 }
 
 function invalidHint(dev) {
   return dev
-    ? 'Fix the value in .env.local and restart npm run dev.'
-    : 'Fix the value in Vercel → Project → Settings → Environment Variables, then redeploy. Vite embeds VITE_* values at build time.';
+    ? 'Fix the value(s) in .env.local and restart npm run dev.'
+    : 'Fix the value(s) in Vercel → Project → Settings → Environment Variables, then redeploy. Vite embeds VITE_* values at build time.';
 }
 
 /**
- * Parses the raw VITE_FIREBASE_CONFIG value.
+ * Parses the raw VITE_FIREBASE_CONFIG value (the legacy one-line JSON form).
  *
  * @param {unknown} rawValue  the raw env value (a string, or undefined when the variable is unset)
  * @param {{ dev?: boolean }} [options]  `dev` switches the fix instructions from "Vercel" to ".env.local"
@@ -108,7 +125,11 @@ function invalidHint(dev) {
  * }}
  *   `config` is only set when `status === 'ok'`. `message` is always safe to show or log.
  */
-export function parseFirebaseConfig(rawValue, { dev = false } = {}) {
+export function parseFirebaseConfig(rawValue, options = {}) {
+  return { ...parseJsonConfig(rawValue, options), source: 'json' };
+}
+
+function parseJsonConfig(rawValue, { dev = false } = {}) {
   const missing = (code, message) => ({
     status: 'missing', code, message, hint: missingHint(dev), config: null, missingFields: [...REQUIRED_FIREBASE_FIELDS],
   });
@@ -162,12 +183,29 @@ export function parseFirebaseConfig(rawValue, { dev = false } = {}) {
     return invalid('not-object', `${ENV} must be a JSON object such as {"apiKey":"…"}, not a string, number, list or null.`);
   }
 
+  return validateConfigObject(parsed, { dev, source: 'json' });
+}
+
+/**
+ * Validates a parsed config object. Shared by the one-line JSON path and the per-field
+ * variable path; `source` only changes which variable names the messages point at.
+ */
+function validateConfigObject(parsed, { dev, source }) {
+  const fromVars = source === 'env-vars';
+  const invalid = (code, message, extra = {}) => ({
+    status: 'invalid', code, message, hint: invalidHint(dev), config: null, missingFields: [], source, ...extra,
+  });
+  const nameOf = (field) => (fromVars ? FIREBASE_ENV_VARS[field] : field);
+
   const secretsInValue = findSecretMarkers(parsed);
-  if (secretsInValue.length) return secretResult(secretsInValue, dev);
+  if (secretsInValue.length) return { ...secretResult(secretsInValue, dev, fromVars ? 'The VITE_FIREBASE_* variables contain' : undefined), source };
 
   const missingFields = REQUIRED_FIREBASE_FIELDS.filter((field) => !isNonEmptyString(parsed[field]));
   if (missingFields.length) {
-    return invalid('missing-fields', `${ENV} is missing required field(s): ${missingFields.join(', ')}. Copy the complete Firebase Web app config from Firebase Console → Project settings → Your apps.`, { missingFields });
+    const message = fromVars
+      ? `Missing required Firebase variable(s): ${missingFields.map(nameOf).join(', ')}. Copy every value from Firebase Console → Project settings → Your apps → SDK setup and configuration.`
+      : `${ENV} is missing required field(s): ${missingFields.join(', ')}. Copy the complete Firebase Web app config from Firebase Console → Project settings → Your apps.`;
+    return invalid('missing-fields', message, { missingFields });
   }
 
   const config = { ...parsed };
@@ -175,13 +213,78 @@ export function parseFirebaseConfig(rawValue, { dev = false } = {}) {
 
   const placeholders = REQUIRED_FIREBASE_FIELDS.filter((field) => isPlaceholder(config[field]));
   if (placeholders.length) {
-    return invalid('placeholder-values', `${ENV} still contains placeholder text in: ${placeholders.join(', ')}. Replace it with the real values from Firebase Console → Project settings → Your apps.`);
+    const where = fromVars ? placeholders.map(nameOf).join(', ') : placeholders.join(', ');
+    return invalid('placeholder-values', `${fromVars ? 'Firebase variables' : ENV} still contain${fromVars ? '' : 's'} placeholder text in: ${where}. Replace it with the real values from Firebase Console → Project settings → Your apps.`);
   }
   if (!AUTH_DOMAIN_PATTERN.test(config.authDomain)) {
-    return invalid('bad-auth-domain', `${ENV} authDomain must be a bare host name such as your-project.firebaseapp.com, with no https:// and no path.`);
+    return invalid('bad-auth-domain', `${fromVars ? FIREBASE_ENV_VARS.authDomain : `${ENV} authDomain`} must be a bare host name such as your-project.firebaseapp.com, with no https:// and no path.`);
   }
 
-  return { status: 'ok', code: 'ok', message: '', hint: '', config, missingFields: [] };
+  return { status: 'ok', code: 'ok', message: '', hint: '', config, missingFields: [], source };
+}
+
+function wrappedInQuotes(value) {
+  return value.length >= 2 && /^(['"`])[\s\S]*\1$/.test(value);
+}
+
+/**
+ * Builds the config from one variable per field (VITE_FIREBASE_API_KEY, …).
+ * Returns null when none of them has a value, so the caller can fall back to the legacy JSON variable.
+ */
+function parseFieldVariables(env, { dev }) {
+  const values = {};
+  for (const [field, name] of Object.entries(FIREBASE_ENV_VARS)) {
+    const raw = env[name];
+    if (typeof raw !== 'string') continue;
+    const value = raw.replace(/^\uFEFF/, '').trim();
+    if (value) values[field] = value;
+  }
+  if (!Object.keys(values).length) return null;
+
+  const fail = (code, message, hint) => ({
+    status: 'invalid', code, message, hint: hint ?? invalidHint(dev), config: null, missingFields: [], source: 'env-vars',
+  });
+
+  const secretLabels = new Set();
+  for (const value of Object.values(values)) for (const label of findSecretMarkers(value)) secretLabels.add(label);
+  if (secretLabels.size) return { ...secretResult([...secretLabels], dev, 'The VITE_FIREBASE_* variables contain'), source: 'env-vars' };
+
+  const quoted = Object.keys(values).filter((field) => wrappedInQuotes(values[field]));
+  if (quoted.length) {
+    return fail('wrapped-in-quotes', `${quoted.map((field) => FIREBASE_ENV_VARS[field]).join(', ')} ${quoted.length > 1 ? 'are' : 'is'} wrapped in extra quotes. Paste the bare value without quotes.`);
+  }
+
+  return validateConfigObject(values, { dev, source: 'env-vars' });
+}
+
+/**
+ * Resolves the Firebase Web config from an env object (`import.meta.env` in the browser, the merged
+ * .env files + process.env at build time).
+ *
+ * Order: the per-field variables (VITE_FIREBASE_API_KEY, VITE_FIREBASE_AUTH_DOMAIN, …) win as soon as
+ * any of them has a value; otherwise the legacy one-line JSON VITE_FIREBASE_CONFIG is used; if neither
+ * is set the result is `missing`. The result has the same shape as parseFirebaseConfig, plus
+ * `source: 'env-vars' | 'json' | 'none'`.
+ */
+export function resolveFirebaseConfig(env, { dev = false } = {}) {
+  const source = env && typeof env === 'object' ? env : {};
+  const fromFields = parseFieldVariables(source, { dev });
+  if (fromFields) return fromFields;
+
+  if (source[ENV] === undefined || source[ENV] === null) {
+    return {
+      status: 'missing',
+      code: 'missing',
+      message: dev
+        ? `Firebase config is missing. Add the ${FIREBASE_ENV_VARS.apiKey}, ${FIREBASE_ENV_VARS.authDomain}, ${FIREBASE_ENV_VARS.projectId} and ${FIREBASE_ENV_VARS.appId} variables (and the other VITE_FIREBASE_* ones) to .env.local and restart npm run dev.`
+        : 'Firebase config is missing from this deployment. Add the VITE_FIREBASE_* variables (VITE_FIREBASE_API_KEY, VITE_FIREBASE_AUTH_DOMAIN, VITE_FIREBASE_PROJECT_ID, VITE_FIREBASE_APP_ID …) in Vercel and redeploy.',
+      hint: missingHint(dev),
+      config: null,
+      missingFields: [...REQUIRED_FIREBASE_FIELDS],
+      source: 'none',
+    };
+  }
+  return parseFirebaseConfig(source[ENV], { dev });
 }
 
 function isJson(text) {
@@ -193,11 +296,11 @@ function isJson(text) {
   }
 }
 
-function secretResult(labels, dev) {
+function secretResult(labels, dev, subject = `${ENV} contains`) {
   return {
     status: 'invalid',
     code: 'secret-detected',
-    message: `${ENV} contains credential-like data (${labels.join(', ')}). VITE_* values are embedded in the public browser bundle, so a service-account key or OAuth client secret must never be stored here. Remove it, keep only the Firebase Web app config, and rotate anything that was pasted.`,
+    message: `${subject} credential-like data (${labels.join(', ')}). VITE_* values are embedded in the public browser bundle, so a service-account key or OAuth client secret must never be stored here. Remove it, keep only the Firebase Web app config, and rotate anything that was pasted.`,
     hint: dev
       ? 'Remove the secret from .env.local, and rotate the credential if it was ever committed or shared.'
       : 'Rotate the exposed credential (Google Cloud Console → IAM & Admin → Service Accounts, or APIs & Services → Credentials), then redeploy with only the Firebase Web app config.',

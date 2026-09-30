@@ -58,7 +58,7 @@ const STATIC_MESSAGES = {
   'resource-exhausted': 'This Firebase project has reached its usage quota. Try again later.',
 };
 
-const INVALID_API_KEY = 'Firebase rejected the API key in VITE_FIREBASE_CONFIG. Copy the Web app config again from Firebase Console → Project settings → Your apps, update the variable in Vercel, and redeploy.';
+const INVALID_API_KEY = 'Firebase rejected the API key in VITE_FIREBASE_API_KEY. Copy the Web app config again from Firebase Console → Project settings → Your apps, update the variable in Vercel, and redeploy.';
 
 /**
  * @param {unknown} error  anything thrown by the Firebase SDK (or by app code)

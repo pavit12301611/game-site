@@ -46,7 +46,7 @@ test('the Firebase web config is never hard-coded in application code', () => {
   const offenders = [];
   for (const { path, text } of appFiles) {
     if (/(?:const|let|var)\s+firebaseConfig\s*=\s*\{/.test(text)) offenders.push(`${path}: firebaseConfig object literal`);
-    if (/["']?apiKey["']?\s*:\s*["'][^"'\s]{12,}["']/.test(text)) offenders.push(`${path}: literal apiKey value`);
+    if (/["']?apiKey["']?\s*:\s*["'](?!VITE_)[^"'\s]{12,}["']/.test(text)) offenders.push(`${path}: literal apiKey value`);
   }
   assert.deepEqual(offenders, []);
 });
@@ -58,8 +58,12 @@ test('env files that could hold a real config are ignored by git; only .env.exam
   assert.ok(gitignore.includes('!.env.example'));
 });
 
-test('the only place the config is read is the VITE_FIREBASE_CONFIG environment variable', () => {
+test('the config is only read from the VITE_FIREBASE_* environment variables', () => {
   const firebase = files.find(({ path }) => path === 'src/firebase.js').text;
   assert.match(firebase, /VITE_FIREBASE_CONFIG/);
   assert.match(firebase, /import\.meta\.env/);
+  const config = files.find(({ path }) => path === 'src/firebase-config.js').text;
+  for (const name of ['API_KEY', 'AUTH_DOMAIN', 'PROJECT_ID', 'STORAGE_BUCKET', 'MESSAGING_SENDER_ID', 'APP_ID']) {
+    assert.match(config, new RegExp(`VITE_FIREBASE_${name}`));
+  }
 });

@@ -18,16 +18,31 @@ Open the Vite URL printed in the terminal. **Without Firebase**, the home page, 
 
 ### Turn on online mode locally (`.env.local`)
 
-Create a root-level `.env.local` (Git ignores it) with exactly one line. Replace every value with the ones from your own Firebase Web app:
+Copy `.env.example` to a root-level `.env.local` (Git ignores it) and replace every placeholder with the values from your own Firebase Web app. There is **one variable per Firebase config field**:
 
 ```dotenv
-VITE_FIREBASE_CONFIG={"apiKey":"AIza...","authDomain":"your-project.firebaseapp.com","projectId":"your-project","storageBucket":"your-project.firebasestorage.app","messagingSenderId":"123456789012","appId":"1:123456789012:web:abcdef123456"}
+VITE_FIREBASE_API_KEY=YOUR_FIREBASE_API_KEY
+VITE_FIREBASE_AUTH_DOMAIN=your-project.firebaseapp.com
+VITE_FIREBASE_PROJECT_ID=your-project
+VITE_FIREBASE_STORAGE_BUCKET=your-project.firebasestorage.app
+VITE_FIREBASE_MESSAGING_SENDER_ID=YOUR_MESSAGING_SENDER_ID
+VITE_FIREBASE_APP_ID=YOUR_FIREBASE_APP_ID
 ```
 
-- It is **one line of raw JSON**: it starts with `{` and ends with `}`, and every key and string value is in "double quotes".
-- No extra quotes around the whole value, no `const firebaseConfig =`, no trailing `;`. (Vite's `.env` parser quietly strips single quotes around a value, but Vercel does not, so do not get used to them.)
-- Restart `npm run dev` after editing the file. The terminal prints `[psd-gaming] ✔ VITE_FIREBASE_CONFIG is set …` or says exactly what is wrong.
+| Variable | Firebase config field | Required |
+| --- | --- | --- |
+| `VITE_FIREBASE_API_KEY` | `apiKey` | yes |
+| `VITE_FIREBASE_AUTH_DOMAIN` | `authDomain` (bare host, no `https://`) | yes |
+| `VITE_FIREBASE_PROJECT_ID` | `projectId` | yes |
+| `VITE_FIREBASE_APP_ID` | `appId` | yes |
+| `VITE_FIREBASE_STORAGE_BUCKET` | `storageBucket` | optional |
+| `VITE_FIREBASE_MESSAGING_SENDER_ID` | `messagingSenderId` | optional |
+| `VITE_FIREBASE_MEASUREMENT_ID` | `measurementId` (Analytics is not used) | optional |
+
+- Paste the **bare value**: no quotes, no trailing comma, no trailing `;`. (Vite's `.env` parser quietly strips quotes, but Vercel does not, so do not get used to them.)
+- Restart `npm run dev` after editing the file. The terminal prints `[psd-gaming] ✔ The VITE_FIREBASE_* variables are set …` or names exactly which variable is missing or wrong.
 - Copying `.env.example` unchanged is rejected on purpose (`placeholder text in: …`), so a file with unfilled required values never looks configured.
+- **Older alternative (still supported):** a single `VITE_FIREBASE_CONFIG` variable holding the whole config as one line of raw JSON. It is only used when none of the `VITE_FIREBASE_*` variables above has a value; if both exist, the separate variables win.
 
 To see both states: run `npm run dev` **without** `.env.local` and you get **Local practice mode** with an explanation banner and a console error. Add the file, restart, and the status becomes **Online rooms ready**.
 
@@ -39,7 +54,7 @@ The sidebar, top bar, home hero, friends page, and dialogs all show the same sta
 | --- | --- | --- |
 | **Online rooms ready** | The Firebase config was found and validated, Firebase initialized, **and** the browser is online. | Nothing. This does **not** prove the Firebase project has its sign-in methods enabled or its rules published. Use **Setup guide → Run check**, or try a guest room. |
 | **Offline · local play** | The config is fine, but the browser is offline. | Reconnect. Local practice keeps working and the online buttons stay disabled until you are back. |
-| **Local practice mode** (plus an amber setup banner) | The config is missing or invalid, or Firebase refused to start with it. The banner states the exact reason. | Fix `VITE_FIREBASE_CONFIG` and redeploy (or restart `npm run dev`). |
+| **Local practice mode** (plus an amber setup banner) | The config is missing or invalid, or Firebase refused to start with it. The banner states the exact reason. | Fix the `VITE_FIREBASE_*` variables and redeploy (or restart `npm run dev`). |
 
 A config problem always wins over "offline": without a valid config the app cannot go online at all, so it never pretends otherwise.
 
@@ -47,14 +62,13 @@ What the setup banner can say:
 
 | Banner text | Meaning and fix |
 | --- | --- |
-| `Firebase config is missing from this deployment. Add VITE_FIREBASE_CONFIG in Vercel and redeploy.` | The variable did not exist when this deployment was **built**: it was never added, it is not enabled for this environment (Production vs Preview), or it was added after the build without a redeploy. |
-| `VITE_FIREBASE_CONFIG is empty …` | The variable exists but its value is blank. |
-| `… is wrapped in extra quotes …` | Remove the quotes around the whole value. |
-| `… must contain only the JSON object, not JavaScript such as "const firebaseConfig = …;"` | Keep only the `{…}` part. |
-| `… looks like a JavaScript object, not JSON …` | The Firebase console shows unquoted keys (`apiKey: "…"`). Put every key in double quotes. |
-| `… is missing required field(s): …` | `apiKey`, `authDomain`, `projectId`, and `appId` are all required. |
-| `… still contains placeholder text in: …` | Replace `...` / `your-project` with the real values. |
-| `… contains credential-like data …` | A service-account key or OAuth client secret was pasted. See [what must never go in `VITE_*`](#is-the-firebase-config-secret). The build refuses to continue. |
+| `Firebase config is missing from this deployment. Add the VITE_FIREBASE_* variables (…) in Vercel and redeploy.` | None of the variables existed when this deployment was **built**: they were never added, they are not enabled for this environment (Production vs Preview), or they were added after the build without a redeploy. |
+| `Missing required Firebase variable(s): VITE_FIREBASE_APP_ID, …` | Only some variables are set. The message lists exactly the required ones still missing (`VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_APP_ID`). |
+| `VITE_FIREBASE_API_KEY is wrapped in extra quotes …` | Remove the quotes around the value. |
+| `Firebase variables still contain placeholder text in: …` | Replace `...` / `YOUR_…` / `your-project` with the real values. |
+| `VITE_FIREBASE_AUTH_DOMAIN must be a bare host name …` | Use `your-project.firebaseapp.com`, without `https://` and without a path. |
+| Messages starting with `VITE_FIREBASE_CONFIG …` (empty, extra quotes, JavaScript instead of JSON, missing field) | You are using the older one-line JSON variable. Either fix it, or switch to the separate `VITE_FIREBASE_*` variables. |
+| `The VITE_FIREBASE_* variables contain credential-like data …` | A service-account key or OAuth client secret was pasted. See [what must never go in `VITE_*`](#is-the-firebase-config-secret). The build refuses to continue. |
 | `Firebase could not start with the config … (auth/invalid-api-key)` | The values have the right shape but Firebase rejected them. Copy the Web app config again. |
 
 The **Setup guide** dialog (home banner, **Game library → How online play works**, or any "Setup guide" link) also lists the live facts: config state, project, auth domain, browser state, the site host to authorize, and which deployment you are looking at (environment, commit, build time). It never shows the API key.
@@ -65,25 +79,21 @@ The **Setup guide** dialog (home banner, **Game library → How online play work
 
 1. Go to [Firebase Console](https://console.firebase.google.com/) and create a project.
 2. In **Project settings → General → Your apps**, add a **Web app**. Hosting through Vercel does not require Firebase Hosting.
-3. Under **SDK setup and configuration**, choose **Config**. Firebase shows a JavaScript object (unquoted keys). The app needs the same values as **one line of JSON**:
+3. Under **SDK setup and configuration**, choose **Config**. Firebase shows a JavaScript object. Each line becomes its own environment variable:
 
    ```js
-   // what Firebase shows (JavaScript - do NOT paste this)
+   // what Firebase shows (JavaScript - do NOT paste this as a whole)
    const firebaseConfig = {
-     apiKey: "AIza...",
-     authDomain: "your-project.firebaseapp.com",
-     projectId: "your-project",
-     storageBucket: "your-project.firebasestorage.app",
-     messagingSenderId: "123456789012",
-     appId: "1:123456789012:web:abcdef123456"
+     apiKey: "AIza...",                              // -> VITE_FIREBASE_API_KEY
+     authDomain: "your-project.firebaseapp.com",     // -> VITE_FIREBASE_AUTH_DOMAIN
+     projectId: "your-project",                      // -> VITE_FIREBASE_PROJECT_ID
+     storageBucket: "your-project.firebasestorage.app", // -> VITE_FIREBASE_STORAGE_BUCKET
+     messagingSenderId: "123456789012",              // -> VITE_FIREBASE_MESSAGING_SENDER_ID
+     appId: "1:123456789012:web:abcdef123456"        // -> VITE_FIREBASE_APP_ID
    };
    ```
 
-   ```json
-   {"apiKey":"AIza...","authDomain":"your-project.firebaseapp.com","projectId":"your-project","storageBucket":"your-project.firebasestorage.app","messagingSenderId":"123456789012","appId":"1:123456789012:web:abcdef123456"}
-   ```
-
-   Drop `const firebaseConfig =` and the final `;`, put every key in double quotes, and join it to one line. `measurementId` may stay or go; this app does not use Analytics. To check your result before pasting it: `node -e "JSON.parse(process.argv[1]); console.log('valid JSON')" '<your one-line value>'`. The app also explains anything that is wrong (see the banner table above).
+   Copy only what is **between the quotes** of each line. `measurementId` may stay or go; this app does not use Analytics.
 
 ### Is the Firebase config secret?
 
@@ -145,32 +155,37 @@ If a step reports *permission-denied*, the rules were not published as-is. Paste
 
 There are no composite indexes to create for the current queries. `firebase.json` and `firestore.indexes.json` are included if you later choose to manage Firebase from the CLI.
 
-### 4. Add the one Vercel environment variable, then redeploy
+### 4. Add the Vercel environment variables, then redeploy
 
 1. Import this GitHub repository into Vercel (or open the project) and go to **Settings → Environment Variables**.
-2. Add exactly one variable:
+2. Add **one variable per Firebase field** (the `VITE_` prefix is mandatory: Vite only exposes variables that start with it). Key on the left, Firebase value on the right:
 
-   - **Key:** `VITE_FIREBASE_CONFIG`. The `VITE_` prefix is mandatory: Vite only exposes variables that start with it.
-   - **Value:** the raw one-line JSON from step 1, for example
+   | Key | Value (from the Firebase config) | Required |
+   | --- | --- | --- |
+   | `VITE_FIREBASE_API_KEY` | `apiKey` | yes |
+   | `VITE_FIREBASE_AUTH_DOMAIN` | `authDomain`, e.g. `your-project.firebaseapp.com` | yes |
+   | `VITE_FIREBASE_PROJECT_ID` | `projectId` | yes |
+   | `VITE_FIREBASE_STORAGE_BUCKET` | `storageBucket` | optional |
+   | `VITE_FIREBASE_MESSAGING_SENDER_ID` | `messagingSenderId` | optional |
+   | `VITE_FIREBASE_APP_ID` | `appId` | yes |
+   | `VITE_FIREBASE_MEASUREMENT_ID` | `measurementId` | optional |
 
-     ```text
-     {"apiKey":"AIza...","authDomain":"your-project.firebaseapp.com","projectId":"your-project","storageBucket":"your-project.firebasestorage.app","messagingSenderId":"123456789012","appId":"1:123456789012:web:abcdef123456"}
-     ```
-
-     Paste **only** that. No extra quotes around it, no `const firebaseConfig =`, no trailing `;`, and no `VITE_FIREBASE_CONFIG=` in front.
-   - **Environments:** tick **Production** and **Preview**. A deployment only receives the variable if its own environment is ticked, and a site showing "Local practice mode" on a Preview URL while Production works is usually exactly this. (**Development** only matters for `vercel dev`.)
-   - It is public configuration, not a secret, so a normal variable is fine. Do not store anything secret here.
+   - Paste the bare value only: no quotes, no trailing comma, no `KEY=` in front.
+   - **Environments:** tick **Production** and **Preview** for every variable. A deployment only receives a variable if its own environment is ticked, and a site showing "Local practice mode" on a Preview URL while Production works is usually exactly this. (**Development** only matters for `vercel dev`.)
+   - It is public configuration, not a secret, so normal (non-sensitive) variables are fine. Do not store anything secret here.
+   - Vercel's **Import .env** option also works: paste the filled-in lines of your `.env.local`.
+   - Already using the older single `VITE_FIREBASE_CONFIG` JSON variable? It keeps working until you add any `VITE_FIREBASE_*` variable, which then takes over. You can delete the old one afterwards.
 
 3. Use Vercel's normal Vite settings (also recorded in [`vercel.json`](./vercel.json)): build command `npm run build`, output directory `dist`.
-4. **Redeploy.** Vite copies `VITE_*` values into the JavaScript at build time. A deployment that was built before the variable existed (or before you fixed it) keeps the old, empty value forever; changing the variable does not change existing deployments. Open **Deployments → ⋯ on the latest deployment → Redeploy** (or push a commit). If in doubt, untick **Use existing Build Cache**.
+4. **Redeploy.** Vite copies `VITE_*` values into the JavaScript at build time. A deployment that was built before the variables existed (or before you fixed it) keeps the old, empty values forever; changing the variable does not change existing deployments. Open **Deployments → ⋯ on the latest deployment → Redeploy** (or push a commit). If in doubt, untick **Use existing Build Cache**.
 5. Add the deployed host under **Authorized domains** (see above).
 
 #### Check that the deployment picked it up
 
 1. **Build log** (Vercel → Deployments → the deployment → Build Logs). Look for one of:
-   - `[psd-gaming] ✔ VITE_FIREBASE_CONFIG is set for this Vercel production (project "…", authDomain "…")`: good.
-   - `[psd-gaming] ⚠ VITE_FIREBASE_CONFIG is not set for this Vercel preview.`: not set for this environment. Fix it and redeploy.
-   - `[psd-gaming] ⚠ VITE_FIREBASE_CONFIG is invalid …: <reason>`: fix the value and redeploy.
+   - `[psd-gaming] ✔ The VITE_FIREBASE_* variables are set for this Vercel production (project "…", authDomain "…")`: good.
+   - `[psd-gaming] ⚠ The Firebase config (VITE_FIREBASE_* variables) is not set for this Vercel preview.`: not set for this environment. Fix it and redeploy.
+   - `[psd-gaming] ⚠ The Firebase config (VITE_FIREBASE_* variables) is invalid …: Missing required Firebase variable(s): …`: add or fix the named variable(s) and redeploy.
 2. **The site.** The sidebar, top bar, and home hero read **Online rooms ready**, and there is no amber banner.
 3. **Setup guide dialog** (Game library → *How online play works*): **Firebase config: Loaded**, your **Project**, and a **Build** row naming the environment, commit, and build time, which tells you which deployment you are looking at.
 4. **Run check** in the same dialog: it signs in as a guest and reads one Firestore document. A pass proves the API key, Anonymous sign-in, the Firestore database, and the published rules all work for this deployment; a failure names the missing piece. Google sign-in, Email/Password, and Authorized domains can only be confirmed by using them once.
@@ -178,7 +193,7 @@ There are no composite indexes to create for the current queries. `firebase.json
 
 Optional strictness: set `REQUIRE_FIREBASE_CONFIG=1` (a plain build variable, **not** a `VITE_` one) for the Production environment to make a missing or invalid config fail the build instead of only warning. Local-only hosting without Firebase stays supported when it is unset.
 
-> Firebase Web config is designed to be present in browser code. Do not put service-account JSON, Admin SDK credentials, private keys, OAuth client secrets, or Firestore rules in this field. The rules are published in Firebase Console, not stored as an environment variable. If a true server-side secret is ever needed, add a separate Vercel Functions/Admin SDK architecture; do not put it in a `VITE_*` variable.
+> Firebase Web config is designed to be present in browser code. Do not put service-account JSON, Admin SDK credentials, private keys, OAuth client secrets, or Firestore rules in any of these variables. The rules are published in Firebase Console, not stored as an environment variable. If a true server-side secret is ever needed, add a separate Vercel Functions/Admin SDK architecture; do not put it in a `VITE_*` variable.
 
 Google's Firebase-managed provider setup does not require adding a Google client secret to this repository. The selected support email is shown to users in Google's consent flow and must be configured in the provider panel.
 
@@ -208,28 +223,28 @@ A new Google account needs its own `admins/{googleUid}` document if it should be
 
 | What you see | Likely cause | Fix |
 | --- | --- | --- |
-| Deployed site shows **Local practice mode** and "Firebase config is missing from this deployment…" | `VITE_FIREBASE_CONFIG` was not present when this deployment was built. It was never added, is not ticked for this environment, or was added after the build. | Vercel → Settings → Environment Variables → add it for **Production** and **Preview**, then **Redeploy**. |
-| The build log says `Found other Firebase-looking variable name(s): FIREBASE_CONFIG …` | The variable is misnamed (missing the `VITE_` prefix, wrong capitals, or a stray space), so Vite never exposes it to the app. Only the exact name `VITE_FIREBASE_CONFIG` is read. | Rename it to exactly `VITE_FIREBASE_CONFIG` and redeploy. |
-| It works on Production but a Preview URL shows **Local practice mode** | The variable is not enabled for the **Preview** environment. | Tick **Preview** for the variable, then redeploy that preview. |
-| It works locally but not on Vercel | `.env.local` is ignored by Git, so Vercel never sees it. | Add the variable in Vercel (step 4) and redeploy. |
-| The banner names a format problem (quotes, `const`, JavaScript object, missing field, placeholder) | The value is not the raw one-line JSON described in step 1. | Fix the value and redeploy (or restart `npm run dev`). |
+| Deployed site shows **Local practice mode** and "Firebase config is missing from this deployment…" | The `VITE_FIREBASE_*` variables were not present when this deployment was built. They were never added, are not ticked for this environment, or were added after the build. | Vercel → Settings → Environment Variables → add them for **Production** and **Preview**, then **Redeploy**. |
+| The build log says `Found other Firebase-looking variable name(s): FIREBASE_API_KEY …` | A variable is misnamed (missing the `VITE_` prefix, wrong capitals, or a stray space), so Vite never exposes it to the app. Only the exact names in the table in step 4 (and the older `VITE_FIREBASE_CONFIG`) are read. | Rename it to exactly e.g. `VITE_FIREBASE_API_KEY` and redeploy. |
+| It works on Production but a Preview URL shows **Local practice mode** | The variables are not enabled for the **Preview** environment. | Tick **Preview** for each variable, then redeploy that preview. |
+| It works locally but not on Vercel | `.env.local` is ignored by Git, so Vercel never sees it. | Add the variables in Vercel (step 4) and redeploy. |
+| The banner names a format problem (quotes, `const`, JavaScript object, missing field, placeholder) | A value is not the bare text described in step 1, or a required variable is missing. | Fix the named variable and redeploy (or restart `npm run dev`). |
 | **Online rooms ready**, but starting a guest room says "Guest play needs Anonymous sign-in…" | The **Anonymous** provider is off (`auth/operation-not-allowed` or `auth/admin-restricted-operation`). | Firebase Console → Authentication → Sign-in method → enable **Anonymous**. If it is on, check Authentication → Settings → User actions allows sign-ups. |
 | "Email/Password sign-in is not enabled…" or "Google sign-in is not enabled…" | That provider is off. | Enable it in Authentication → Sign-in method (Google also needs a support email). |
 | "This site (…) is not an authorized domain for Firebase sign-in…" | The host is not under Authorized domains (`auth/unauthorized-domain`). | Add exactly that host (see [Authorized domains](#authorized-domains)). |
 | "Firebase denied this action (permission-denied)…" | The rules are not published, the signed-in identity is missing (Anonymous is off), or the rule genuinely forbids the action. | Publish [`firestore.rules`](./firestore.rules) (step 3) and enable Anonymous. |
 | "Cloud Firestore is not enabled for this Firebase project…" | The Firestore API or database has not been created. | Firebase Console → Firestore Database → Create database (step 3). |
-| "Firebase rejected the API key in VITE_FIREBASE_CONFIG…" | A mistyped key, or an API key restricted to other sites (`auth/invalid-api-key`). | Copy the Web app config again; in Google Cloud Console → APIs & Services → Credentials check the key's website restrictions include your host. |
+| "Firebase rejected the API key in VITE_FIREBASE_API_KEY…" | A mistyped key, or an API key restricted to other sites (`auth/invalid-api-key`). | Copy the Web app config again; in Google Cloud Console → APIs & Services → Credentials check the key's website restrictions include your host. |
 | "Could not reach Firebase…" or "You appear to be offline…" | The network, a VPN, or an ad/privacy blocker is cutting off Firebase (`auth/network-request-failed`). | Reconnect, or allow `*.googleapis.com`, `*.firebaseapp.com`, and `apis.google.com`. |
 | **Online rooms ready**, yet something online fails | "Ready" means configured and browser online; it is not a server check. | Open **Setup guide → Run check** and follow the message it gives. |
 
-Developer console: a missing or invalid config is always logged (`console.error` in development; `console.error` for an invalid value and `console.warn` for a never-set variable in a production build). The raw value is never logged.
+Developer console: a missing or invalid config is always logged (`console.error` in development; `console.error` for an invalid value and `console.warn` for a never-set config in a production build). The raw value is never logged.
 
 ## What is included
 
 - **40 games:** Pixel Tic-Tac-Toe, Neon Gomoku, Connect Four, Five in a Row, Memory Match, Neon Pairs, Emoji Flip, Arcade Pairs, Pixel Tap Sprint, Button Masher, Turbo Charge, Reaction Rush, Spacebar Showdown, Bug Blaster, Rock Paper Scissors, Laser Duel, Coin Flip Clash, Dice Duel, Retro Trivia, Emoji Decode, Arcade Facts, Pixel Pop Quiz, Movie Mayhem, Word Scramble, Number Chase, Brain Busters, 8-Bit Riddles, Retro Rewind, Maze Runner, Neon Labyrinth, Byte Escape, Star Runner, Sea Battle, Pixel Fleet, Alien Skirmish, Pong Rally, Paddle Wars, Air Hockey, Codebreaker, and Mastermind.
 - **Ten lightweight shared engines:** line boards, drop boards, memory pairs, tap races, simultaneous duels, quiz rounds, maze races, hidden-grid battles, volley scoring, and codebreaking. Each catalog entry can be opened, practiced locally, or used to create an online room.
 - **Firebase:** Auth (Anonymous + Email/Password + Google) and Cloud Firestore. Multiplayer moves use Firestore transactions so concurrent turns do not silently overwrite one another. Google popup/redirect handling, guest linking, first-login username setup, and friendly provider/network errors are included.
-- **Setup diagnostics:** one honest connection status everywhere (**Online rooms ready**, **Offline · local play**, **Local practice mode**), a precise setup banner for a missing or invalid `VITE_FIREBASE_CONFIG`, a build-time check that prints the same verdict in the Vercel build log (and refuses secrets), Firebase errors worded as instructions, and an in-app **Run check** for a deployed project.
+- **Setup diagnostics:** one honest connection status everywhere (**Online rooms ready**, **Offline · local play**, **Local practice mode**), a precise setup banner for a missing or invalid `VITE_FIREBASE_*` config, a build-time check that prints the same verdict in the Vercel build log (and refuses secrets), Firebase errors worded as instructions, and an in-app **Run check** for a deployed project.
 - **Local personalization:** Favorites, recently played games, theme preference, subtle sound preference, and guest display name live in localStorage; no extra Firebase collection is required.
 - **Original artwork:** one optimized hero illustration and five reusable category/multiplayer covers live under `public/images/`. Cards use responsive `object-fit: cover`, lazy loading below the first shelf, and CSS artwork fallbacks if an image cannot load.
 - **Theme / accessibility:** an OS-aware light/dark theme toggle with persistence, visible keyboard focus, reduced-motion support, semantic controls, keyboard arrows in maze games, Space for tap races, and responsive layouts down to 320px wide. Every game screen includes a concise controls/rules panel generated from its engine.

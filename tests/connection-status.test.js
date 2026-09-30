@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CONNECTION_LABELS, describeConnection } from '../src/connection-status.js';
-import { parseFirebaseConfig } from '../src/firebase-config.js';
+import { parseFirebaseConfig, resolveFirebaseConfig } from '../src/firebase-config.js';
 
 const READY = { status: 'ok', code: 'ok', message: '', hint: '', projectId: 'psd-arcade-test', authDomain: 'psd-arcade-test.firebaseapp.com' };
-const MISSING = parseFirebaseConfig(undefined);
+const MISSING = resolveFirebaseConfig({});
 const INVALID = parseFirebaseConfig('{"apiKey":"test-api-key"}');
 const INIT_FAILED = { status: 'invalid', code: 'init-failed', message: 'Firebase could not start with the config in VITE_FIREBASE_CONFIG (auth/invalid-api-key).', hint: 'Fix it.' };
 
@@ -45,7 +45,7 @@ test('a missing config shows "Local practice mode" with the deployment message, 
     assert.equal(view.tone, 'setup');
     assert.equal(view.onlineFeatures, false);
     assert.equal(view.setupNeeded, true);
-    assert.equal(view.detail, 'Firebase config is missing from this deployment. Add VITE_FIREBASE_CONFIG in Vercel and redeploy.');
+    assert.equal(view.detail, 'Firebase config is missing from this deployment. Add the VITE_FIREBASE_* variables (VITE_FIREBASE_API_KEY, VITE_FIREBASE_AUTH_DOMAIN, VITE_FIREBASE_PROJECT_ID, VITE_FIREBASE_APP_ID …) in Vercel and redeploy.');
     assert.match(view.hint, /redeploy/);
   }
 });
