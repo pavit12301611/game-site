@@ -1454,7 +1454,11 @@ function handleClick(event) {
   if (action === 'quick-play') { const game = GAMES[Math.floor(Math.random() * GAMES.length)]; recordRecentGame(game.id); modalOpen({ type: 'game', gameId: game.id }); return; }
   if (action === 'quick-room') { openRoomModal(GAMES[0].id); return; }
   if (action === 'open-friends') { navigate('friends'); return; }
-  if (action === 'show-setup') { modalOpen({ type: 'setup' }); return; }
+  if (action === 'show-setup') {
+    if (!state.liveCheck?.running) state.liveCheck = null; // never show the result of an earlier, possibly outdated, check
+    modalOpen({ type: 'setup' });
+    return;
+  }
   if (action === 'close-modal') { modalClose(); return; }
   if (action === 'practice-game') { startPractice(gameId); return; }
   if (action === 'create-room-for-game') { openRoomModal(gameId, state.modal?.friend || null); return; }
