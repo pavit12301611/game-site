@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   FIREBASE_CONFIG_ENV_NAME,
+  FIREBASE_ENV_VARS,
   REQUIRED_FIREBASE_FIELDS,
   findSecretMarkers,
   parseFirebaseConfig,
+  resolveFirebaseConfig,
   summarizeFirebaseConfig,
 } from '../src/firebase-config.js';
 
@@ -17,6 +19,7 @@ const VALID = {
   messagingSenderId: '123456789012',
   appId: '1:123456789012:web:0a1b2c3d4e5f',
 };
+const FIELD_ENV = Object.fromEntries(Object.entries(FIREBASE_ENV_VARS).filter(([field]) => field in VALID).map(([field, name]) => [name, VALID[field]]));
 const line = (value) => JSON.stringify(value);
 // Built from pieces so this file never contains a literal secret-shaped string.
 const PEM_HEADER = `-----BEGIN ${'PRIVATE'} KEY-----`;
@@ -239,30 +242,130 @@ test('no message or hint ever contains the raw value that was supplied', () => {
   }
 });
 
-test('.env.example documents the exact one-line format, and its placeholders are rejected until replaced', () => {
-  const example = readFileSync(new URL('../.env.example', import.meta.url), 'utf8');
-  const envLine = example.split('\n').find((entry) => entry.startsWith(`${FIREBASE_CONFIG_ENV_NAME}=`));
-  assert.ok(envLine, `.env.example must contain a ${FIREBASE_CONFIG_ENV_NAME}= line`);
-  const value = envLine.slice(FIREBASE_CONFIG_ENV_NAME.length + 1);
-  const sample = JSON.parse(value);
-  for (const field of REQUIRED_FIREBASE_FIELDS) assert.ok(field in sample, `.env.example documents ${field}`);
-  assert.ok('storageBucket' in sample && 'messagingSenderId' in sample);
-  assert.equal(parseFirebaseConfig(value).code, 'placeholder-values', 'copying .env.example unchanged must not look configured');
-  // ...and once a person fills it in, exactly that shape works.
-  assert.equal(parseFirebaseConfig(line({ ...sample, ...VALID })).status, 'ok');
+function parseDotenv(text) {
+  const env = {};
+  for (const entry of text.split('\n')) {
+    const match = entry.match(/^([A-Z0-9_]+)=(.*)$/);
+    if (match) env[match[1]] = match[2];
+  }
+  return env;
+}
+
+test('.env.example has one placeholder line per Firebase variable, and the placeholders are rejected until replaced', () => {
+  const example = parseDotenv(readFileSync(new URL('../.env.example', import.meta.url), 'utf8'));
+  for (const field of REQUIRED_FIREBASE_FIELDS) {
+    assert.ok(FIREBASE_ENV_VARS[field] in example, `.env.example must contain ${FIREBASE_ENV_VARS[field]}=`);
+  }
+  for (const name of ['VITE_FIREBASE_STORAGE_BUCKET', 'VITE_FIREBASE_MESSAGING_SENDER_ID']) assert.ok(name in example, name);
+  assert.ok(!(FIREBASE_CONFIG_ENV_NAME in example), 'the legacy JSON variable stays commented out');
+  assert.equal(resolveFirebaseConfig(example).code, 'placeholder-values', 'copying .env.example unchanged must not look configured');
+  // ...and once a person fills in the required ones, exactly that shape works.
+  const filled = { ...example, ...FIELD_ENV };
+  assert.equal(resolveFirebaseConfig(filled).status, 'ok');
 });
 
-test('the README documents one consistent one-line JSON for .env.local, the converted console snippet and the Vercel value', () => {
+test('the README documents every VITE_FIREBASE_* variable and the legacy fallback', () => {
   const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
-  const envValue = readme.split('\n').find((entry) => entry.startsWith(`${FIREBASE_CONFIG_ENV_NAME}=`))?.slice(FIREBASE_CONFIG_ENV_NAME.length + 1);
-  assert.ok(envValue, 'README needs an exact .env.local example line');
-  const jsonBlock = readme.match(/```json\n\s*(\{.*\})\n\s*```/)?.[1];
-  const vercelBlock = readme.match(/```text\n\s*(\{.*\})\n\s*```/)?.[1];
-  assert.equal(jsonBlock, envValue, 'step-1 JSON block matches the .env.local example');
-  assert.equal(vercelBlock, envValue, 'Vercel value example matches the .env.local example');
-  const example = JSON.parse(envValue);
-  for (const field of REQUIRED_FIREBASE_FIELDS) assert.ok(typeof example[field] === 'string', `README example has ${field}`);
-  // copied unchanged it is rejected as placeholders; with real values it is exactly what the parser accepts
-  assert.equal(parseFirebaseConfig(envValue).code, 'placeholder-values');
-  assert.equal(parseFirebaseConfig(line({ ...example, apiKey: 'real-key-123', authDomain: 'my-arcade.firebaseapp.com', projectId: 'my-arcade' })).status, 'ok');
+  for (const name of Object.values(FIREBASE_ENV_VARS)) assert.ok(readme.includes(name), `README mentions ${name}`);
+  assert.ok(readme.includes(FIREBASE_CONFIG_ENV_NAME));
+  const envBlock = readme.match(/```dotenv\n([\s\S]*?)```/)?.[1];
+  assert.ok(envBlock, 'README needs an exact .env.local example');
+  const example = parseDotenv(envBlock);
+  for (const field of REQUIRED_FIREBASE_FIELDS) assert.ok(FIREBASE_ENV_VARS[field] in example, `README example has ${FIREBASE_ENV_VARS[field]}`);
+  assert.equal(resolveFirebaseConfig(example).code, 'placeholder-values');
+});
+
+// ---- one environment variable per Firebase field (VITE_FIREBASE_API_KEY, …) ----
+
+test('every Firebase field has its own VITE_FIREBASE_* variable name', () => {
+  assert.deepEqual({ ...FIREBASE_ENV_VARS }, {
+    apiKey: 'VITE_FIREBASE_API_KEY',
+    authDomain: 'VITE_FIREBASE_AUTH_DOMAIN',
+    projectId: 'VITE_FIREBASE_PROJECT_ID',
+    storageBucket: 'VITE_FIREBASE_STORAGE_BUCKET',
+    messagingSenderId: 'VITE_FIREBASE_MESSAGING_SENDER_ID',
+    appId: 'VITE_FIREBASE_APP_ID',
+    measurementId: 'VITE_FIREBASE_MEASUREMENT_ID',
+  });
+});
+
+test('separate variables build the same config as the one-line JSON', () => {
+  const result = resolveFirebaseConfig(FIELD_ENV);
+  assert.equal(result.status, 'ok');
+  assert.equal(result.source, 'env-vars');
+  assert.deepEqual(result.config, VALID);
+  assert.deepEqual(summarizeFirebaseConfig(result.config), { projectId: 'psd-arcade-test', authDomain: 'psd-arcade-test.firebaseapp.com' });
+});
+
+test('optional variables may be absent or blank, and measurementId is passed through', () => {
+  const minimal = resolveFirebaseConfig({
+    VITE_FIREBASE_API_KEY: ' test-api-key-123 ',
+    VITE_FIREBASE_AUTH_DOMAIN: VALID.authDomain,
+    VITE_FIREBASE_PROJECT_ID: VALID.projectId,
+    VITE_FIREBASE_APP_ID: VALID.appId,
+    VITE_FIREBASE_STORAGE_BUCKET: '',
+  });
+  assert.equal(minimal.status, 'ok');
+  assert.deepEqual(minimal.config, { apiKey: 'test-api-key-123', authDomain: VALID.authDomain, projectId: VALID.projectId, appId: VALID.appId });
+  assert.equal(resolveFirebaseConfig({ ...FIELD_ENV, VITE_FIREBASE_MEASUREMENT_ID: 'G-TEST123' }).config.measurementId, 'G-TEST123');
+});
+
+test('nothing set at all is "missing" and names the variables to add', () => {
+  for (const env of [{}, undefined, null, { VITE_FIREBASE_API_KEY: '', VITE_FIREBASE_APP_ID: '   ' }]) {
+    const result = resolveFirebaseConfig(env);
+    assert.equal(result.status, 'missing');
+    assert.equal(result.source, 'none');
+    assert.match(result.message, /VITE_FIREBASE_API_KEY/);
+    assert.match(result.message, /Vercel/);
+  }
+  assert.match(resolveFirebaseConfig({}, { dev: true }).message, /\.env\.local/);
+});
+
+test('a partly filled set names exactly the variables that are still missing', () => {
+  const { VITE_FIREBASE_APP_ID, VITE_FIREBASE_AUTH_DOMAIN, ...partial } = FIELD_ENV;
+  const result = resolveFirebaseConfig(partial);
+  assert.equal(result.status, 'invalid');
+  assert.equal(result.code, 'missing-fields');
+  assert.deepEqual(result.missingFields, ['authDomain', 'appId']);
+  assert.match(result.message, /VITE_FIREBASE_AUTH_DOMAIN, VITE_FIREBASE_APP_ID/);
+  assert.doesNotMatch(result.message, /VITE_FIREBASE_API_KEY|VITE_FIREBASE_PROJECT_ID/);
+});
+
+test('placeholders, bad hosts and wrapping quotes are rejected per variable, without echoing values', () => {
+  const placeholder = resolveFirebaseConfig({ ...FIELD_ENV, VITE_FIREBASE_API_KEY: 'YOUR_API_KEY' });
+  assert.equal(placeholder.code, 'placeholder-values');
+  assert.match(placeholder.message, /VITE_FIREBASE_API_KEY/);
+  assert.doesNotMatch(placeholder.message, /YOUR_API_KEY/);
+  assert.equal(resolveFirebaseConfig({ ...FIELD_ENV, VITE_FIREBASE_APP_ID: '1:123:web:...' }).code, 'placeholder-values');
+
+  const host = resolveFirebaseConfig({ ...FIELD_ENV, VITE_FIREBASE_AUTH_DOMAIN: 'https://psd-arcade-test.firebaseapp.com/' });
+  assert.equal(host.code, 'bad-auth-domain');
+  assert.match(host.message, /VITE_FIREBASE_AUTH_DOMAIN/);
+
+  const quoted = resolveFirebaseConfig({ ...FIELD_ENV, VITE_FIREBASE_API_KEY: '"SENTINEL-quoted-key"' });
+  assert.equal(quoted.code, 'wrapped-in-quotes');
+  assert.match(quoted.message, /VITE_FIREBASE_API_KEY/);
+  assert.doesNotMatch(quoted.message, /SENTINEL/);
+});
+
+test('a secret in any per-field variable is refused and never echoed', () => {
+  for (const secret of [PEM_HEADER, OAUTH_SECRET]) {
+    const result = resolveFirebaseConfig({ ...FIELD_ENV, VITE_FIREBASE_API_KEY: `${secret}SENTINEL` });
+    assert.equal(result.status, 'invalid');
+    assert.equal(result.code, 'secret-detected');
+    assert.equal(result.config, null);
+    assert.match(result.message, /VITE_FIREBASE_\* variables contain credential-like data/);
+    assert.doesNotMatch(`${result.message} ${result.hint}`, /SENTINEL|BEGIN|GOCSPX/);
+  }
+});
+
+test('the legacy one-line VITE_FIREBASE_CONFIG still works when no per-field variable is set, and loses to them otherwise', () => {
+  const legacy = resolveFirebaseConfig({ VITE_FIREBASE_CONFIG: line(VALID) });
+  assert.equal(legacy.status, 'ok');
+  assert.equal(legacy.source, 'json');
+  assert.equal(resolveFirebaseConfig({ VITE_FIREBASE_CONFIG: 'nope' }).code, 'not-json');
+  assert.equal(resolveFirebaseConfig({ VITE_FIREBASE_CONFIG: '' }).code, 'empty');
+  const both = resolveFirebaseConfig({ ...FIELD_ENV, VITE_FIREBASE_PROJECT_ID: 'from-fields', VITE_FIREBASE_CONFIG: line(VALID) });
+  assert.equal(both.source, 'env-vars');
+  assert.equal(both.config.projectId, 'from-fields');
 });

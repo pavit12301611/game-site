@@ -1,5 +1,5 @@
 /**
- * Build-time guard for VITE_FIREBASE_CONFIG (used by vite.config.js).
+ * Build-time guard for the VITE_FIREBASE_* variables / VITE_FIREBASE_CONFIG (used by vite.config.js).
  *
  * Vite copies `VITE_*` variables into the JavaScript bundle while it builds. That has two
  * consequences this file turns into clear build-log messages:
@@ -15,15 +15,15 @@
  * The raw value is never printed; only the public projectId / authDomain are.
  */
 import { loadEnv } from 'vite';
-import { FIREBASE_CONFIG_ENV_NAME, parseFirebaseConfig, summarizeFirebaseConfig } from '../src/firebase-config.js';
+import { FIREBASE_CONFIG_ENV_NAME, FIREBASE_ENV_NAMES, resolveFirebaseConfig, summarizeFirebaseConfig } from '../src/firebase-config.js';
 
 const TRUTHY = new Set(['1', 'true', 'yes', 'on']);
 const PREFIX = '[psd-gaming]';
 
-/** Names (never values) of other variables that look like a misnamed attempt, e.g. FIREBASE_CONFIG without VITE_. */
+/** Names (never values) of other variables that look like a misnamed attempt, e.g. FIREBASE_API_KEY without VITE_. */
 function findLookalikeNames(env) {
   return Object.keys(env)
-    .filter((name) => /firebase/i.test(name) && name !== FIREBASE_CONFIG_ENV_NAME)
+    .filter((name) => /firebase/i.test(name) && !FIREBASE_ENV_NAMES.includes(name))
     .sort();
 }
 
@@ -45,14 +45,14 @@ export function checkFirebaseBuildEnv(env = {}, { command = 'build' } = {}) {
   const dev = command === 'serve';
   const target = describeTarget(env, command);
   const strict = TRUTHY.has(String(env.REQUIRE_FIREBASE_CONFIG ?? '').trim().toLowerCase());
-  const parsed = parseFirebaseConfig(env[FIREBASE_CONFIG_ENV_NAME], { dev });
+  const parsed = resolveFirebaseConfig(env, { dev });
 
   if (parsed.status === 'ok') {
     const { projectId, authDomain } = summarizeFirebaseConfig(parsed.config);
     return {
       level: 'ok',
       fatal: false,
-      lines: [`✔ ${FIREBASE_CONFIG_ENV_NAME} is set for this ${target} (project "${projectId}", authDomain "${authDomain}"). Online mode will start Firebase in the browser.`],
+      lines: [`✔ ${parsed.source === 'env-vars' ? 'The VITE_FIREBASE_* variables are' : `${FIREBASE_CONFIG_ENV_NAME} is`} set for this ${target} (project "${projectId}", authDomain "${authDomain}"). Online mode will start Firebase in the browser.`],
     };
   }
 
@@ -68,9 +68,10 @@ export function checkFirebaseBuildEnv(env = {}, { command = 'build' } = {}) {
     };
   }
 
+  const subject = parsed.source === 'json' ? FIREBASE_CONFIG_ENV_NAME : 'The Firebase config (VITE_FIREBASE_* variables)';
   const headline = parsed.status === 'missing'
-    ? `${FIREBASE_CONFIG_ENV_NAME} is not set for this ${target}.`
-    : `${FIREBASE_CONFIG_ENV_NAME} is invalid for this ${target}: ${parsed.message}`;
+    ? `${subject} is not set for this ${target}.`
+    : `${subject} is invalid for this ${target}: ${parsed.message}`;
   const lines = [
     `⚠ ${headline}`,
     '  The site will start in "Local practice mode": online rooms, accounts and friends stay disabled.',
@@ -78,12 +79,12 @@ export function checkFirebaseBuildEnv(env = {}, { command = 'build' } = {}) {
   ];
   const lookalikes = parsed.status === 'missing' ? findLookalikeNames(env) : [];
   if (lookalikes.length) {
-    lines.push(`  Found other Firebase-looking variable name(s): ${lookalikes.join(', ')}. The app only reads ${FIREBASE_CONFIG_ENV_NAME}: the name must match exactly, in capitals, with the VITE_ prefix.`);
+    lines.push(`  Found other Firebase-looking variable name(s): ${lookalikes.join(', ')}. The app only reads ${FIREBASE_ENV_NAMES.join(', ')}: the name must match exactly, in capitals, with the VITE_ prefix.`);
   }
   if (env.VERCEL_ENV === 'preview') {
-    lines.push('  This is a Preview build: enable the variable for the Preview environment too, not only Production.');
+    lines.push('  This is a Preview build: enable the variables for the Preview environment too, not only Production.');
   }
-  if (!env.VERCEL && !dev) lines.push('  Building on your own machine? Put it in .env.local instead (copy .env.example).');
+  if (!env.VERCEL && !dev) lines.push('  Building on your own machine? Put them in .env.local instead (copy .env.example).');
   if (strict) {
     return {
       level: 'error',

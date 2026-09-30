@@ -23,7 +23,7 @@ export const CONNECTION_LABELS = Object.freeze({
   local: 'Local practice mode',
 });
 
-const FALLBACK_SETUP_MESSAGE = 'Firebase config is missing from this deployment. Add VITE_FIREBASE_CONFIG in Vercel and redeploy.';
+const FALLBACK_SETUP_MESSAGE = 'Firebase config is missing from this deployment. Add the VITE_FIREBASE_* variables (VITE_FIREBASE_API_KEY, VITE_FIREBASE_AUTH_DOMAIN, VITE_FIREBASE_PROJECT_ID, VITE_FIREBASE_APP_ID …) in Vercel and redeploy.';
 
 /**
  * @param {{ setup?: { status?: string, message?: string, hint?: string }, online?: boolean }} input

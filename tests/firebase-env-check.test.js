@@ -21,7 +21,7 @@ test('a Vercel build without the variable warns loudly but does not fail by defa
   const result = checkFirebaseBuildEnv({ VERCEL: '1', VERCEL_ENV: 'production' });
   assert.equal(result.level, 'warn');
   assert.equal(result.fatal, false);
-  assert.match(text(result), /VITE_FIREBASE_CONFIG is not set for this Vercel production/);
+  assert.match(text(result), /Firebase config \(VITE_FIREBASE_\* variables\) is not set for this Vercel production/);
   assert.match(text(result), /Local practice mode/);
   assert.match(text(result), /Environment Variables/);
   assert.match(text(result), /redeploy/);
@@ -45,11 +45,11 @@ test('a misnamed variable is pointed out by name only (never by value)', () => {
     VERCEL_ENV: 'production',
     FIREBASE_CONFIG: '{"apiKey":"SENTINEL-1"}',
     vite_firebase_config: 'SENTINEL-2',
-    VITE_FIREBASE_API_KEY: 'SENTINEL-3',
+    FIREBASE_API_KEY: 'SENTINEL-3',
     UNRELATED: 'SENTINEL-4',
   });
   assert.equal(result.level, 'warn');
-  assert.match(text(result), /Found other Firebase-looking variable name\(s\): FIREBASE_CONFIG, VITE_FIREBASE_API_KEY, vite_firebase_config\./);
+  assert.match(text(result), /Found other Firebase-looking variable name\(s\): FIREBASE_API_KEY, FIREBASE_CONFIG, vite_firebase_config\./);
   assert.match(text(result), /VITE_ prefix/);
   assert.doesNotMatch(text(result), /SENTINEL|UNRELATED/);
   // no noise when nothing looks misnamed, or when the real variable is present
@@ -79,7 +79,7 @@ test('REQUIRE_FIREBASE_CONFIG turns a missing or invalid config into a build err
     const missing = checkFirebaseBuildEnv({ REQUIRE_FIREBASE_CONFIG: flag });
     assert.equal(missing.level, 'error', flag);
     assert.equal(missing.fatal, true, flag);
-    assert.match(missing.errorMessage, /VITE_FIREBASE_CONFIG is not set.*REQUIRE_FIREBASE_CONFIG is set, so the build is stopped/, flag);
+    assert.match(missing.errorMessage, /is not set.*REQUIRE_FIREBASE_CONFIG is set, so the build is stopped/, flag);
     const invalid = checkFirebaseBuildEnv({ REQUIRE_FIREBASE_CONFIG: flag, VITE_FIREBASE_CONFIG: 'nope' });
     assert.equal(invalid.fatal, true, flag);
   }
@@ -137,7 +137,7 @@ test('the Vite plugin reads .env.local exactly as documented in the README, and 
     let run = runPlugin({ dir });
     assert.equal(run.thrown, null);
     assert.equal(run.logs[0][0], 'warn');
-    assert.match(run.logs[0][1], /^\[psd-gaming\] ⚠ VITE_FIREBASE_CONFIG is not set/);
+    assert.match(run.logs[0][1], /^\[psd-gaming\] ⚠ The Firebase config \(VITE_FIREBASE_\* variables\) is not set/);
 
     // 2) the README's .env.local example: unquoted one-line JSON
     writeFileSync(join(dir, '.env.local'), `VITE_FIREBASE_CONFIG=${validLine}\n`);
@@ -170,4 +170,28 @@ test('the Vite plugin reads .env.local exactly as documented in the README, and 
     }
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('separate VITE_FIREBASE_* variables are acknowledged, and a partial set is reported by variable name', () => {
+  const vars = {
+    VITE_FIREBASE_API_KEY: VALID.apiKey,
+    VITE_FIREBASE_AUTH_DOMAIN: VALID.authDomain,
+    VITE_FIREBASE_PROJECT_ID: VALID.projectId,
+    VITE_FIREBASE_APP_ID: VALID.appId,
+  };
+  const ok = checkFirebaseBuildEnv({ ...vars, VERCEL: '1', VERCEL_ENV: 'production' });
+  assert.equal(ok.level, 'ok');
+  assert.match(text(ok), /VITE_FIREBASE_\* variables are set for this Vercel production.*psd-arcade-test/);
+  assert.doesNotMatch(text(ok), /test-api-key-123/);
+  assert.doesNotMatch(text(ok), /Firebase-looking/);
+
+  const { VITE_FIREBASE_APP_ID, ...partial } = vars;
+  const bad = checkFirebaseBuildEnv({ ...partial, VERCEL: '1', VERCEL_ENV: 'production' });
+  assert.equal(bad.level, 'warn');
+  assert.match(text(bad), /invalid for this Vercel production: Missing required Firebase variable\(s\): VITE_FIREBASE_APP_ID/);
+  assert.equal(checkFirebaseBuildEnv({ ...partial, REQUIRE_FIREBASE_CONFIG: '1' }).fatal, true);
+
+  const secret = checkFirebaseBuildEnv({ ...vars, VITE_FIREBASE_API_KEY: `${PEM_HEADER}\nSENTINEL` });
+  assert.equal(secret.fatal, true);
+  assert.doesNotMatch(text(secret), /SENTINEL|BEGIN/);
 });

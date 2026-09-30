@@ -3,14 +3,18 @@ import { GoogleAuthProvider, getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 import {
   FIREBASE_CONFIG_ENV_NAME,
-  parseFirebaseConfig,
+  resolveFirebaseConfig,
   summarizeFirebaseConfig,
 } from './firebase-config.js';
 
 const silentLogger = { error() {}, warn() {} };
 
 /**
- * Reads the raw VITE_FIREBASE_CONFIG value, validates it, and starts Firebase only when it is valid.
+ * Validates the Firebase config and starts Firebase only when it is valid.
+ *
+ * `source` is either the env object (`import.meta.env`: one VITE_FIREBASE_* variable per field, with
+ * the one-line JSON VITE_FIREBASE_CONFIG as a fallback) or, for older callers, the raw
+ * VITE_FIREBASE_CONFIG string / undefined.
  *
  * - missing / invalid config: Firebase is NOT initialized (`initializeApp` is never called) and
  *   `setup` explains exactly why.
@@ -19,10 +23,13 @@ const silentLogger = { error() {}, warn() {} };
  *   half-started Firebase.
  *
  * The Firebase Web config is public browser configuration (not a secret), but it is still never
- * hard-coded here: it only ever arrives through the build-time environment.
+ * hard-coded here: it only ever arrives through the build-time environment
+ * (VITE_FIREBASE_API_KEY, VITE_FIREBASE_AUTH_DOMAIN, … or the legacy VITE_FIREBASE_CONFIG).
  */
-export function initializeFirebase(rawConfig, { dev = false, logger = console } = {}) {
-  const parsed = parseFirebaseConfig(rawConfig, { dev });
+export function initializeFirebase(source, { dev = false, logger = console } = {}) {
+  const env = source !== null && typeof source === 'object' ? source : { [FIREBASE_CONFIG_ENV_NAME]: source };
+  const parsed = resolveFirebaseConfig(env, { dev });
+  const configName = parsed.source === 'env-vars' ? 'the VITE_FIREBASE_* variables' : FIREBASE_CONFIG_ENV_NAME;
   let app = null;
   let auth = null;
   let db = null;
@@ -47,10 +54,10 @@ export function initializeFirebase(rawConfig, { dev = false, logger = console } 
       setup = {
         status: 'invalid',
         code: 'init-failed',
-        message: `Firebase could not start with the config in ${FIREBASE_CONFIG_ENV_NAME} (${reason}). Double-check the values in Firebase Console → Project settings → Your apps.`,
+        message: `Firebase could not start with the config in ${configName} (${reason}). Double-check the values in Firebase Console → Project settings → Your apps.`,
         hint: dev
-          ? 'Fix the value in .env.local and restart npm run dev.'
-          : 'Fix the value in Vercel → Project → Settings → Environment Variables, then redeploy.',
+          ? 'Fix the value(s) in .env.local and restart npm run dev.'
+          : 'Fix the value(s) in Vercel → Project → Settings → Environment Variables, then redeploy.',
         projectId: '',
         authDomain: '',
       };
@@ -69,7 +76,7 @@ export function initializeFirebase(rawConfig, { dev = false, logger = console } 
 }
 
 const viteEnv = import.meta.env;
-const services = initializeFirebase(viteEnv?.VITE_FIREBASE_CONFIG, {
+const services = initializeFirebase(viteEnv ?? {}, {
   dev: Boolean(viteEnv?.DEV),
   // Outside Vite (for example when unit tests import this file) there is no env to complain about.
   logger: viteEnv ? console : silentLogger,
