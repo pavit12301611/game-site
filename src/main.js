@@ -2,20 +2,43 @@ import './styles.css';
 import {
   CATEGORIES,
   GAMES,
+  GAME_COVERS,
   applyGameAction,
   createInitialGameState,
   getGame,
+  getGameArtwork,
+  getGameGuide,
   getMemoryCardIcon,
   getQuizQuestion,
 } from './catalog.js';
-import { auth, db, firebaseError, firebaseReady } from './firebase.js';
+import { auth, createGoogleProvider, db, firebaseError, firebaseReady } from './firebase.js';
 import {
   createUserWithEmailAndPassword,
+  getRedirectResult,
+  linkWithPopup,
+  linkWithRedirect,
   onAuthStateChanged,
   signInAnonymously,
   signInWithEmailAndPassword,
+  signInWithPopup,
+  signInWithRedirect,
   signOut,
 } from 'firebase/auth';
+import {
+  DISPLAY_NAME_STORAGE_KEY,
+  FAVORITES_STORAGE_KEY,
+  RECENT_STORAGE_KEY,
+  SOUND_STORAGE_KEY,
+  getStoredThemePreference,
+  loadStoredGameIds,
+  nextToggledTheme,
+  recordRecentGameId,
+  resolveTheme,
+  saveThemePreference,
+  suggestUsername,
+  toggleFavoriteGameId,
+  validateUsername,
+} from './helpers.js';
 import {
   collection,
   doc,
@@ -58,7 +81,15 @@ const state = {
   adminLoading: false,
   selectedBattleTarget: '',
   codeDraft: [0, 0, 0, 0],
-  displayName: localStorage.getItem('psd-display-name') || '',
+  displayName: localStorage.getItem(DISPLAY_NAME_STORAGE_KEY) || '',
+  themePreference: getStoredThemePreference(),
+  resolvedTheme: resolveTheme(getStoredThemePreference(), window.matchMedia?.('(prefers-color-scheme: light)').matches ?? false),
+  soundEnabled: localStorage.getItem(SOUND_STORAGE_KEY) === 'true',
+  favorites: loadStoredGameIds(localStorage, FAVORITES_STORAGE_KEY, new Set(GAMES.map((game) => game.id))),
+  recentGames: loadStoredGameIds(localStorage, RECENT_STORAGE_KEY, new Set(GAMES.map((game) => game.id))),
+  online: navigator.onLine !== false,
+  redirectChecked: false,
+  authError: '',
   cpuTimer: null,
   cpuPending: false,
 };
@@ -89,6 +120,10 @@ const ICONS = {
   gamepad: '<path d="M6 12h4m-2-2v4m8-3h.01M18 13h.01M7 7h10a4 4 0 0 1 3.9 3.1l1 4A3 3 0 0 1 19 18l-3.2-2.1H8.2L5 18a3 3 0 0 1-2.9-3.9l1-4A4 4 0 0 1 7 7Z"/>',
   exit: '<path d="M10 17l5-5-5-5M15 12H3m9-8h7a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-7"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  settings: '<path d="M12 3v2m0 14v2M3 12h2m14 0h2M5.6 5.6 7 7m10 10 1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4"/><circle cx="12" cy="12" r="3.5"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4"/>',
+  moon: '<path d="M20.5 15.2A8.5 8.5 0 0 1 8.8 3.5 8.5 8.5 0 1 0 20.5 15.2Z"/>',
+  wifi: '<path d="M2 8.5a15.5 15.5 0 0 1 20 0M5 12a10.8 10.8 0 0 1 14 0M8.5 15.5a6 6 0 0 1 7 0M12 19h.01"/>',
 };
 
 function icon(name, className = '') {
@@ -97,6 +132,59 @@ function icon(name, className = '') {
 
 function esc(value = '') {
   return String(value).replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
+}
+
+function systemPrefersLight() {
+  return Boolean(window.matchMedia?.('(prefers-color-scheme: light)').matches);
+}
+
+function applyTheme(preference = state.themePreference, shouldRender = false) {
+  state.themePreference = saveThemePreference(preference);
+  state.resolvedTheme = resolveTheme(state.themePreference, systemPrefersLight());
+  document.documentElement.dataset.theme = state.resolvedTheme;
+  document.documentElement.style.colorScheme = state.resolvedTheme;
+  const themeMeta = document.querySelector('#meta-theme-color');
+  if (themeMeta) themeMeta.setAttribute('content', state.resolvedTheme === 'light' ? '#f3f7ff' : '#07152d');
+  if (shouldRender) render();
+}
+
+function toggleTheme() {
+  applyTheme(nextToggledTheme(state.resolvedTheme), true);
+  showToast(`${state.resolvedTheme === 'light' ? 'Light' : 'Dark'} theme selected.`);
+}
+
+function setSoundEnabled(enabled) {
+  state.soundEnabled = Boolean(enabled);
+  try { localStorage.setItem(SOUND_STORAGE_KEY, String(state.soundEnabled)); } catch {}
+}
+
+function playUiTone(kind = 'tap') {
+  if (!state.soundEnabled || !window.AudioContext) return;
+  try {
+    const context = new window.AudioContext();
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.type = 'sine';
+    oscillator.frequency.value = kind === 'win' ? 660 : kind === 'error' ? 180 : 420;
+    gain.gain.setValueAtTime(0.018, context.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.08);
+    oscillator.connect(gain).connect(context.destination);
+    oscillator.start();
+    oscillator.stop(context.currentTime + 0.09);
+    oscillator.addEventListener('ended', () => void context.close(), { once: true });
+  } catch {
+    // Audio is a progressive enhancement; never block a game move.
+  }
+}
+
+function recordRecentGame(gameId) {
+  state.recentGames = recordRecentGameId(state.recentGames, gameId, new Set(GAMES.map((game) => game.id)), 8, localStorage);
+}
+
+function toggleFavorite(gameId) {
+  state.favorites = toggleFavoriteGameId(state.favorites, gameId, new Set(GAMES.map((game) => game.id)), localStorage);
+  const game = getGame(gameId);
+  showToast(`${game?.title || 'Game'} ${state.favorites.includes(gameId) ? 'added to favorites' : 'removed from favorites'}.`);
 }
 
 function currentUid() {
@@ -198,16 +286,25 @@ function showToast(message, kind = 'success') {
 function friendlyError(error) {
   const code = error?.code || '';
   const known = {
-    'auth/invalid-credential': 'That email and password combination did not match.',
+    'auth/invalid-credential': 'That sign-in did not match an existing account.',
+    'auth/wrong-password': 'That email and password combination did not match.',
+    'auth/user-not-found': 'No account was found for that email yet.',
     'auth/email-already-in-use': 'That email is already registered. Try signing in instead.',
     'auth/weak-password': 'Choose a password with at least 6 characters.',
     'auth/invalid-email': 'Enter a valid email address.',
-    'auth/operation-not-allowed': 'Enable this sign-in method in Firebase Authentication first.',
-    'auth/unauthorized-domain': 'Add this website domain to Firebase Authentication’s authorized domains.',
+    'auth/operation-not-allowed': 'This sign-in method is disabled. Enable it in Firebase Authentication first.',
+    'auth/unauthorized-domain': 'This domain is not authorized. Add it in Firebase Authentication → Settings → Authorized domains.',
+    'auth/popup-blocked': 'Your browser blocked the Google popup. We’ll continue with a secure redirect instead.',
+    'auth/popup-closed-by-user': 'The Google sign-in window was closed before sign-in finished.',
+    'auth/cancelled-popup-request': 'The Google sign-in was cancelled. Try again when you are ready.',
+    'auth/network-request-failed': 'The network connection dropped. Check your connection and try again.',
+    'auth/credential-already-in-use': 'That Google account is already connected to another PSD-gaming account. You can sign in to that account without deleting this guest account.',
+    'auth/account-exists-with-different-credential': 'An account already exists for that email with another sign-in method. Sign in with that method first.',
     'permission-denied': 'Firebase denied this action. Double-check the Firestore rules in README.md.',
     'firestore/permission-denied': 'Firebase denied this action. Double-check the Firestore rules in README.md.',
     'unavailable': 'Firebase is temporarily unavailable. Check your connection and try again.',
   };
+  if (!navigator.onLine && (code === 'unavailable' || code === 'auth/network-request-failed')) return 'You appear to be offline. Reconnect and try again; local practice is still available.';
   return known[code] || error?.message || 'Something went wrong. Please try again.';
 }
 
@@ -230,12 +327,88 @@ async function ensureOnlineUser() {
   return result.user;
 }
 
-async function registerProfile(user, rawUsername) {
-  const username = rawUsername.trim();
-  const usernameLower = username.toLowerCase();
-  if (!/^[a-z0-9_]{3,18}$/.test(usernameLower)) {
-    throw new Error('Usernames must be 3–18 characters: letters, numbers, or underscores.');
+function isGoogleUser(user = state.user) {
+  return Boolean(user?.providerData?.some((provider) => provider.providerId === 'google.com'));
+}
+
+async function finishGoogleAuthentication(user, successMessage = 'Google sign-in confirmed.') {
+  state.user = user;
+  state.authError = '';
+  await refreshAccount(user);
+  if (state.profile) {
+    state.modal = null;
+    showToast(successMessage);
+  } else if (isGoogleUser(user)) {
+    state.modal = {
+      type: 'username',
+      suggestion: suggestUsername(user.displayName, user.email),
+    };
+    render();
   }
+}
+
+async function redirectGoogleSignIn({ linkGuest = false } = {}) {
+  const provider = createGoogleProvider();
+  state.authError = '';
+  showToast('Opening Google sign-in…', 'success');
+  if (linkGuest && auth.currentUser?.isAnonymous) {
+    await linkWithRedirect(auth.currentUser, provider);
+  } else {
+    await signInWithRedirect(auth, provider);
+  }
+}
+
+async function handleGoogleSignIn({ forceExistingAccount = false } = {}) {
+  if (!firebaseReady) throw new Error('Firebase is not configured yet. Local practice is ready.');
+  const current = auth.currentUser || state.user;
+  const shouldLink = !forceExistingAccount && Boolean(current?.isAnonymous);
+  const provider = createGoogleProvider();
+  try {
+    const result = shouldLink
+      ? await linkWithPopup(current, provider)
+      : await signInWithPopup(auth, provider);
+    await finishGoogleAuthentication(result.user, shouldLink ? 'Google linked — your guest identity is preserved.' : 'Welcome to the arcade with Google.');
+  } catch (error) {
+    if (error?.code === 'auth/credential-already-in-use') {
+      state.modal = { type: 'google-conflict' };
+      render();
+      return;
+    }
+    if (['auth/popup-blocked', 'auth/operation-not-supported-in-this-environment', 'auth/web-storage-unsupported'].includes(error?.code)) {
+      try {
+        await redirectGoogleSignIn({ linkGuest: shouldLink });
+      } catch (redirectError) {
+        throw redirectError;
+      }
+      return;
+    }
+    throw error;
+  }
+}
+
+async function processGoogleRedirect() {
+  if (!firebaseReady || state.redirectChecked) return;
+  state.redirectChecked = true;
+  try {
+    const result = await getRedirectResult(auth);
+    if (result?.user) {
+      await finishGoogleAuthentication(result.user, 'Google sign-in confirmed.');
+    }
+  } catch (error) {
+    if (error?.code === 'auth/credential-already-in-use') {
+      state.modal = { type: 'google-conflict' };
+      render();
+    } else if (error?.code !== 'auth/popup-closed-by-user') {
+      state.authError = friendlyError(error);
+      showToast(state.authError, 'warning');
+    }
+  }
+}
+
+async function registerProfile(user, rawUsername) {
+  const validation = validateUsername(rawUsername);
+  if (!validation.ok) throw new Error(validation.error);
+  const { username, usernameLower } = validation;
   const profileRef = doc(db, 'profiles', user.uid);
   const usernameRef = doc(db, 'usernames', usernameLower);
   await runTransaction(db, async (transaction) => {
@@ -246,7 +419,7 @@ async function registerProfile(user, rawUsername) {
   });
   state.profile = { uid: user.uid, username, usernameLower };
   state.displayName = username;
-  localStorage.setItem('psd-display-name', username);
+  localStorage.setItem(DISPLAY_NAME_STORAGE_KEY, username);
   await refreshAdminStatus(user);
   subscribeSocial(user);
 }
@@ -266,13 +439,22 @@ async function refreshAccount(user) {
   state.user = user;
   state.profile = null;
   state.isAdmin = false;
+  state.requests = [];
+  state.friends = [];
+  state.invites = [];
   stopRequests(); stopFriends(); stopInvites();
   stopRequests = emptyUnsubscribe; stopFriends = emptyUnsubscribe; stopInvites = emptyUnsubscribe;
   if (user && !user.isAnonymous && firebaseReady) {
     try {
       const profileSnap = await getDoc(doc(db, 'profiles', user.uid));
-      if (profileSnap.exists()) state.profile = profileSnap.data();
-      else if (state.profile?.uid !== user.uid) state.profile = null;
+      if (profileSnap.exists()) {
+        state.profile = profileSnap.data();
+      } else if (isGoogleUser(user) && (!state.modal || state.modal.type === 'auth')) {
+        state.modal = {
+          type: 'username',
+          suggestion: suggestUsername(user.displayName, user.email),
+        };
+      }
       await refreshAdminStatus(user);
       subscribeSocial(user);
     } catch (error) {
@@ -363,7 +545,7 @@ async function createOnlineRoom(gameId, maxPlayers = 2, friend = null, chosenNam
   if (![2, 3].includes(Number(maxPlayers))) throw new Error('Choose a room size of 2 or 3 players.');
   const name = chosenName.trim().slice(0, 20) || playerDisplayName(user);
   state.displayName = name;
-  localStorage.setItem('psd-display-name', name);
+  localStorage.setItem(DISPLAY_NAME_STORAGE_KEY, name);
   const roomRef = doc(collection(db, 'rooms'));
   const initialPlayers = [{ uid: user.uid, name }];
   const gameState = createInitialGameState(game, initialPlayers, roomRef.id);
@@ -426,6 +608,7 @@ async function doOnlineAction(action) {
 function startPractice(gameId) {
   const game = getGame(gameId);
   if (!game) return;
+  recordRecentGame(gameId);
   const players = [
     { uid: 'local-you', name: 'You' },
     { uid: 'local-cpu', name: 'CPU rival' },
@@ -450,6 +633,7 @@ function localMove(uid, action) {
     const game = getGame(state.local.gameId);
     const next = applyGameAction(game, state.local.gameState, uid, action, state.local.players);
     state.local.gameState = next;
+    playUiTone(next.phase === 'finished' ? 'win' : 'tap');
     render();
     if (game.engine !== 'race') scheduleCpuMove();
   } catch (error) {
@@ -464,7 +648,9 @@ async function sendGameAction(action) {
   }
   try {
     await doOnlineAction(action);
+    playUiTone('tap');
   } catch (error) {
+    playUiTone('error');
     showToast(friendlyError(error), 'warning');
   }
 }
@@ -585,6 +771,21 @@ async function copyRoomLink() {
   }
 }
 
+async function shareRoomLink() {
+  if (!state.room?.id) return copyRoomLink();
+  const url = formatGameLink();
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: `${getGame(state.room.gameId)?.title || 'PSD-gaming'} room`, text: 'Join my PSD-gaming room.', url });
+      showToast('Invite shared.');
+      return;
+    } catch (error) {
+      if (error?.name === 'AbortError') return;
+    }
+  }
+  await copyRoomLink();
+}
+
 function modalOpen(modal) {
   state.modal = modal;
   render();
@@ -627,7 +828,7 @@ function renderSidebar() {
       <button class="text-button" data-action="open-friends">Find your crew ${icon('arrow')}</button>
     </div>
     <div class="sidebar-bottom">
-      <div class="connection-dot ${firebaseReady ? 'is-live' : ''}"></div><span>${firebaseReady ? 'Arcade network ready' : 'Local practice mode'}</span>
+      <div class="connection-dot ${state.online && firebaseReady ? 'is-live' : ''}"></div><span>${state.online ? (firebaseReady ? 'Arcade network ready' : 'Local practice mode') : 'Offline · local play'}</span>
     </div>
   </aside>`;
 }
@@ -635,10 +836,13 @@ function renderSidebar() {
 function renderTopbar() {
   const name = state.profile?.username || (state.user?.isAnonymous ? 'Guest player' : 'Welcome, player');
   const unread = state.requests.length + state.invites.length;
+  const themeLabel = state.resolvedTheme === 'light' ? 'Switch to dark theme' : 'Switch to light theme';
   return `<header class="topbar">
     <div class="topbar-mobile-brand">${renderBrand()}<b>PSD<span>-GAMING</span></b></div>
     <label class="search-box">${icon('search')}<input id="global-search" type="search" placeholder="Search 40 arcade games..." value="${esc(state.query)}" aria-label="Search the game library" /><kbd>⌘ K</kbd></label>
     <div class="topbar-actions">
+      <span class="network-status ${state.online ? 'is-online' : 'is-offline'}" title="${state.online ? (firebaseReady ? 'Online; Firebase is configured' : 'Online; local practice only') : 'Offline; local practice is available'}"><i></i><span>${state.online ? (firebaseReady ? 'ONLINE' : 'LOCAL') : 'OFFLINE'}</span></span>
+      <button class="icon-button theme-toggle" data-action="toggle-theme" aria-label="${themeLabel}" title="${themeLabel}">${icon(state.resolvedTheme === 'light' ? 'moon' : 'sun')}</button>
       <button class="icon-button notification-button" data-action="notifications" aria-label="Notifications">${icon('bell')}${unread ? `<i>${unread > 9 ? '9+' : unread}</i>` : ''}</button>
       ${state.user ? `<button class="profile-button" data-action="account-menu"><span class="avatar ${state.user.isAnonymous ? 'avatar-guest' : ''}">${esc((state.profile?.username || state.user.email || 'G').slice(0, 1).toUpperCase())}</span><span class="profile-copy"><b>${esc(name)}</b><small>${state.user.isAnonymous ? 'Playing as a guest' : 'Arcade member'}</small></span><span class="profile-chevron">⌄</span></button>` : `<button class="button button-quiet top-signin" data-action="open-auth">Sign in</button>`}
     </div>
@@ -650,7 +854,8 @@ function renderMobileNav() {
     ['home', 'Home', 'home'], ['catalog', 'Games', 'grid'], ['friends', 'Friends', 'people'],
   ];
   if (state.isAdmin) items.push(['admin', 'Admin', 'shield']);
-  return `<nav class="mobile-nav ${state.isAdmin ? 'has-admin' : ''}" aria-label="Mobile navigation">${items.map(([page, label, iconName]) => `<button class="mobile-nav-item ${state.page === page ? 'is-active' : ''}" data-action="navigate" data-page="${page}">${icon(iconName)}<span>${label}</span></button>`).join('')}</nav>`;
+  const pageItems = items.map(([page, label, iconName]) => `<button class="mobile-nav-item ${state.page === page ? 'is-active' : ''}" data-action="navigate" data-page="${page}">${icon(iconName)}<span>${label}</span></button>`).join('');
+  return `<nav class="mobile-nav has-settings ${state.isAdmin ? 'has-admin' : ''}" aria-label="Mobile navigation">${pageItems}<button class="mobile-nav-item" data-action="open-settings">${icon('settings')}<span>Settings</span></button></nav>`;
 }
 
 function renderShell() {
@@ -669,18 +874,32 @@ function renderPage() {
   }
 }
 
-function renderGameCard(game, index = 0) {
+function renderGameCard(game, index = 0, aboveFold = false) {
+  const artwork = getGameArtwork(game);
+  const isFavorite = state.favorites.includes(game.id);
   return `<article class="game-card" style="--card-accent:var(--${game.accent || 'blue'});--card-index:${index}">
     <button class="game-card-hit" data-action="open-game" data-game-id="${game.id}" aria-label="Open ${esc(game.title)}">
-      <div class="game-art art-${game.accent || 'blue'}"><div class="art-scanlines"></div><div class="art-meta"><span>${esc(game.category.toUpperCase())}</span><span class="art-players">2–3 <i>PLAYERS</i></span></div><div class="art-sigil">${esc(game.icon)}</div><div class="art-orbit orbit-one"></div><div class="art-orbit orbit-two"></div><div class="art-stamp">PSD<br>ARCADE</div><div class="art-bottomline"><span>NO DOWNLOAD</span><span>↗</span></div></div>
+      <div class="game-art art-${game.accent || 'blue'}"><img class="game-art-image" src="${artwork.src}" alt="" aria-hidden="true" loading="${aboveFold && index < 4 ? 'eager' : 'lazy'}" style="object-position:${artwork.focal}" onerror="this.classList.add('is-failed')"><div class="art-shade"></div><div class="art-scanlines"></div><div class="art-meta"><span>${esc(game.category.toUpperCase())}</span><span class="art-players">2–3 <i>PLAYERS</i></span></div><div class="art-sigil">${esc(game.icon)}</div><div class="art-orbit orbit-one"></div><div class="art-orbit orbit-two"></div><div class="art-stamp">${esc(artwork.engineLabel)}<br>PSD ARCADE</div><div class="art-bottomline"><span>NO DOWNLOAD</span><span>↗</span></div></div>
       <div class="game-card-copy"><div><h3>${esc(game.title)}</h3><p>${esc(game.blurb)}</p></div><span class="card-play">${icon('arrow')}</span></div>
     </button>
+    <button class="favorite-button ${isFavorite ? 'is-favorite' : ''}" data-action="toggle-favorite" data-game-id="${game.id}" aria-label="${isFavorite ? 'Remove' : 'Add'} ${esc(game.title)} ${isFavorite ? 'from' : 'to'} favorites" aria-pressed="${isFavorite}">${isFavorite ? '★' : '☆'}</button>
   </article>`;
 }
 
-function renderGameGrid(games) {
+function renderGameGrid(games, aboveFold = false) {
   if (!games.length) return `<div class="empty-state"><div class="empty-icon">⌕</div><h3>No games found</h3><p>Try another name or switch the category filter.</p><button class="button button-outline" data-action="clear-filters">Clear filters</button></div>`;
-  return `<div class="game-grid">${games.map((game, index) => renderGameCard(game, index)).join('')}</div>`;
+  return `<div class="game-grid">${games.map((game, index) => renderGameCard(game, index, aboveFold)).join('')}</div>`;
+}
+
+function gamesForIds(ids) {
+  return ids.map((id) => getGame(id)).filter(Boolean);
+}
+
+function renderPersonalShelves() {
+  const favoriteGames = gamesForIds(state.favorites).slice(0, 4);
+  const recentGames = gamesForIds(state.recentGames).slice(0, 4);
+  if (!favoriteGames.length && !recentGames.length) return '';
+  return `<section class="personal-shelves"><div class="personal-shelf-head"><div><div class="eyebrow">YOUR SHORTLIST</div><h2>Keep the good ones close<span>.</span></h2><p>Favorites and recent games stay on this device, no extra account data required.</p></div><button class="text-button" data-action="navigate" data-page="catalog">Open the full shelf ${icon('arrow')}</button></div>${favoriteGames.length ? `<div class="personal-shelf"><div class="shelf-label"><span>★ FAVORITES</span><b>${favoriteGames.length}</b></div>${renderGameGrid(favoriteGames)}</div>` : ''}${recentGames.length ? `<div class="personal-shelf"><div class="shelf-label"><span>↺ RECENTLY PLAYED</span><b>${recentGames.length}</b></div>${renderGameGrid(recentGames)}</div>` : ''}</section>`;
 }
 
 function filteredGames() {
@@ -691,17 +910,19 @@ function filteredGames() {
 
 function renderHome() {
   const featured = GAMES.slice(0, 4);
-  const networkLabel = firebaseReady ? 'ONLINE ROOMS READY' : 'LOCAL ARCADE READY';
+  const networkLabel = !state.online ? 'OFFLINE · LOCAL PRACTICE' : firebaseReady ? 'ONLINE ROOMS READY' : 'LOCAL ARCADE READY';
   return `<section class="hero-panel">
+    <img class="hero-artwork" src="${GAME_COVERS.Hero}" alt="" aria-hidden="true" fetchpriority="high" onerror="this.classList.add('is-failed')">
     <div class="hero-glow hero-glow-one"></div><div class="hero-glow hero-glow-two"></div><div class="hero-gridlines"></div>
     <div class="hero-copy"><div class="hero-kicker"><span class="live-pulse"></span>${networkLabel}<i>·</i> ZERO DOWNLOADS</div><h1>Your arcade.<br><em>Everywhere.</em></h1><p>Forty bite-size retro games. Your people on the other side of the link. That’s the whole setup.</p><div class="hero-actions"><button class="button button-primary" data-action="navigate" data-page="catalog">Explore all 40 games ${icon('arrow')}</button><button class="button button-glass" data-action="open-friends">Play with friends ${icon('people')}</button></div><div class="hero-footnote"><span class="tiny-avatar-stack"><i>✦</i><i>◉</i><i>▣</i></span><span>Made for <b>2–3 players</b> · works on laptops & phones</span></div></div>
     <div class="hero-console" aria-hidden="true"><div class="console-glow"></div><div class="console-top"><span class="console-led"></span><span>PSD / POCKET ARCADE</span><span>01:08</span></div><div class="console-screen"><div class="screen-stars">✦ &nbsp; · &nbsp; ✧ &nbsp; ·</div><div class="screen-title">READY<br><b>PLAYER 2?</b></div><div class="screen-versus"><span class="screen-player"><i>✕</i><small>YOU</small></span><span class="versus-line"><b>VS</b></span><span class="screen-player"><i>◯</i><small>FRIEND</small></span></div><div class="screen-bar"><i></i></div><small class="screen-footer">LINK UP · LOAD IN · PLAY ON</small></div><div class="console-controls"><span class="d-pad"><i></i><b></b></span><span class="console-speaker">•••<br>•••<br>•••</span><span class="console-buttons"><i>A</i><i>B</i></span></div><div class="console-foot">NO CART. NO CABLE. JUST THE LINK.</div></div>
     <div class="hero-edge-tag">P S D <span>·</span> 2026</div>
   </section>
   <section class="stat-strip" aria-label="Arcade facts"><div><b>40</b><span>tiny game worlds</span></div><i></i><div><b>2–3</b><span>players per room</span></div><i></i><div><b>0</b><span>downloads required</span></div><div class="stat-right">DESIGNED FOR THE DISTANCE <span>↗</span></div></section>
-  <section class="section-block featured-section"><div class="section-heading"><div><div class="eyebrow">PICK UP AND PLAY</div><h2>Start with a classic<span>.</span></h2><p>Easy to learn. Hard to leave the lobby.</p></div><button class="text-button" data-action="navigate" data-page="catalog">Browse all 40 ${icon('arrow')}</button></div>${renderGameGrid(featured)}</section>
+  <section class="section-block featured-section"><div class="section-heading"><div><div class="eyebrow">PICK UP AND PLAY</div><h2>Start with a classic<span>.</span></h2><p>Easy to learn. Hard to leave the lobby.</p></div><button class="text-button" data-action="navigate" data-page="catalog">Browse all 40 ${icon('arrow')}</button></div>${renderGameGrid(featured, true)}</section>
+  ${renderPersonalShelves()}
   <section class="invite-banner"><div class="invite-symbol">${icon('link')}</div><div><div class="eyebrow">A BETTER WAY TO SAY “YOU ON?”</div><h2>Make a room. Share the link.</h2><p>Your friends join in the browser. No install, no matching accounts required to try a guest room.</p></div><button class="button button-dark" data-action="quick-room">Create a game room ${icon('arrow')}</button></section>
-  ${!firebaseReady ? `<aside class="setup-callout">${icon('spark')}<span><b>Browsing locally for now.</b> Add <code>VITE_FIREBASE_CONFIG</code> and publish the Firestore rules to turn on rooms, friend requests, and accounts.</span><button data-action="show-setup">Setup guide ${icon('arrow')}</button></aside>` : ''}`;
+  ${!firebaseReady ? `<aside class="setup-callout">${icon('spark')}<span><b>Browsing locally for now.</b> Add <code>VITE_FIREBASE_CONFIG</code> and publish the Firestore rules to turn on rooms, friend requests, and accounts.${firebaseError ? ` <small>${esc(firebaseError)}</small>` : ''}</span><button data-action="show-setup">Setup guide ${icon('arrow')}</button></aside>` : ''}`;
 }
 
 function renderCatalog() {
@@ -726,8 +947,8 @@ function renderFriends() {
   const accountReady = Boolean(state.user && !state.user.isAnonymous && state.profile);
   const incoming = state.requests;
   const invites = state.invites;
-  return `<section class="friends-heading"><div><div class="eyebrow">GOOD GAMES ARE BETTER SHARED</div><h1>Your crew<span>.</span></h1><p>Add friends by username, then invite them straight into a game room.</p></div><span class="friend-online-label"><i></i> ONLINE PLAY ${firebaseReady ? 'READY' : 'NOT CONFIGURED'}</span></section>
-    ${!firebaseReady ? `<div class="notice-panel notice-warn">${icon('spark')}<div><b>Friends need Firebase.</b><p>Local practice still works. Add the one-field Firebase config to enable usernames and online invites.</p></div><button class="text-button" data-action="show-setup">Setup steps ${icon('arrow')}</button></div>` : !accountReady ? `<div class="notice-panel">${icon('people')}<div><b>Make a free arcade account to add friends.</b><p>Guests can play online with a link. A username account is only needed for friend lists and direct challenges.</p></div><button class="button button-primary" data-action="open-auth">Create account ${icon('arrow')}</button></div>` : ''}
+  return `<section class="friends-heading"><div><div class="eyebrow">GOOD GAMES ARE BETTER SHARED</div><h1>Your crew<span>.</span></h1><p>Add friends by username, then invite them straight into a game room.</p></div><span class="friend-online-label"><i></i> ${!state.online ? 'OFFLINE · LOCAL PLAY' : firebaseReady ? 'ONLINE PLAY READY' : 'NOT CONFIGURED'}</span></section>
+    ${!firebaseReady ? `<div class="notice-panel notice-warn">${icon('spark')}<div><b>Friends need Firebase.</b><p>Local practice still works. Add the one-field Firebase config to enable usernames and online invites.</p></div><button class="text-button" data-action="show-setup">Setup steps ${icon('arrow')}</button></div>` : !accountReady ? `<div class="notice-panel">${icon('people')}<div><b>${state.user && !state.user.isAnonymous && isGoogleUser(state.user) ? 'Finish your player setup to add friends.' : 'Make a free arcade account to add friends.'}</b><p>${state.user && !state.user.isAnonymous && isGoogleUser(state.user) ? 'Choose a unique PSD-gaming username first. Your Google account is already confirmed.' : 'Guests can play online with a link. A username account is only needed for friend lists and direct challenges.'}</p></div><button class="button button-primary" data-action="${state.user && !state.user.isAnonymous && isGoogleUser(state.user) ? 'open-username-setup' : 'open-auth'}">${state.user && !state.user.isAnonymous && isGoogleUser(state.user) ? 'Choose username' : 'Create account'} ${icon('arrow')}</button></div>` : ''}
     <div class="social-grid"><section class="surface friend-search-panel"><div class="panel-heading"><div><span class="eyebrow">FIND YOUR PLAYER TWO</span><h2>Add by username</h2></div><span class="search-panel-icon">${icon('search')}</span></div><form class="friend-search-form" data-form="friend-search"><label for="friend-username">ARCADE USERNAME</label><div class="friend-search-row"><span>@</span><input id="friend-username" name="username" type="text" minlength="3" maxlength="18" pattern="[A-Za-z0-9_]{3,18}" placeholder="try pixelpilot" ${accountReady ? '' : 'disabled'} required><button class="button button-primary" type="submit" ${accountReady ? '' : 'disabled'}>Find ${icon('arrow')}</button></div><small>They’ll need an account with a username to show up here.</small></form>
       ${state.friendResults.length ? `<div class="search-results">${state.friendResults.map((profile) => `<div class="search-result"><span class="avatar">${esc(profile.username.slice(0, 1).toUpperCase())}</span><div><b>@${esc(profile.username)}</b><small>Ready for a challenge</small></div><button class="button button-outline button-small" data-action="send-friend-request" data-uid="${esc(profile.uid)}" data-name="${esc(profile.username)}">Add friend ${icon('plus')}</button></div>`).join('')}</div>` : ''}</section>
       <section class="surface incoming-panel"><div class="panel-heading"><div><span class="eyebrow">YOUR INVITES</span><h2>Waiting for you <i>${incoming.length + invites.length}</i></h2></div><span class="invite-icon">${icon('bell')}</span></div>
@@ -808,9 +1029,15 @@ function renderLobby(game, room) {
   const players = currentPlayers();
   const isHost = state.user?.uid === room.hostUid;
   return `<div class="lobby-topline"><button class="text-button" data-action="navigate" data-page="catalog">${icon('exit')} Leave room</button><span class="room-code">ROOM <b>${esc(room.id.slice(0, 7).toUpperCase())}</b></span><span class="private-tag"><i></i> PRIVATE ROOM</span></div>
-    <section class="lobby-hero"><div class="lobby-art art-${game.accent}"><div class="art-scanlines"></div><div class="art-sigil">${esc(game.icon)}</div><div class="lobby-art-label">READY PLAYER<br><b>TOGETHER</b></div></div><div class="lobby-copy"><div class="eyebrow">YOU’RE IN THE RIGHT PLACE</div><h1>${esc(game.title)}<span>.</span></h1><p>${esc(game.blurb)} Invite one or two people and the game is on.</p><div class="lobby-badges"><span>${icon('people')} 2–${room.maxPlayers} players</span><span>${icon('link')} Invite-only</span><span>${icon('gamepad')} Browser game</span></div><div class="lobby-actions"><button class="button button-primary" data-action="copy-room-link">${icon('copy')} Copy invite link</button>${isHost ? `<button class="button button-glow" data-action="start-room" ${players.length < 2 ? 'disabled' : ''}>Start match ${icon('arrow')}</button>` : `<span class="host-wait">Waiting for <b>${esc(room.hostName || 'the host')}</b> to start…</span>`}</div><small class="lobby-hint">${players.length < 2 ? 'Share the link with at least one friend to unlock Start match.' : `All set. ${isHost ? 'Start when your crew is ready.' : 'The host can start the match now.'}`}</small></div></section>
+    <section class="lobby-hero"><div class="lobby-art art-${game.accent}"><img class="lobby-art-image" src="${getGameArtwork(game).src}" alt="" aria-hidden="true" loading="lazy" style="object-position:${getGameArtwork(game).focal}" onerror="this.classList.add('is-failed')"><div class="art-shade"></div><div class="art-scanlines"></div><div class="art-sigil">${esc(game.icon)}</div><div class="lobby-art-label">${esc(getGameArtwork(game).engineLabel)}<br><b>TOGETHER</b></div></div><div class="lobby-copy"><div class="eyebrow">YOU’RE IN THE RIGHT PLACE</div><h1>${esc(game.title)}<span>.</span></h1><p>${esc(game.blurb)} Invite one or two people and the game is on.</p><div class="lobby-badges"><span>${icon('people')} 2–${room.maxPlayers} players</span><span>${icon('link')} Invite-only</span><span>${icon('gamepad')} Browser game</span></div><div class="lobby-actions"><button class="button button-primary" data-action="copy-room-link">${icon('copy')} Copy invite link</button><button class="button button-outline" data-action="share-room-link">${icon('link')} Share</button>${isHost ? `<button class="button button-glow" data-action="start-room" ${players.length < 2 ? 'disabled' : ''}>Start match ${icon('arrow')}</button>` : `<span class="host-wait">Waiting for <b>${esc(room.hostName || 'the host')}</b> to start…</span>`}</div><small class="lobby-hint">${players.length < 2 ? 'Share the link with at least one friend to unlock Start match.' : `All set. ${isHost ? 'Start when your crew is ready.' : 'The host can start the match now.'}`}</small></div></section>
     <section class="lobby-players"><div class="panel-heading"><div><span class="eyebrow">THE LOBBY</span><h2>Players ready <i>${players.length} / ${room.maxPlayers}</i></h2></div><span class="lobby-live"><i></i> LINK SHARING ON</span></div><div class="player-slot-grid">${Array.from({ length: room.maxPlayers }, (_, index) => players[index] ? `<article class="player-slot is-filled"><span class="slot-avatar slot-${index}">${esc(players[index].name.slice(0, 1).toUpperCase())}</span><span class="slot-label">PLAYER ${index + 1}</span><b>${esc(players[index].name)}${players[index].uid === room.hostUid ? `<i class="host-chip">HOST</i>` : ''}</b><small><i></i> IN THE ROOM</small></article>` : `<article class="player-slot is-empty"><span class="slot-avatar">+</span><span class="slot-label">PLAYER ${index + 1}</span><b>Waiting for a friend</b><small>Share your invite link</small></article>`).join('')}</div></section>
     <section class="lobby-bottom"><div><b>Playing from different places?</b><span>That’s the point. Your moves sync to everyone in the room.</span></div><button class="text-button" data-action="copy-room-link">Copy link again ${icon('arrow')}</button></section>`;
+}
+
+function renderHowToPlay(game) {
+  const guide = getGameGuide(game);
+  if (!guide) return '';
+  return `<details class="how-to-play" open><summary><span class="how-to-icon">?</span><span><b>How to play</b><small>${esc(guide.mode)}</small></span><i>⌄</i></summary><div class="how-to-content"><div><span class="eyebrow">GOAL</span><p>${esc(guide.goal)}</p></div><div><span class="eyebrow">CONTROLS</span><p>${esc(guide.controls)}</p></div><div><span class="eyebrow">RULES</span><p>${esc(guide.rules)}</p></div><kbd>${esc(guide.shortcut)}</kbd></div></details>`;
 }
 
 function renderGameScreen() {
@@ -825,11 +1052,12 @@ function renderGameScreen() {
     : isTurn ? 'Your move' : `${activeName(gameState.turnUid, players)} is up`;
   return `<div class="play-topline"><button class="text-button" data-action="leave-session">${icon('exit')} Leave game</button><div class="playing-label"><span class="playing-pulse"></span>${state.local ? 'LOCAL PRACTICE' : 'LIVE ROOM'} <i>·</i> ${esc(game.category.toUpperCase())}</div><span class="room-code">${state.local ? 'PRACTICE' : `ROOM ${esc((state.room?.id || '').slice(0, 7).toUpperCase())}`}</span></div>
     <div class="play-layout"><section class="game-stage surface"><div class="game-stage-heading"><div class="game-stage-title"><span class="game-mini-icon art-${game.accent}">${esc(game.icon)}</span><div><div class="eyebrow">${esc(game.category.toUpperCase())} · ROUND ${gameState.round || gameState.questionIndex + 1 || 1}</div><h1>${esc(game.title)}</h1></div></div><div class="turn-chip ${gameState.phase === 'finished' ? 'is-finished' : ''}"><span></span>${esc(statusText)}</div></div>
+      ${renderHowToPlay(game)}
       ${gameState.phase === 'finished' ? `<div class="result-banner ${gameState.winnerUid === me ? 'is-win' : ''}"><span class="result-mark">${gameState.winnerUid === me ? '✦' : gameState.winnerUid ? '◉' : '＝'}</span><div><b>${gameState.winnerUid ? (gameState.winnerUid === me ? 'Nice one — you win!' : `${esc(activeName(gameState.winnerUid, players))} wins this one.`) : 'A perfectly even match.'}</b><small>${gameState.result === 'draw' ? 'Run it back and settle the score.' : 'Well played. Fancy another round?'}</small></div><button class="button button-outline button-small" data-action="play-again">Play again ${icon('arrow')}</button></div>` : ''}
       ${renderEngineBoard(game, gameState, players, me)}
       <div class="game-stage-footer"><span>${icon('spark')} ${esc(game.blurb)}</span><span>Moves sync automatically ${state.local ? 'on this device' : 'for every player'}</span></div>
     </section><aside class="match-rail surface"><div class="match-rail-heading"><div><span class="eyebrow">MATCH ROOM</span><h2>The players</h2></div><span class="live-tag"><i></i> LIVE</span></div><div class="match-player-list">${players.map((player, index) => `<div class="match-player ${player.uid === me ? 'is-me' : ''} ${gameState.turnUid === player.uid ? 'is-turn' : ''}"><span class="match-player-avatar player-avatar-${index}">${player.uid === 'local-cpu' ? 'CPU' : esc(player.name.slice(0, 1).toUpperCase())}</span><span class="match-player-copy"><b>${esc(player.name)} ${player.uid === me ? '<i>YOU</i>' : ''}</b><small>${gameState.turnUid === player.uid && gameState.phase !== 'finished' ? 'Playing now' : player.uid === state.room?.hostUid ? 'Room host' : 'In the match'}</small></span>${gameState.scores ? `<strong>${gameState.scores[player.uid] || 0}<small>PTS</small></strong>` : gameState.turnUid === player.uid ? `<span class="player-turn-dot"></span>` : ''}</div>`).join('')}</div>
-      ${state.local ? `<div class="rail-note"><span>${icon('spark')}</span><div><b>Just you and the browser.</b><small>Want a real rival? Create a room and send a link.</small></div></div><button class="button button-primary rail-main-button" data-action="quick-room">Invite a friend ${icon('arrow')}</button>` : `<div class="room-share-card"><span class="eyebrow">BRING IN ANOTHER PLAYER</span><p>Send the room link. They can join as a guest.</p><button class="button button-outline" data-action="copy-room-link">${icon('copy')} Copy room link</button></div>`}
+      ${state.local ? `<div class="rail-note"><span>${icon('spark')}</span><div><b>Just you and the browser.</b><small>Want a real rival? Create a room and send a link.</small></div></div><button class="button button-primary rail-main-button" data-action="quick-room">Invite a friend ${icon('arrow')}</button>` : `<div class="room-share-card"><span class="eyebrow">BRING IN ANOTHER PLAYER</span><p>Send the room link. They can join as a guest.</p><div class="room-share-actions"><button class="button button-outline" data-action="copy-room-link">${icon('copy')} Copy room link</button><button class="button button-quiet" data-action="share-room-link">${icon('link')} Share</button></div></div>`}
       <button class="text-button rail-back" data-action="navigate" data-page="catalog">Back to game shelf ${icon('arrow')}</button></aside></div>`;
 }
 
@@ -935,23 +1163,33 @@ function renderModal() {
     const game = getGame(modal.gameId);
     if (!game) return '';
     const friend = modal.friend;
-    return `<div class="modal-backdrop" data-action="modal-backdrop"><section class="modal-card game-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><button class="modal-close" data-action="close-modal" aria-label="Close">${icon('close')}</button><div class="modal-game-art art-${game.accent}"><div class="art-scanlines"></div><span>${esc(game.icon)}</span></div><div class="eyebrow">${esc(game.category.toUpperCase())} · 2–3 PLAYERS</div><h2 id="modal-title">${esc(game.title)}<span>.</span></h2><p>${esc(game.blurb)} Play a local practice round, or make a private room and bring your people in by link.</p><div class="modal-detail-row"><span>${icon('gamepad')} Runs in your browser</span><span>${icon('link')} Invite only</span></div><div class="game-modal-actions"><button class="button button-primary" data-action="create-room-for-game" data-game-id="${game.id}" ${firebaseReady ? '' : 'disabled'}>${icon('link')} ${friend ? `Challenge ${esc(friend.name)}` : 'Create online room'}</button><button class="button button-outline" data-action="practice-game" data-game-id="${game.id}">Practice locally ${icon('arrow')}</button></div>${!firebaseReady ? `<div class="modal-small-note">Online rooms turn on after the Firebase setup. Local practice works now.</div>` : `<div class="modal-small-note">Guests can join online rooms without creating an account.</div>`}</section></div>`;
+    return `<div class="modal-backdrop" data-action="modal-backdrop"><section class="modal-card game-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><button class="modal-close" data-action="close-modal" aria-label="Close">${icon('close')}</button><div class="modal-game-art art-${game.accent}"><img class="modal-art-image" src="${getGameArtwork(game).src}" alt="" aria-hidden="true" loading="lazy" style="object-position:${getGameArtwork(game).focal}" onerror="this.classList.add('is-failed')"><div class="art-shade"></div><div class="art-scanlines"></div><span>${esc(game.icon)}</span></div><div class="eyebrow">${esc(game.category.toUpperCase())} · 2–3 PLAYERS</div><h2 id="modal-title">${esc(game.title)}<span>.</span></h2><p>${esc(game.blurb)} Play a local practice round, or make a private room and bring your people in by link.</p><div class="modal-detail-row"><span>${icon('gamepad')} Runs in your browser</span><span>${icon('link')} Invite only</span></div><div class="game-modal-actions"><button class="button button-primary" data-action="create-room-for-game" data-game-id="${game.id}" ${firebaseReady ? '' : 'disabled'}>${icon('link')} ${friend ? `Challenge ${esc(friend.name)}` : 'Create online room'}</button><button class="button button-outline" data-action="practice-game" data-game-id="${game.id}">Practice locally ${icon('arrow')}</button></div>${!firebaseReady ? `<div class="modal-small-note">Online rooms turn on after the Firebase setup. Local practice works now.</div>` : `<div class="modal-small-note">Guests can join online rooms without creating an account.</div>`}</section></div>`;
   }
   if (modal.type === 'room') {
     const game = getGame(modal.gameId) || GAMES[0];
     return `<div class="modal-backdrop" data-action="modal-backdrop"><section class="modal-card room-modal" role="dialog" aria-modal="true" aria-labelledby="room-modal-title"><button class="modal-close" data-action="close-modal" aria-label="Close">${icon('close')}</button><div class="eyebrow">CREATE A PRIVATE ROOM</div><h2 id="room-modal-title">Bring your crew in<span>.</span></h2><p>We’ll make a shareable link. Friends can join as guests, or sign in if they want a username.</p><form data-form="create-room" class="create-room-form"><label>CHOOSE A GAME<select name="gameId">${GAMES.map((item) => `<option value="${item.id}" ${item.id === game.id ? 'selected' : ''}>${esc(item.title)}</option>`).join('')}</select></label><label>ROOM SIZE<div class="player-count-options"><label><input type="radio" name="maxPlayers" value="2" checked><span><b>2 PLAYERS</b><small>One friend joins you</small></span></label><label><input type="radio" name="maxPlayers" value="3"><span><b>3 PLAYERS</b><small>Bring two friends</small></span></label></div></label><label>YOUR DISPLAY NAME<input type="text" name="displayName" maxlength="20" value="${esc(state.displayName || playerDisplayName())}" placeholder="Pixel pilot"></label><button type="submit" class="button button-primary button-full" ${firebaseReady ? '' : 'disabled'}>Create room & get a link ${icon('arrow')}</button></form>${modal.friend ? `<div class="direct-invite-note">${icon('people')} Direct invite for <b>${esc(modal.friend.name)}</b> will appear in their friends inbox.</div>` : ''}${!firebaseReady ? `<div class="modal-small-note">Add <code>VITE_FIREBASE_CONFIG</code> and the Firestore rules before making rooms.</div>` : `<div class="modal-small-note">No account needed for a guest room. Usernames are optional.</div>`}</section></div>`;
   }
   if (modal.type === 'auth') {
-    return `<div class="modal-backdrop" data-action="modal-backdrop"><section class="modal-card auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-title"><button class="modal-close" data-action="close-modal" aria-label="Close">${icon('close')}</button><div class="auth-logo">${renderBrand()}</div><div class="eyebrow">A FREE ARCADE ACCOUNT</div><h2 id="auth-title">${modal.mode === 'register' ? 'Claim your player name.' : 'Welcome back.'}</h2><p>${modal.mode === 'register' ? 'Add a username to find friends and send direct challenges.' : 'Sign in to keep your username and friend list.'}</p><div class="auth-tabs"><button class="${modal.mode === 'login' ? 'is-active' : ''}" data-action="auth-mode" data-mode="login">Sign in</button><button class="${modal.mode === 'register' ? 'is-active' : ''}" data-action="auth-mode" data-mode="register">Create account</button></div><form data-form="auth" class="auth-form"><input type="hidden" name="mode" value="${modal.mode}">${modal.mode === 'register' ? `<label>ARCADE USERNAME<input name="username" type="text" minlength="3" maxlength="18" pattern="[A-Za-z0-9_]{3,18}" placeholder="pixelpilot" required></label>` : ''}<label>EMAIL ADDRESS<input name="email" type="email" autocomplete="email" placeholder="you@example.com" required></label><label>PASSWORD<input name="password" type="password" autocomplete="${modal.mode === 'register' ? 'new-password' : 'current-password'}" minlength="6" placeholder="At least 6 characters" required></label><button class="button button-primary button-full" type="submit">${modal.mode === 'register' ? 'Create my account' : 'Sign in'} ${icon('arrow')}</button></form><div class="auth-divider"><span>OR</span></div><button class="button button-outline button-full" data-action="guest-play" ${firebaseReady ? '' : 'disabled'}>Continue as a guest ${icon('arrow')}</button><small class="auth-legal">A guest can join a shared room without signing up. Online rooms use Firebase Anonymous Auth securely in the background.</small></section></div>`;
+    return `<div class="modal-backdrop" data-action="modal-backdrop"><section class="modal-card auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-title"><button class="modal-close" data-action="close-modal" aria-label="Close">${icon('close')}</button><div class="auth-logo">${renderBrand()}</div><div class="eyebrow">A FREE ARCADE ACCOUNT</div><h2 id="auth-title">${modal.mode === 'register' ? 'Claim your player name.' : 'Welcome back.'}</h2><p>${modal.mode === 'register' ? 'Add a username to find friends and send direct challenges.' : 'Sign in to keep your username and friend list.'}</p><button class="google-button" data-action="google-sign-in" ${firebaseReady ? '' : 'disabled'}><span class="google-glyph" aria-hidden="true">G</span><span>Continue with Google</span></button><small class="auth-provider-note">Popup sign-in is used when available; mobile or blocked popups continue in a secure redirect.</small><div class="auth-divider"><span>OR USE EMAIL</span></div><div class="auth-tabs"><button class="${modal.mode === 'login' ? 'is-active' : ''}" data-action="auth-mode" data-mode="login">Sign in</button><button class="${modal.mode === 'register' ? 'is-active' : ''}" data-action="auth-mode" data-mode="register">Create account</button></div><form data-form="auth" class="auth-form"><input type="hidden" name="mode" value="${modal.mode}">${modal.mode === 'register' ? `<label>ARCADE USERNAME<input name="username" type="text" minlength="3" maxlength="18" pattern="[A-Za-z0-9_]{3,18}" placeholder="pixelpilot" required></label>` : ''}<label>EMAIL ADDRESS<input name="email" type="email" autocomplete="email" placeholder="you@example.com" required></label><label>PASSWORD<input name="password" type="password" autocomplete="${modal.mode === 'register' ? 'new-password' : 'current-password'}" minlength="6" placeholder="At least 6 characters" required></label><button class="button button-primary button-full" type="submit">${modal.mode === 'register' ? 'Create my account' : 'Sign in'} ${icon('arrow')}</button></form><div class="auth-divider"><span>OR</span></div><button class="button button-outline button-full" data-action="guest-play" ${firebaseReady ? '' : 'disabled'}>Continue as a guest ${icon('arrow')}</button><small class="auth-legal">A guest can join a shared room without signing up. Google and email sign-in are confirmed by Firebase before the account UI changes.</small></section></div>`;
+  }
+  if (modal.type === 'username') {
+    const suggestion = modal.suggestion || suggestUsername(state.user?.displayName, state.user?.email);
+    return `<div class="modal-backdrop" data-action="modal-backdrop"><section class="modal-card username-modal" role="dialog" aria-modal="true" aria-labelledby="username-title"><button class="modal-close" data-action="close-modal" aria-label="Choose later">${icon('close')}</button><div class="username-badge">✦</div><div class="eyebrow">ONE LAST ARCADE SETUP</div><h2 id="username-title">Choose your player name<span>.</span></h2><p>Google confirmed your account. Pick a unique 3–18 character name before using friends and direct challenges.</p><form data-form="username-setup" class="auth-form"><label>PSD-GAMING USERNAME<input name="username" type="text" minlength="3" maxlength="18" pattern="[A-Za-z0-9_]{3,18}" value="${esc(suggestion)}" autocomplete="off" required></label><small class="username-hint">Letters, numbers, and underscores only. You can edit the suggestion.</small><button class="button button-primary button-full" type="submit">Claim this name ${icon('arrow')}</button></form><small class="auth-legal">The claim is atomic: if someone gets there first, your Google account stays safe and you can choose another name.</small></section></div>`;
+  }
+  if (modal.type === 'google-conflict') {
+    return `<div class="modal-backdrop" data-action="modal-backdrop"><section class="modal-card conflict-modal" role="dialog" aria-modal="true" aria-labelledby="google-conflict-title"><button class="modal-close" data-action="close-modal" aria-label="Close">${icon('close')}</button><div class="username-badge">G</div><div class="eyebrow">GOOGLE ACCOUNT ALREADY IN USE</div><h2 id="google-conflict-title">That Google account has a home<span>.</span></h2><p>It is already connected to another PSD-gaming account. Nothing was deleted or overwritten. You can sign in to that existing account, or keep your current guest account separate.</p><div class="conflict-actions"><button class="button button-primary button-full" data-action="google-sign-in-existing">Sign in to existing Google account ${icon('arrow')}</button><button class="button button-outline button-full" data-action="close-modal">Keep this account</button></div><small class="auth-legal">Signing in to the existing account will switch this browser to that account; the anonymous guest UID remains untouched in Firebase.</small></section></div>`;
   }
   if (modal.type === 'account') {
-    return `<div class="modal-backdrop" data-action="modal-backdrop"><section class="modal-card account-modal" role="dialog" aria-modal="true" aria-labelledby="account-title"><button class="modal-close" data-action="close-modal" aria-label="Close">${icon('close')}</button><span class="account-avatar">${esc((state.profile?.username || state.user?.email || 'G').slice(0, 1).toUpperCase())}</span><div class="eyebrow">PLAYER ACCOUNT</div><h2 id="account-title">${esc(state.profile?.username || (state.user?.isAnonymous ? 'Guest player' : state.user?.email || 'Arcade player'))}</h2><p>${state.user?.isAnonymous ? 'Playing as a guest. No username or friend list needed.' : esc(state.user?.email || 'Signed in to PSD-gaming')}</p>${state.user?.isAnonymous ? `<button class="button button-primary button-full" data-action="open-auth">Create an account ${icon('arrow')}</button>` : ''}<button class="button button-outline button-full" data-action="sign-out">Sign out</button></section></div>`;
+    return `<div class="modal-backdrop" data-action="modal-backdrop"><section class="modal-card account-modal" role="dialog" aria-modal="true" aria-labelledby="account-title"><button class="modal-close" data-action="close-modal" aria-label="Close">${icon('close')}</button><span class="account-avatar">${esc((state.profile?.username || state.user?.email || 'G').slice(0, 1).toUpperCase())}</span><div class="eyebrow">PLAYER ACCOUNT</div><h2 id="account-title">${esc(state.profile?.username || (state.user?.isAnonymous ? 'Guest player' : state.user?.email || 'Arcade player'))}</h2><p>${state.user?.isAnonymous ? 'Playing as a guest. Link Google to preserve this Firebase UID, or keep guest play link-only.' : esc(state.user?.email || 'Signed in to PSD-gaming')}</p>${state.user?.isAnonymous ? `<button class="google-button" data-action="google-sign-in">${'<span class="google-glyph" aria-hidden="true">G</span>'}<span>Link Google and keep this guest identity</span></button><button class="button button-primary button-full" data-action="open-auth">Create an email account ${icon('arrow')}</button>` : ''}${state.user && !state.user.isAnonymous && isGoogleUser(state.user) && !state.profile ? `<button class="button button-primary button-full" data-action="open-username-setup">Choose your player name ${icon('arrow')}</button>` : ''}<button class="button button-outline button-full" data-action="open-settings">${icon('settings')} Settings</button><button class="button button-outline button-full" data-action="sign-out">Sign out</button></section></div>`;
+  }
+  if (modal.type === 'settings') {
+    return `<div class="modal-backdrop" data-action="modal-backdrop"><section class="modal-card settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title"><button class="modal-close" data-action="close-modal" aria-label="Close">${icon('close')}</button><div class="eyebrow">PERSONALIZE THE CABINET</div><h2 id="settings-title">Settings<span>.</span></h2><p>These preferences stay on this device. Sound is off by default and uses only tiny UI tones.</p><form data-form="settings" class="settings-form"><fieldset><legend>THEME</legend><div class="theme-options"><label><input type="radio" name="theme" value="system" ${state.themePreference === 'system' ? 'checked' : ''}><span>System<small>Follow your device</small></span></label><label><input type="radio" name="theme" value="light" ${state.themePreference === 'light' ? 'checked' : ''}><span>Light<small>Bright arcade</small></span></label><label><input type="radio" name="theme" value="dark" ${state.themePreference === 'dark' ? 'checked' : ''}><span>Dark<small>Neon night</small></span></label></div></fieldset><label class="settings-label">DISPLAY NAME<input name="displayName" type="text" maxlength="20" value="${esc(state.displayName)}" placeholder="Pixel pilot"><small>Used for guest rooms and local practice. Username accounts keep their claimed username for friends.</small></label><label class="sound-toggle"><input name="soundEnabled" type="checkbox" ${state.soundEnabled ? 'checked' : ''}><span><b>Subtle sound effects</b><small>Short tap and result tones only</small></span></label><button class="button button-primary button-full" type="submit">Save settings ${icon('check')}</button></form></section></div>`;
   }
   if (modal.type === 'notifications') {
     return `<div class="modal-backdrop" data-action="modal-backdrop"><section class="modal-card notifications-modal" role="dialog" aria-modal="true" aria-labelledby="notifications-title"><button class="modal-close" data-action="close-modal" aria-label="Close">${icon('close')}</button><div class="eyebrow">YOUR ARCADE INBOX</div><h2 id="notifications-title">Invites & requests<span>.</span></h2>${state.requests.length || state.invites.length ? `<div class="invite-list">${state.requests.map((request) => `<div class="invite-row"><span class="avatar avatar-purple">${esc((request.fromName || 'P').slice(0, 1).toUpperCase())}</span><div class="invite-row-copy"><b>@${esc(request.fromName || 'player')} wants to connect</b><small>Friend request</small></div><button class="button button-primary button-small" data-action="accept-friend" data-request-id="${request.id}">Accept</button></div>`).join('')}${state.invites.map((invite) => `<div class="invite-row"><span class="avatar avatar-cyan">${esc((invite.fromName || 'P').slice(0, 1).toUpperCase())}</span><div class="invite-row-copy"><b>${esc(invite.fromName || 'A friend')} invited you</b><small>${esc(getGame(invite.gameId)?.title || 'A game')}</small></div><button class="button button-primary button-small" data-action="join-game-invite" data-invite-id="${invite.id}" data-room-id="${esc(invite.roomId)}">Join ${icon('arrow')}</button></div>`).join('')}</div>` : `<div class="empty-inline"><span>✦</span><b>All caught up</b><small>Friend requests and game invites show up here.</small></div>`}<button class="text-button notification-friends" data-action="open-friends">Open friends page ${icon('arrow')}</button></section></div>`;
   }
   if (modal.type === 'setup') {
-    return `<div class="modal-backdrop" data-action="modal-backdrop"><section class="modal-card setup-modal" role="dialog" aria-modal="true" aria-labelledby="setup-title"><button class="modal-close" data-action="close-modal" aria-label="Close">${icon('close')}</button><div class="eyebrow">ONE VERCEL FIELD · ONE RULES PASTE</div><h2 id="setup-title">Ready the online arcade<span>.</span></h2><p>Local games work now. Use the included <b>README.md</b> for the exact Firebase and Vercel steps.</p><ol class="setup-short-list"><li><i>01</i><span>Enable Anonymous and Email/Password sign-in in Firebase Authentication.</span></li><li><i>02</i><span>Create Firestore, then paste and publish <code>firestore.rules</code>.</span></li><li><i>03</i><span>In Vercel add one environment variable: <code>VITE_FIREBASE_CONFIG</code> with the Firebase Web config JSON.</span></li><li><i>04</i><span>Deploy, create your account, then add <code>admins / your-uid / admin: true</code> in Firestore.</span></li></ol><button class="button button-primary button-full" data-action="close-modal">Got it ${icon('check')}</button></section></div>`;
+    return `<div class="modal-backdrop" data-action="modal-backdrop"><section class="modal-card setup-modal" role="dialog" aria-modal="true" aria-labelledby="setup-title"><button class="modal-close" data-action="close-modal" aria-label="Close">${icon('close')}</button><div class="eyebrow">ONE VERCEL FIELD · ONE RULES PASTE</div><h2 id="setup-title">Ready the online arcade<span>.</span></h2><p>Local games work now. Use the included <b>README.md</b> for the exact Firebase and Vercel steps.</p><ol class="setup-short-list"><li><i>01</i><span>Enable Anonymous, Email/Password, and Google in Firebase Authentication; choose a project support email for Google.</span></li><li><i>02</i><span>Create Firestore, then paste and publish <code>firestore.rules</code>.</span></li><li><i>03</i><span>In Vercel add one public/config variable: <code>VITE_FIREBASE_CONFIG</code> with the Firebase Web config JSON, then authorize your production and preview domains.</span></li><li><i>04</i><span>Deploy, finish Google username setup, then add <code>admins / your-uid / admin: true</code> in Firestore if needed.</span></li></ol><button class="button button-primary button-full" data-action="close-modal">Got it ${icon('check')}</button></section></div>`;
   }
   return '';
 }
@@ -1022,6 +1260,27 @@ async function joinGameInvite(inviteId, roomId) {
   setHash(`room/${roomId}`);
 }
 
+async function handleUsernameSetupSubmit(form) {
+  if (!firebaseReady || !state.user || state.user.isAnonymous) throw new Error('A confirmed signed-in account is required to choose a username.');
+  const username = String(new FormData(form).get('username') || '').trim();
+  await registerProfile(state.user, username);
+  state.modal = null;
+  render();
+  showToast(`Welcome, @${username}. Friend features are ready.`);
+}
+
+function handleSettingsSubmit(form) {
+  const formData = new FormData(form);
+  const displayName = String(formData.get('displayName') || '').trim().slice(0, 20);
+  state.displayName = displayName;
+  try { localStorage.setItem(DISPLAY_NAME_STORAGE_KEY, displayName); } catch {}
+  setSoundEnabled(formData.get('soundEnabled') === 'on');
+  applyTheme(String(formData.get('theme') || 'system'), false);
+  state.modal = null;
+  render();
+  showToast('Settings saved on this device.');
+}
+
 async function handleAuthSubmit(form) {
   if (!firebaseReady) throw new Error('Firebase is not configured yet.');
   const formData = new FormData(form);
@@ -1050,7 +1309,7 @@ async function handleCreateRoomSubmit(form) {
   const displayName = String(formData.get('displayName') || '').trim();
   if (displayName) {
     state.displayName = displayName.slice(0, 20);
-    localStorage.setItem('psd-display-name', state.displayName);
+    localStorage.setItem(DISPLAY_NAME_STORAGE_KEY, state.displayName);
   }
   await createOnlineRoom(gameId, maxPlayers, state.modal?.friend || null, state.displayName);
   state.modal = null;
@@ -1073,10 +1332,13 @@ function handleClick(event) {
   const { gameId, page, category, index, col, uid, direction, choice, answer, lane, targetUid, requestId, inviteId, roomId } = actionButton.dataset;
   if (action === 'modal-backdrop' && event.target === actionButton) { modalClose(); return; }
   if (action === 'navigate') { navigate(page); return; }
-  if (action === 'open-game') { modalOpen({ type: 'game', gameId }); return; }
+  if (action === 'toggle-theme') { toggleTheme(); return; }
+  if (action === 'open-settings') { modalOpen({ type: 'settings' }); return; }
+  if (action === 'toggle-favorite') { toggleFavorite(gameId); return; }
+  if (action === 'open-game') { recordRecentGame(gameId); modalOpen({ type: 'game', gameId }); return; }
   if (action === 'filter-category') { state.category = category; render(); return; }
   if (action === 'clear-filters') { state.query = ''; state.category = 'All games'; render(); return; }
-  if (action === 'quick-play') { const game = GAMES[Math.floor(Math.random() * GAMES.length)]; modalOpen({ type: 'game', gameId: game.id }); return; }
+  if (action === 'quick-play') { const game = GAMES[Math.floor(Math.random() * GAMES.length)]; recordRecentGame(game.id); modalOpen({ type: 'game', gameId: game.id }); return; }
   if (action === 'quick-room') { openRoomModal(GAMES[0].id); return; }
   if (action === 'open-friends') { navigate('friends'); return; }
   if (action === 'show-setup') { modalOpen({ type: 'setup' }); return; }
@@ -1084,6 +1346,7 @@ function handleClick(event) {
   if (action === 'practice-game') { startPractice(gameId); return; }
   if (action === 'create-room-for-game') { openRoomModal(gameId, state.modal?.friend || null); return; }
   if (action === 'copy-room-link') { void copyRoomLink(); return; }
+  if (action === 'share-room-link') { void shareRoomLink(); return; }
   if (action === 'start-room') { void startRoom().catch((error) => showToast(friendlyError(error), 'warning')); return; }
   if (action === 'retry-room') { const route = parseHash(); state.roomError = ''; state.room = null; state.roomId = null; if (route.id) void openRoomFromLink(route.id); return; }
   if (action === 'leave-session') { routeBackToCatalog(); return; }
@@ -1102,6 +1365,15 @@ function handleClick(event) {
   if (action === 'code-digit') { const digitIndex = Number(index); state.codeDraft[digitIndex] = (state.codeDraft[digitIndex] + 1) % 6; render(); return; }
   if (action === 'code-submit') { void sendGameAction({ guess: [...state.codeDraft] }); state.codeDraft = [0, 0, 0, 0]; return; }
   if (action === 'open-auth') { modalOpen({ type: 'auth', mode: 'login' }); return; }
+  if (action === 'open-username-setup') { modalOpen({ type: 'username', suggestion: suggestUsername(state.user?.displayName, state.user?.email) }); return; }
+  if (action === 'google-sign-in') {
+    void handleGoogleSignIn().catch((error) => showToast(friendlyError(error), 'warning'));
+    return;
+  }
+  if (action === 'google-sign-in-existing') {
+    void handleGoogleSignIn({ forceExistingAccount: true }).catch((error) => showToast(friendlyError(error), 'warning'));
+    return;
+  }
   if (action === 'account-menu') { modalOpen({ type: 'account' }); return; }
   if (action === 'sign-out') { void signOut(auth).then(() => { modalClose(); showToast('Signed out. Come back anytime.'); }); return; }
   if (action === 'auth-mode') { modalOpen({ type: 'auth', mode: actionButton.dataset.mode }); return; }
@@ -1157,6 +1429,8 @@ function handleSubmit(event) {
   let task;
   if (type === 'create-room') task = handleCreateRoomSubmit(form);
   else if (type === 'auth') task = handleAuthSubmit(form);
+  else if (type === 'username-setup') task = handleUsernameSetupSubmit(form);
+  else if (type === 'settings') { handleSettingsSubmit(form); if (submitButton) submitButton.disabled = false; return; }
   else if (type === 'friend-search') { requestFriendSearch(form); if (submitButton) submitButton.disabled = false; return; }
   Promise.resolve(task).catch((error) => {
     showToast(friendlyError(error), 'warning');
@@ -1213,7 +1487,16 @@ function render() {
 }
 
 attachAppEvents();
-routeFromHash();
+applyTheme(state.themePreference);
+window.addEventListener('online', () => { state.online = true; render(); });
+window.addEventListener('offline', () => { state.online = false; render(); });
+const themeMedia = window.matchMedia?.('(prefers-color-scheme: light)');
+themeMedia?.addEventListener?.('change', () => {
+  if (state.themePreference === 'system') applyTheme('system', true);
+});
 if (firebaseReady) {
   onAuthStateChanged(auth, (user) => { void refreshAccount(user); });
+  void processGoogleRedirect().finally(() => routeFromHash());
+} else {
+  routeFromHash();
 }

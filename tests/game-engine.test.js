@@ -4,6 +4,8 @@ import {
   GAMES,
   applyGameAction,
   createInitialGameState,
+  getGameArtwork,
+  getGameGuide,
   getQuizQuestion,
 } from '../src/catalog.js';
 
@@ -25,6 +27,8 @@ test('the catalog contains exactly 40 unique, selectable games', () => {
   assert.equal(new Set(GAMES.map((game) => game.id)).size, 40);
   assert.ok(GAMES.every((game) => game.title && game.blurb && game.engine && game.options));
   assert.deepEqual(new Set(GAMES.map((game) => game.engine)), new Set(['line', 'drop', 'memory', 'race', 'rps', 'quiz', 'maze', 'battle', 'rally', 'code']));
+  assert.ok(GAMES.every((game) => getGameArtwork(game).src.startsWith('/images/')));
+  assert.ok(GAMES.every((game) => getGameGuide(game)?.goal && getGameGuide(game)?.controls && getGameGuide(game)?.rules));
 });
 
 test('every catalog entry initializes a serializable three-player match', () => {
