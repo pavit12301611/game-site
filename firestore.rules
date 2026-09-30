@@ -85,9 +85,11 @@ service cloud.firestore {
     }
 
     match /friendships/{friendshipId} {
-      allow get, list: if signedIn()
-        && resource.data.memberUids is list
-        && resource.data.memberUids.hasAny([request.auth.uid]);
+      // Members read their own friendships (the app queries with array-contains on memberUids).
+      // Admins may also read them: the admin dashboard lists friendships to show the connection count.
+      // The member check comes first so ordinary players never trigger the billed admin lookup.
+      allow get, list: if (signedIn() && request.auth.uid in resource.data.memberUids)
+        || isAdmin();
       allow create: if signedIn()
         && request.resource.data.keys().hasOnly(['memberUids', 'memberNames', 'requestId', 'createdAt'])
         && request.resource.data.memberUids is list
@@ -127,8 +129,12 @@ service cloud.firestore {
 
     match /rooms/{roomId} {
       // A room cannot be listed or discovered. The invite URL carries its document ID.
+      // `resource == null` lets a read of a room that does not exist succeed with "not found" (so the app can say
+      // "This invite link is invalid or has expired"). Without it Firestore answers permission-denied, because
+      // `resource.data` does not exist for a missing document. Existing rooms are still visible only while
+      // waiting, to their members, or to admins.
       allow get: if signedIn()
-        && (resource.data.status == 'waiting' || isRoomMember(resource.data) || isAdmin());
+        && (resource == null || resource.data.status == 'waiting' || isRoomMember(resource.data) || isAdmin());
       allow list: if isAdmin();
       allow create: if signedIn()
         && request.resource.data.keys().hasOnly(['hostUid', 'hostName', 'gameId', 'playerUids', 'playerNames', 'maxPlayers', 'status', 'state', 'createdAt', 'updatedAt'])
