@@ -132,7 +132,16 @@ Google sign-in (popup or redirect) only works on hosts Firebase knows about. On 
 2. Open the **Rules** tab.
 3. Replace the starter rules with the complete contents of this repository’s [`firestore.rules`](./firestore.rules) file, then click **Publish**.
 
-The rules keep room documents unlistable, limit rooms to their invite link, require Firebase Auth for writes, constrain joining to waiting rooms with open seats, protect friend requests, and make admin flags console-managed only. They intentionally do **not** make game outcomes cheat-proof: these are casual peer rooms, not ranked or prize games. For a competitive leaderboard, move authoritative game actions into Cloud Functions / a trusted server. Google accounts use the same authenticated UID checks and existing atomic `usernames`/`profiles` claim rules; no Firestore rule change is required for Google sign-in.
+The rules keep room documents unlistable, limit rooms to their invite link, require Firebase Auth for writes, constrain joining to waiting rooms with open seats, protect friend requests, and make admin flags console-managed only. A link to a room that does not exist reads as "not found" (so players see *invite link is invalid or has expired* rather than a permission error), and admins can additionally list rooms and read `friendships` (the admin dashboard shows both counts). They intentionally do **not** make game outcomes cheat-proof: these are casual peer rooms, not ranked or prize games. For a competitive leaderboard, move authoritative game actions into Cloud Functions / a trusted server. Google accounts use the same authenticated UID checks and existing atomic `usernames`/`profiles` claim rules; no Firestore rule change is required for Google sign-in.
+
+After you click **Publish**, check the rules against the real app once. It takes about two minutes and exercises every rule the game uses:
+
+1. **Setup guide → Run check** passes (guest sign-in and a Firestore read).
+2. Browser A: create a room as a guest and copy the invite link. Browser B (or a private window): open the link. Both players appear in the lobby.
+3. Browser A starts the match and either player makes a move. The move shows up in the other browser.
+4. Sign in with a username on two accounts, send a friend request, accept it, and check that the friend appears. Add `admins / <uid> / admin: true` for one account and open **Admin studio**: rooms, players and friend connections should all load.
+
+If a step reports *permission-denied*, the rules were not published as-is. Paste the whole file again; partial copies are the usual cause. The Firebase Console **Rules → Rules Playground** can replay a single request if you need to dig deeper.
 
 There are no composite indexes to create for the current queries. `firebase.json` and `firestore.indexes.json` are included if you later choose to manage Firebase from the CLI.
 
@@ -224,11 +233,11 @@ Developer console: a missing or invalid config is always logged (`console.error`
 - **Local personalization:** Favorites, recently played games, theme preference, subtle sound preference, and guest display name live in localStorage; no extra Firebase collection is required.
 - **Original artwork:** one optimized hero illustration and five reusable category/multiplayer covers live under `public/images/`. Cards use responsive `object-fit: cover`, lazy loading below the first shelf, and CSS artwork fallbacks if an image cannot load.
 - **Theme / accessibility:** an OS-aware light/dark theme toggle with persistence, visible keyboard focus, reduced-motion support, semantic controls, keyboard arrows in maze games, Space for tap races, and responsive layouts down to 320px wide. Every game screen includes a concise controls/rules panel generated from its engine.
-- **Admin:** `admins/{authUid}` with `admin: true`. The client hides the admin page unless the signed-in UID is approved; Firestore rules separately enforce admin-only room listing and deny client-side admin edits.
+- **Admin:** `admins/{authUid}` with `admin: true`. The client hides the admin page unless the signed-in UID is approved; Firestore rules separately enforce admin-only room listing, let admins read `friendships` for the dashboard count, and deny client-side admin edits.
 
 ## Notes
 
 - The browser must allow JavaScript. Online features require a network connection and a configured Firebase project.
 - A room invite is a private-by-ID link, not a password-protected secret. Anyone holding it may join while it is waiting and has capacity. Do not put sensitive data in rooms.
 - Anonymous Firebase accounts can be cleaned up periodically from Firebase Console if you want to limit unused guest accounts. Linking a guest to Google is the preferred way to preserve a guest’s UID and identity.
-- Live Google, popup/redirect, guest-linking, Firestore-permission, and room synchronization flows still need a smoke test in your deployed Firebase project. `npm test` covers helpers, catalog integrity, the pure game engines, the config parser/validator, the status logic, the wording of Firebase errors (using the real SDK error classes), Firebase initialization with the real SDK (no network), and the build-time check. None of that needs Firebase credentials or an emulator, and none of it talks to a real Firebase project. The setup dialog's **Run check** is the quickest way to smoke-test a real deployment.
+- Live Google, popup/redirect, guest-linking, Firestore-permission, and room synchronization flows still need a smoke test in your deployed Firebase project. `npm test` covers helpers, catalog integrity, the pure game engines, the config parser/validator, the status logic, the wording of Firebase errors (using the real SDK error classes), Firebase initialization with the real SDK (no network), the build-time check, and structural checks of `firestore.rules` (balanced syntax, a rule for every collection the app uses, nothing open to signed-out users, admin flags not client-writable; these do **not** evaluate the rules, that needs the Firebase emulator). None of that needs Firebase credentials or an emulator, and none of it talks to a real Firebase project. The setup dialog's **Run check** is the quickest way to smoke-test a real deployment.
