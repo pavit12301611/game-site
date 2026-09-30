@@ -3,10 +3,11 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-// These are structural guards for firestore.rules. They do NOT evaluate the rules: that needs the Firebase
-// emulator (Java) or a real project. What they catch is the cheap, costly mistakes: a typo that makes the
-// Console reject the paste, a collection the app uses that has no rule, an accidentally open rule, or one of
-// the specific behaviours the app depends on being edited away.
+// These are structural guards for firestore.rules. They do NOT evaluate the rules: that is what
+// tests/rules-emulator.test.js does against the Firestore emulator (`npm run test:rules`, needs Java).
+// What they catch here is the cheap, costly mistakes: a typo that makes the Console reject the paste,
+// a collection the app uses that has no rule, an accidentally open rule, or one of the specific
+// behaviours the app depends on being edited away.
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const rules = readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8');

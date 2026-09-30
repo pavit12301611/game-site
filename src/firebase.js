@@ -1,11 +1,12 @@
 import { initializeApp } from 'firebase/app';
-import { GoogleAuthProvider, getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { GoogleAuthProvider, connectAuthEmulator, getAuth } from 'firebase/auth';
+import { connectFirestoreEmulator, getFirestore } from 'firebase/firestore';
 import {
   FIREBASE_CONFIG_ENV_NAME,
   resolveFirebaseConfig,
   summarizeFirebaseConfig,
 } from './firebase-config.js';
+import { describeEmulatorConfig, resolveEmulatorConfig } from './emulator.js';
 
 const silentLogger = { error() {}, warn() {} };
 
@@ -76,11 +77,23 @@ export function initializeFirebase(source, { dev = false, logger = console } = {
 }
 
 const viteEnv = import.meta.env;
+const isDevBuild = Boolean(viteEnv?.DEV);
 const services = initializeFirebase(viteEnv ?? {}, {
-  dev: Boolean(viteEnv?.DEV),
+  dev: isDevBuild,
   // Outside Vite (for example when unit tests import this file) there is no env to complain about.
   logger: viteEnv ? console : silentLogger,
 });
+
+/**
+ * Local development can run against the Firebase Emulator Suite (npm run dev:emu).
+ * The flag is read there, in one place, and is ignored in a production build.
+ */
+const emulator = resolveEmulatorConfig(viteEnv ?? {}, { dev: isDevBuild });
+if (services.ready && emulator.enabled) {
+  connectFirestoreEmulator(services.db, emulator.host, emulator.firestorePort);
+  connectAuthEmulator(services.auth, emulator.authUrl, { disableWarnings: true });
+  console.info(`[PSD-gaming] ${describeEmulatorConfig(emulator)}`);
+}
 
 export function createGoogleProvider() {
   const provider = new GoogleAuthProvider();
@@ -94,3 +107,5 @@ export const firebaseSetup = services.setup;
 /** Human-readable setup problem, or '' when Firebase is ready. Kept for older imports. */
 export const firebaseError = services.ready ? '' : services.setup.message;
 export const firebaseReady = services.ready;
+/** Where this build is talking to: the real project, or the local emulator suite. */
+export const firebaseEmulator = Object.freeze({ ...emulator });

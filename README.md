@@ -46,6 +46,38 @@ VITE_FIREBASE_APP_ID=YOUR_FIREBASE_APP_ID
 
 To see both states: run `npm run dev` **without** `.env.local` and you get **Local practice mode** with an explanation banner and a console error. Add the file, restart, and the status becomes **Online rooms ready**.
 
+### Run against the Firebase emulators (optional)
+
+The Emulator Suite runs Firestore and Auth on your own machine, so rooms, profiles and friends can be exercised without touching the real project. It needs **Java 11+** (the emulator is a JVM app).
+
+```bash
+npm run emulators   # Firestore on 127.0.0.1:8080, Auth on 9099
+npm run dev:emu     # starts the emulators, runs `npm run dev` against them, shuts them down after
+```
+
+Point the app at them by adding these lines to `.env.local` (all but the first are optional):
+
+```dotenv
+VITE_USE_FIREBASE_EMULATOR=1
+VITE_FIREBASE_EMULATOR_HOST=127.0.0.1
+VITE_FIRESTORE_EMULATOR_PORT=8080
+VITE_FIREBASE_AUTH_EMULATOR_PORT=9099
+```
+
+Two things to know: the flag is **ignored by a production build** (`vite build`), so a deployment can never end up talking to `localhost`; and Firebase still needs a valid-looking `VITE_FIREBASE_*` config to start at all, because the emulator is only a different address for the same SDK.
+
+## Tests and CI
+
+```bash
+npm test            # unit tests: no network, no Firebase credentials, no Java
+npm run test:rules  # firestore.rules against the Firestore emulator (needs Java)
+npm run audit       # npm audit --audit-level=high
+```
+
+- `.github/workflows/ci.yml` runs `npm ci`, `npm test` and `npm run build` on every push and pull request, a `firestore-rules` job that installs Java and runs the emulator rules tests, and an informational `npm audit` job.
+- Dependabot (`.github/dependabot.yml`) opens one grouped pull request for patch and minor updates every week. Major upgrades, such as `firebase` 12 or `vite` 8, arrive alone so they can be reviewed and tested on their own.
+- The game rules are locked by `tests/fixtures/engine-baseline.json`, which fingerprints every state of all 40 games and replays them on every run. If you change a rule on purpose, regenerate it with `node tests/fixtures/generate-engine-baseline.mjs` and say so in the pull request.
+
 ## Connection status: what the labels mean
 
 The sidebar, top bar, home hero, friends page, and dialogs all show the same status. It is computed from two real facts: did Firebase start from a valid config, and does the browser report that it is online? Nothing is hard-coded.
@@ -242,7 +274,7 @@ Developer console: a missing or invalid config is always logged (`console.error`
 ## What is included
 
 - **40 games:** Pixel Tic-Tac-Toe, Neon Gomoku, Connect Four, Five in a Row, Memory Match, Neon Pairs, Emoji Flip, Arcade Pairs, Pixel Tap Sprint, Button Masher, Turbo Charge, Reaction Rush, Spacebar Showdown, Bug Blaster, Rock Paper Scissors, Laser Duel, Coin Flip Clash, Dice Duel, Retro Trivia, Emoji Decode, Arcade Facts, Pixel Pop Quiz, Movie Mayhem, Word Scramble, Number Chase, Brain Busters, 8-Bit Riddles, Retro Rewind, Maze Runner, Neon Labyrinth, Byte Escape, Star Runner, Sea Battle, Pixel Fleet, Alien Skirmish, Pong Rally, Paddle Wars, Air Hockey, Codebreaker, and Mastermind.
-- **Ten lightweight shared engines:** line boards, drop boards, memory pairs, tap races, simultaneous duels, quiz rounds, maze races, hidden-grid battles, volley scoring, and codebreaking. Each catalog entry can be opened, practiced locally, or used to create an online room.
+- **Ten lightweight shared engines:** line boards, drop boards, memory pairs, tap races, simultaneous duels, quiz rounds, maze races, hidden-grid battles, volley scoring, and codebreaking. Each engine is one module in `src/engines/` with its own unit tests; `src/catalog.js` holds the catalog, artwork and how-to-play copy. Each catalog entry can be opened, practiced locally, or used to create an online room.
 - **Firebase:** Auth (Anonymous + Email/Password + Google) and Cloud Firestore. Multiplayer moves use Firestore transactions so concurrent turns do not silently overwrite one another. Google popup/redirect handling, guest linking, first-login username setup, and friendly provider/network errors are included.
 - **Setup diagnostics:** one honest connection status everywhere (**Online rooms ready**, **Offline · local play**, **Local practice mode**), a precise setup banner for a missing or invalid `VITE_FIREBASE_*` config, a build-time check that prints the same verdict in the Vercel build log (and refuses secrets), Firebase errors worded as instructions, and an in-app **Run check** for a deployed project.
 - **Local personalization:** Favorites, recently played games, theme preference, subtle sound preference, and guest display name live in localStorage; no extra Firebase collection is required.
@@ -255,4 +287,6 @@ Developer console: a missing or invalid config is always logged (`console.error`
 - The browser must allow JavaScript. Online features require a network connection and a configured Firebase project.
 - A room invite is a private-by-ID link, not a password-protected secret. Anyone holding it may join while it is waiting and has capacity. Do not put sensitive data in rooms.
 - Anonymous Firebase accounts can be cleaned up periodically from Firebase Console if you want to limit unused guest accounts. Linking a guest to Google is the preferred way to preserve a guest’s UID and identity.
-- Live Google, popup/redirect, guest-linking, Firestore-permission, and room synchronization flows still need a smoke test in your deployed Firebase project. `npm test` covers helpers, catalog integrity, the pure game engines, the config parser/validator, the status logic, the wording of Firebase errors (using the real SDK error classes), Firebase initialization with the real SDK (no network), the build-time check, and structural checks of `firestore.rules` (balanced syntax, a rule for every collection the app uses, nothing open to signed-out users, admin flags not client-writable; these do **not** evaluate the rules, that needs the Firebase emulator). None of that needs Firebase credentials or an emulator, and none of it talks to a real Firebase project. The setup dialog's **Run check** is the quickest way to smoke-test a real deployment.
+- Live Google, popup/redirect, guest-linking, Firestore-permission, and room synchronization flows still need a smoke test in your deployed Firebase project. `npm test` covers helpers, catalog integrity, the pure game engines (including a state-by-state baseline of all 40 games), the config parser/validator, the status logic, the emulator switch, the wording of Firebase errors (using the real SDK error classes), Firebase initialization with the real SDK (no network), the build-time check, and structural checks of `firestore.rules` (balanced syntax, a rule for every collection the app uses, nothing open to signed-out users, admin flags not client-writable). None of that needs Firebase credentials or an emulator, and none of it talks to a real Firebase project.
+
+The rules themselves are executed by `npm run test:rules`, which runs `firestore.rules` against the Firestore emulator (Java required) and covers profiles, usernames, rooms, joins, moves, friend requests, friendships and invites. CI runs it on every pull request; locally it is skipped with a clear message when no emulator is reachable. The setup dialog's **Run check** is the quickest way to smoke-test a real deployment.
