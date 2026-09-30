@@ -1,0 +1,189 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+        && get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.admin == true;
+    }
+
+    function isRoomMember(room) {
+      return signedIn()
+        && room.playerUids is list
+        && room.playerUids.hasAny([request.auth.uid]);
+    }
+
+    match /admins/{uid} {
+      // Admin flags are provisioned manually in the Firebase console, never from the client.
+      allow get: if signedIn() && request.auth.uid == uid;
+      allow list, create, update, delete: if false;
+    }
+
+    match /profiles/{uid} {
+      // These documents contain usernames only, so signed-in players can look each other up.
+      allow get, list: if signedIn();
+      allow create: if signedIn()
+        && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['uid', 'username', 'usernameLower', 'createdAt'])
+        && request.resource.data.uid == uid
+        && request.resource.data.username is string
+        && request.resource.data.username.size() >= 3
+        && request.resource.data.username.size() <= 18
+        && request.resource.data.usernameLower is string
+        && request.resource.data.usernameLower.matches('^[a-z0-9_]{3,18}$')
+        && request.resource.data.createdAt == request.time
+        && existsAfter(/databases/$(database)/documents/usernames/$(request.resource.data.usernameLower))
+        && getAfter(/databases/$(database)/documents/usernames/$(request.resource.data.usernameLower)).data.uid == uid;
+      allow update: if signedIn()
+        && request.auth.uid == uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastSeenAt'])
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.username == resource.data.username
+        && request.resource.data.usernameLower == resource.data.usernameLower;
+      allow delete: if false;
+    }
+
+    match /usernames/{usernameLower} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['uid', 'username', 'createdAt'])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.username is string
+        && usernameLower.matches('^[a-z0-9_]{3,18}$')
+        && request.resource.data.username.lower() == usernameLower
+        && request.resource.data.createdAt == request.time
+        && existsAfter(/databases/$(database)/documents/profiles/$(request.auth.uid))
+        && getAfter(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.usernameLower == usernameLower;
+      allow update, delete: if false;
+    }
+
+    match /friendRequests/{requestId} {
+      allow get, list: if signedIn()
+        && (resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid);
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['fromUid', 'toUid', 'fromName', 'toName', 'status', 'createdAt'])
+        && request.resource.data.fromUid == request.auth.uid
+        && request.resource.data.toUid is string
+        && request.resource.data.toUid != request.auth.uid
+        && request.resource.data.status == 'pending'
+        && request.resource.data.createdAt == request.time
+        && exists(/databases/$(database)/documents/profiles/$(request.resource.data.toUid));
+      allow update: if signedIn()
+        && resource.data.toUid == request.auth.uid
+        && resource.data.status == 'pending'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'respondedAt'])
+        && request.resource.data.status in ['accepted', 'declined']
+        && request.resource.data.respondedAt == request.time;
+      allow delete: if signedIn()
+        && resource.data.fromUid == request.auth.uid
+        && resource.data.status == 'pending';
+    }
+
+    match /friendships/{friendshipId} {
+      allow get, list: if signedIn()
+        && resource.data.memberUids is list
+        && resource.data.memberUids.hasAny([request.auth.uid]);
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['memberUids', 'memberNames', 'requestId', 'createdAt'])
+        && request.resource.data.memberUids is list
+        && request.resource.data.memberUids.size() == 2
+        && request.resource.data.memberUids.hasAny([request.auth.uid])
+        && request.resource.data.memberNames is map
+        && request.resource.data.requestId is string
+        && request.resource.data.createdAt == request.time
+        && getAfter(/databases/$(database)/documents/friendRequests/$(request.resource.data.requestId)).data.status == 'accepted'
+        && getAfter(/databases/$(database)/documents/friendRequests/$(request.resource.data.requestId)).data.fromUid in request.resource.data.memberUids
+        && getAfter(/databases/$(database)/documents/friendRequests/$(request.resource.data.requestId)).data.toUid in request.resource.data.memberUids;
+      allow update, delete: if false;
+    }
+
+    match /gameInvites/{inviteId} {
+      allow get, list: if signedIn()
+        && (resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid);
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['fromUid', 'toUid', 'fromName', 'toName', 'friendshipId', 'roomId', 'gameId', 'status', 'createdAt'])
+        && request.resource.data.fromUid == request.auth.uid
+        && request.resource.data.toUid is string
+        && request.resource.data.toUid != request.auth.uid
+        && request.resource.data.status == 'pending'
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.friendshipId is string
+        && get(/databases/$(database)/documents/friendships/$(request.resource.data.friendshipId)).data.memberUids.hasAny([request.auth.uid])
+        && get(/databases/$(database)/documents/friendships/$(request.resource.data.friendshipId)).data.memberUids.hasAny([request.resource.data.toUid])
+        && get(/databases/$(database)/documents/rooms/$(request.resource.data.roomId)).data.hostUid == request.auth.uid;
+      allow update: if signedIn()
+        && resource.data.toUid == request.auth.uid
+        && resource.data.status == 'pending'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'respondedAt'])
+        && request.resource.data.status in ['accepted', 'declined']
+        && request.resource.data.respondedAt == request.time;
+      allow delete: if signedIn() && resource.data.fromUid == request.auth.uid;
+    }
+
+    match /rooms/{roomId} {
+      // A room cannot be listed or discovered. The invite URL carries its document ID.
+      allow get: if signedIn()
+        && (resource.data.status == 'waiting' || isRoomMember(resource.data) || isAdmin());
+      allow list: if isAdmin();
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['hostUid', 'hostName', 'gameId', 'playerUids', 'playerNames', 'maxPlayers', 'status', 'state', 'createdAt', 'updatedAt'])
+        && request.resource.data.hostUid == request.auth.uid
+        && request.resource.data.gameId is string
+        && request.resource.data.playerUids is list
+        && request.resource.data.playerUids.size() == 1
+        && request.resource.data.playerUids.hasAny([request.auth.uid])
+        && request.resource.data.playerNames is map
+        && request.resource.data.playerNames.size() == 1
+        && request.resource.data.playerNames.keys().hasAll(request.resource.data.playerUids)
+        && request.resource.data.maxPlayers in [2, 3]
+        && request.resource.data.status == 'waiting'
+        && request.resource.data.state is map
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+      allow update: if signedIn() && (
+        (
+          resource.data.status == 'waiting'
+          && request.resource.data.status == 'waiting'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['playerUids', 'playerNames', 'state', 'updatedAt'])
+          && request.resource.data.playerUids is list
+          && request.resource.data.playerUids.size() == resource.data.playerUids.size() + 1
+          && request.resource.data.playerUids.size() <= resource.data.maxPlayers
+          && request.resource.data.playerUids.hasAll(resource.data.playerUids)
+          && !resource.data.playerUids.hasAny([request.auth.uid])
+          && request.resource.data.playerUids.hasAny([request.auth.uid])
+          && request.resource.data.playerNames is map
+          && request.resource.data.playerNames.size() == request.resource.data.playerUids.size()
+          && request.resource.data.playerNames.keys().hasAll(request.resource.data.playerUids)
+          && request.resource.data.updatedAt == request.time
+        )
+        ||
+        (
+          isRoomMember(resource.data)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['state', 'status', 'updatedAt', 'playerNames', 'winnerUid'])
+          && request.resource.data.playerUids == resource.data.playerUids
+          && request.resource.data.hostUid == resource.data.hostUid
+          && request.resource.data.gameId == resource.data.gameId
+          && request.resource.data.maxPlayers == resource.data.maxPlayers
+          && request.resource.data.status in ['waiting', 'playing', 'finished']
+          && request.resource.data.updatedAt == request.time
+          && (
+            request.resource.data.status == resource.data.status
+            || (
+              resource.data.status == 'waiting'
+              && request.resource.data.status == 'playing'
+              && request.auth.uid == resource.data.hostUid
+              && resource.data.playerUids.size() >= 2
+            )
+          )
+        )
+      );
+      allow delete: if signedIn()
+        && (isAdmin() || (resource.data.hostUid == request.auth.uid && resource.data.status == 'waiting'));
+    }
+  }
+}
