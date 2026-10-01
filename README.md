@@ -72,7 +72,8 @@ Two things to know: the flag is **ignored by a production build** (`vite build`)
 
 | Module | What it owns |
 | --- | --- |
-| `src/app.js` | Event handlers and start-up. ~360 lines; used to be the whole app. |
+| `src/app.js` | Event handlers and the wiring of all modules. ~400 lines; used to be the whole app. |
+| `src/boot.js` | Start-up: exactly one first paint, whatever the Firebase branch does (see below). |
 | `src/state.js` | The one mutable `state` object and the derived getters (`currentGame`, `currentPlayers`, …). |
 | `src/render.js` | `render()`: repaint `#app` from state, with a recovery screen if drawing ever throws. |
 | `src/router.js` | The hash router (`#/home`, `#/room/<id>`, …) and what landing on a page means. |
@@ -94,6 +95,17 @@ Two things to know: the flag is **ignored by a production build** (`vite build`)
 Rules for contributing to this layout: views never write to state and never talk to Firebase;
 modules never import `src/app.js` (it is the wiring, so that would be a cycle); and every string
 that came from another player goes through `esc()`.
+
+### Start-up never leaves the page blank
+
+`src/boot.js` owns the start-up sequence. In local practice mode it paints at once. With Firebase
+configured it subscribes to the sign-in state, asks Firebase whether a Google redirect just finished,
+and *then* paints - but the paint is guaranteed: a collaborator that throws, a rejected promise or a
+misbehaving Firebase API is logged (and, for the redirect, shown in the sign-in dialog) and the shell
+is drawn anyway. The collaborators are passed in from `src/app.js`, which is what lets
+`tests/boot.test.js` run the Firebase branch in Node. The production outage that motivated this was
+a `ReferenceError` in that branch: two functions called in `src/app.js` without an import, which
+stopped the first paint on Vercel only - every local run has `firebaseReady === false`.
 
 ### Design system (`src/styles.css`)
 
@@ -129,7 +141,7 @@ The fonts are imported in `src/main.js` from `@fontsource/*` packages, so Vite h
 
 ```bash
 npm test            # unit tests: no network, no Firebase credentials, no Java
-npm run typecheck   # tsc --checkJs over every pure module (JSDoc types)
+npm run typecheck   # tsc --checkJs over every module under src/ (JSDoc types)
 npm run test:rules  # firestore.rules against the Firestore emulator (needs Java)
 npm run audit       # npm audit --omit=dev --audit-level=high: only what ships to the browser
 ```
@@ -137,21 +149,24 @@ npm run audit       # npm audit --omit=dev --audit-level=high: only what ships t
 - `.github/workflows/ci.yml` runs `npm ci`, `npm test`, `npm run typecheck` and `npm run build` on every push and pull request, a `firestore-rules` job that installs Java and runs the emulator rules tests, and an informational `npm audit` job.
 - `npm run audit` checks **what ships to the browser** (`--omit=dev`): the app has one runtime dependency, `firebase`. Advisories in the build and emulator tooling never reach a player, are not part of the deployed bundle, and are tracked by Dependabot instead, which opens grouped weekly pull requests - forcing them to block a release would only train everyone to ignore the job. The one production advisory found so far (`@firebase/firestore` pinning an old `@grpc/grpc-js`) is fixed with an npm `overrides` entry rather than by downgrading Firebase.
 - Dependabot (`.github/dependabot.yml`) opens one grouped pull request for patch and minor updates every week. Major upgrades, such as `firebase` 12 or `vite` 8, arrive alone so they can be reviewed and tested on their own.
-- `tests/app-render.test.js` boots the real UI in jsdom with no Firebase configured and walks the local-practice flow. It is the safety net for splitting `src/app.js` into modules.
+- `tests/app-render.test.js` boots the real UI in jsdom with no Firebase configured and walks the local-practice flow. Its first test is the start-up contract: `.app-shell`, the sidebar brand and the hero are in `#app`, the recovery screen is not, and nothing was written to `console.error` while the app loaded.
+- `tests/unresolved-identifiers.test.js` runs `tsc` from `src/main.js` (via `tests/tsconfig.entry-point.json`), following every import like the bundler does, and fails on any name or export that does not exist (TS2304/2552/2305/2724). Rollup treats an unknown identifier as a global and builds happily; this test is what turns a missing import into a red CI run. It also checks that `jsconfig.json` never excludes a `src/` file again.
+- `tests/boot.test.js` runs the start-up sequence with stand-ins for Firebase and asserts that the page is painted exactly once in every failure mode.
 - The game rules are locked by `tests/fixtures/engine-baseline.json`, which fingerprints every state of all 40 games and replays them on every run. If you change a rule on purpose, regenerate it with `node tests/fixtures/generate-engine-baseline.mjs` and say so in the pull request.
 
 ### Type checking is JSDoc, not a rewrite
 
-`jsconfig.json` runs `tsc --checkJs` over every module except the entry point and the wiring layer
-(`src/main.js` and `src/app.js`), with the shared shapes named once in `src/types.js`. Everything the
-split of `src/app.js` produced is typechecked: `state`, `render`, `errors`, `router`, `accounts`,
-`social`, `cpu`, `diagnostics`, `connection`, `online/` (session, rooms, admin) and `ui/` (html,
-players, toast, theme, sound, prefs, links), plus the engines, catalog, helpers, config and
-`firebase.js`. `noImplicitAny` is off and gets switched on per module once the annotations are in
+`jsconfig.json` runs `tsc --checkJs` over **every** module under `src/`, the entry point and the
+wiring layer included, with the shared shapes named once in `src/types.js`. `src/vite-env.d.ts`
+pulls in Vite's ambient types so the stylesheet imports in `src/main.js` and `import.meta.env` are
+known to `tsc`. `noImplicitAny` is off and gets switched on per module once the annotations are in
 place.
 
-`src/app.js` (about 360 lines, down from 1622) is what is left of the old single file: the event
-handlers and start-up. Every feature it used to hold now lives in a module of its own - see
+Nothing under `src/` may be excluded from the typecheck (a test enforces it): `src/app.js` used to be,
+and that is how six calls to functions it never imported reached production as a blank page.
+
+`src/app.js` (about 400 lines, down from 1622) is what is left of the old single file: the event
+handlers and the wiring. Every feature it used to hold now lives in a module of its own - see
 [Project layout](#project-layout).
 
 ## Connection status: what the labels mean

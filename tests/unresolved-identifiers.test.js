@@ -77,6 +77,14 @@ test('every module reachable from src/main.js resolves every name and import it 
   assert.ok(/"files"|main\.js/.test(JSON.stringify(require(entryConfig))), 'the config starts at the entry point');
 });
 
+test('npm run typecheck covers every src module: nothing under src/ is excluded again', () => {
+  const jsconfig = require(path.join(root, 'jsconfig.json'));
+  assert.ok(jsconfig.include.includes('src/**/*.js'), 'all of src/ is in scope');
+  const excludedSources = (jsconfig.exclude || []).filter((pattern) => /(^|\/)src(\/|$)/.test(pattern));
+  assert.deepEqual(excludedSources, [], 'src/app.js and src/main.js were excluded once; that is how the blank page shipped');
+  assert.equal(jsconfig.compilerOptions.checkJs, true);
+});
+
 test('the detector catches a missing import, a typo and an import of a non-existent export', () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'psd-unresolved-'));
   try {
