@@ -2,8 +2,9 @@
   "//": [
     "tsc --checkJs type checking for the plain-JavaScript source (npm run typecheck).",
     "Phase 1 scope: every pure module is checked - engines, catalog, helpers, config, errors,",
-    "emulator and firebase.js. src/main.js is excluded on purpose: it is the 1600-line file that",
-    "item 91 splits into modules, and it gets typed as those modules land.",
+    "emulator and firebase.js. src/app.js (and its entry point src/main.js, which imports the",
+    "stylesheet) is excluded on purpose: it is the 1600-line file that item 91 splits into modules,",
+    "and it gets typed as those modules land.",
     "noImplicitAny stays off until then; every public function is annotated with JSDoc."
   ],
   "compilerOptions": {
@@ -20,5 +21,5 @@
     "forceConsistentCasingInFileNames": true
   },
   "include": ["src/**/*.js", "scripts/**/*.js"],
-  "exclude": ["node_modules", "dist", "src/main.js"]
+  "exclude": ["node_modules", "dist", "src/app.js", "src/main.js"]
 }
