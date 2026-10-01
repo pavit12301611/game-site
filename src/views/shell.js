@@ -21,7 +21,7 @@ export function renderSidebar() {
     { page: 'friends', icon: 'people', label: 'Friends', count: state.requests.length || null },
   ];
   if (state.isAdmin) items.push({ page: 'admin', icon: 'shield', label: 'Admin studio' });
-  return `<aside class="sidebar">
+  return `<aside class="sidebar" aria-label="Arcade menu">
     <a class="brand-lockup" href="#/home" data-action="navigate" data-page="home" aria-label="PSD-gaming home">${renderBrand()}<span><b>PSD</b><small>GAMING</small></span></a>
     <div class="side-caption">Your arcade</div>
     <nav class="side-nav" aria-label="Main navigation">${items.map((item) => `<button class="nav-item ${state.page === item.page ? 'is-active' : ''}" data-action="navigate" data-page="${item.page}">${icon(item.icon)}<span>${item.label}</span>${item.count ? `<b class="nav-count">${item.count}</b>` : ''}</button>`).join('')}</nav>
@@ -67,7 +67,7 @@ export function renderMobileNav() {
 export function renderShell() {
   const conn = connection();
   const pageNames = { home: 'Welcome back', catalog: 'Game library', friends: 'Your crew', admin: 'Admin studio', room: 'Private room', game: 'Now playing' };
-  return `<div class="app-shell"><button class="button button-primary skip-link" data-action="skip-to-content">Skip to content</button>${renderSidebar()}<div class="main-column">${renderTopbar()}<div class="page-context"><span class="page-context-name">${pageNames[state.page] || 'Arcade'}</span><span class="network-status is-${conn.kind}" title="${esc(conn.title)}"><i></i><span>${esc(conn.shortLabel)}</span></span></div><main class="page-content" id="page-content">${renderPage()}</main></div>${renderMobileNav()}</div>${state.modal ? renderModal() : ''}${state.toast ? `<div class="toast toast-${state.toast.kind}" role="status">${icon(state.toast.kind === 'success' ? 'check' : 'spark')}<span>${esc(state.toast.message)}</span></div>` : ''}`;
+  return `<div class="app-shell"><button class="button button-primary skip-link" data-action="skip-to-content">Skip to content</button>${renderSidebar()}<div class="main-column">${renderTopbar()}<aside class="page-context" aria-label="Page status"><span class="page-context-name">${pageNames[state.page] || 'Arcade'}</span><span class="network-status is-${conn.kind}" title="${esc(conn.title)}"><i></i><span>${esc(conn.shortLabel)}</span></span></aside><main class="page-content" id="page-content">${renderPage()}</main></div>${renderMobileNav()}</div>${state.modal ? renderModal() : ''}${state.toast ? `<div class="toast toast-${state.toast.kind}" role="status">${icon(state.toast.kind === 'success' ? 'check' : 'spark')}<span>${esc(state.toast.message)}</span></div>` : ''}`;
 }
 
 export function renderPage() {

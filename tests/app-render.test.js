@@ -105,7 +105,7 @@ test('the catalog lists all 40 games and filters by search text', () => {
   assert.ok(search, 'the global search box exists');
   search.value = 'maze';
   search.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
-  const titles = all('.game-card-copy h3').map((node) => node.textContent);
+  const titles = all('.game-card-title').map((node) => node.textContent);
   assert.ok(titles.length > 0 && titles.length < 40, 'search narrows the shelf');
   assert.ok(titles.every((title) => /maze|labyrinth|escape|runner/i.test(title)), 'only maze games remain');
 

@@ -20,19 +20,19 @@ import { formatAwayFor } from '../presence-status.js';
 import { activeName, isGoogleUser } from '../ui/players.js';
 import { renderEngineBoard } from './boards.js';
 
-export function renderGameCard(game, index = 0) {
+export function renderGameCard(game, index = 0, level = 3) {
   const artwork = getGameArtwork(game);
   const isFavorite = state.favorites.includes(game.id);
   return `<article class="game-card">
     <span class="game-art art-${game.accent || 'blue'}">${artImage(artwork, { className: 'game-art-image', sizes: '(min-width: 1024px) 320px, (min-width: 640px) 45vw, 100vw' })}</span>
-    <div class="game-card-copy"><span class="game-card-meta">${esc(game.category)} · 2–3 players · ${esc(artwork.engineLabel)}</span><h3><button class="game-card-hit" data-action="open-game" data-game-id="${game.id}" aria-label="Open ${esc(game.title)}">${esc(game.title)}</button></h3><p>${esc(game.blurb)}</p><span class="card-play" aria-hidden="true">Open ${icon('arrow')}</span></div>
+    <div class="game-card-copy"><span class="game-card-meta">${esc(game.category)} · 2–3 players · ${esc(artwork.engineLabel)}</span><h${level} class="game-card-title"><button class="game-card-hit" data-action="open-game" data-game-id="${game.id}" aria-label="Open ${esc(game.title)}">${esc(game.title)}</button></h${level}><p>${esc(game.blurb)}</p><span class="card-play" aria-hidden="true">Open ${icon('arrow')}</span></div>
     <button class="favorite-button ${isFavorite ? 'is-favorite' : ''}" data-action="toggle-favorite" data-game-id="${game.id}" aria-label="${isFavorite ? 'Remove' : 'Add'} ${esc(game.title)} ${isFavorite ? 'from' : 'to'} favorites" aria-pressed="${isFavorite}">${isFavorite ? '★' : '☆'}</button>
   </article>`;
 }
 
-export function renderGameGrid(games) {
+export function renderGameGrid(games, level = 3) {
   if (!games.length) return `<div class="empty-state"><div class="empty-icon">⌕</div><h3>No games found</h3><p>Try another name or switch the category filter.</p><button class="button button-outline" data-action="clear-filters">Clear filters</button></div>`;
-  return `<div class="game-grid">${games.map((game, index) => renderGameCard(game, index)).join('')}</div>`;
+  return `<div class="game-grid">${games.map((game, index) => renderGameCard(game, index, level)).join('')}</div>`;
 }
 
 export function gamesForIds(ids) {
@@ -85,7 +85,7 @@ export function renderCatalog() {
   const games = filteredGames();
   return `<section class="catalog-heading"><div><div class="eyebrow">Insert friends here</div><h1>The game shelf<span>.</span></h1><p>Every game runs in your browser and supports 2–3 players in a shared room.</p></div><button class="button button-primary" data-action="quick-room">${icon('link')} Create invite room</button></section>
     <div class="catalog-toolbar"><div class="filter-pills">${CATEGORIES.map((category) => `<button class="filter-pill ${state.category === category ? 'is-active' : ''}" data-action="filter-category" data-category="${esc(category)}">${esc(category)}${category === 'All games' ? `<i>${GAMES.length}</i>` : ''}</button>`).join('')}</div><span class="game-count">SHOWING <b>${games.length}</b> / ${GAMES.length}</span></div>
-    <div id="catalog-grid">${renderGameGrid(games)}</div>
+    <div id="catalog-grid">${renderGameGrid(games, 2)}</div>
     <div class="catalog-bottom"><span>Every room is private by invite link.</span><button class="text-button" data-action="show-setup">How online play works ${icon('arrow')}</button></div>`;
 }
 
@@ -214,7 +214,7 @@ export function renderGameScreen() {
       ${gameState.phase === 'finished' ? `<div class="result-banner ${gameState.winnerUid === me ? 'is-win' : ''}"><span class="result-mark">${gameState.winnerUid === me ? '✦' : gameState.winnerUid ? '◉' : '＝'}</span><div><b>${gameState.winnerUid ? (gameState.winnerUid === me ? 'Nice one — you win!' : `${esc(activeName(gameState.winnerUid, players))} wins this one.`) : 'A perfectly even match.'}</b><small>${gameState.result === 'draw' ? 'Run it back and settle the score.' : 'Well played. Fancy another round?'}</small></div><button class="button button-outline button-small" data-action="play-again">Play again ${icon('arrow')}</button></div>` : ''}
       ${renderEngineBoard(game, gameState, players, me)}
       <div class="game-stage-footer"><span>${icon('spark')} ${esc(game.blurb)}</span><span>Moves sync automatically ${state.local ? 'on this device' : 'for every player'}</span></div>
-    </section><aside class="match-rail surface"><div class="match-rail-heading"><div><span class="eyebrow">Match room</span><h2>The players</h2></div><span class="live-tag is-${state.local ? 'local' : state.online ? 'live' : 'offline'}"><i></i> ${state.local ? 'Local' : state.online ? 'Live' : 'Offline'}</span></div><div class="match-player-list">${players.map((player, index) => `<div class="match-player ${player.uid === me ? 'is-me' : ''} ${gameState.turnUid === player.uid ? 'is-turn' : ''} ${presence[player.uid] ? `is-${presence[player.uid].kind}` : ''}"><span class="match-player-avatar player-avatar-${index}">${player.uid === 'local-cpu' ? 'CPU' : esc(player.name.slice(0, 1).toUpperCase())}</span><span class="match-player-copy"><b>${esc(player.name)} ${player.uid === me ? '<i>You</i>' : ''}</b><small>${presence[player.uid]?.detail ? esc(presence[player.uid].detail) : gameState.turnUid === player.uid && gameState.phase !== 'finished' ? 'Playing now' : player.uid === state.room?.hostUid ? 'Room host' : 'In the match'}</small></span>${gameState.scores ? `<strong>${gameState.scores[player.uid] || 0}<small>pts</small></strong>` : gameState.turnUid === player.uid ? `<span class="player-turn-dot"></span>` : ''}</div>`).join('')}</div>
+    </section><aside class="match-rail surface" aria-label="Match players"><div class="match-rail-heading"><div><span class="eyebrow">Match room</span><h2>The players</h2></div><span class="live-tag is-${state.local ? 'local' : state.online ? 'live' : 'offline'}"><i></i> ${state.local ? 'Local' : state.online ? 'Live' : 'Offline'}</span></div><div class="match-player-list">${players.map((player, index) => `<div class="match-player ${player.uid === me ? 'is-me' : ''} ${gameState.turnUid === player.uid ? 'is-turn' : ''} ${presence[player.uid] ? `is-${presence[player.uid].kind}` : ''}"><span class="match-player-avatar player-avatar-${index}">${player.uid === 'local-cpu' ? 'CPU' : esc(player.name.slice(0, 1).toUpperCase())}</span><span class="match-player-copy"><b>${esc(player.name)} ${player.uid === me ? '<i>You</i>' : ''}</b><small>${presence[player.uid]?.detail ? esc(presence[player.uid].detail) : gameState.turnUid === player.uid && gameState.phase !== 'finished' ? 'Playing now' : player.uid === state.room?.hostUid ? 'Room host' : 'In the match'}</small></span>${gameState.scores ? `<strong>${gameState.scores[player.uid] || 0}<small>pts</small></strong>` : gameState.turnUid === player.uid ? `<span class="player-turn-dot"></span>` : ''}</div>`).join('')}</div>
       ${state.local ? `<div class="rail-note"><span>${icon('spark')}</span><div><b>Just you and the browser.</b><small>Want a real rival? Create a room and send a link.</small></div></div><button class="button button-primary rail-main-button" data-action="quick-room">Invite a friend ${icon('arrow')}</button>` : `<div class="room-share-card"><span class="eyebrow">Bring in another player</span><p>Send the room link. They can join as a guest.</p><div class="room-share-actions"><button class="button button-outline" data-action="copy-room-link">${icon('copy')} Copy room link</button><button class="button button-quiet" data-action="share-room-link">${icon('link')} Share</button></div></div>`}
       <button class="text-button rail-back" data-action="navigate" data-page="catalog">Back to game shelf ${icon('arrow')}</button></aside></div>`;
 }

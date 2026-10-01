@@ -310,7 +310,7 @@ function handleInput(event) {
       if (location.hash !== '#/catalog') location.hash = '#/catalog';
     }
     const grid = document.querySelector('#catalog-grid');
-    if (grid) grid.innerHTML = renderGameGrid(filteredGames());
+    if (grid) grid.innerHTML = renderGameGrid(filteredGames(), 2);
     const count = document.querySelector('.game-count b');
     if (count) count.textContent = String(filteredGames().length);
   }

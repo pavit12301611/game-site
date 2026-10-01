@@ -99,3 +99,6 @@ kbd {
     scroll-behavior: auto !important;
   }
 }
+
+/* Programmatic focus targets (the dialog box and the page heading after navigation) are not controls: no ring. */
+[role="dialog"]:focus, #page-content:focus, #page-content h1:focus { outline: none; }
