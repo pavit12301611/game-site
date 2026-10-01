@@ -15,11 +15,16 @@ mkdir -p "$OUT"
 
 # encode <input> <width> <height> <max-bytes> <output>
 encode() {
-  local input="$1" w="$2" h="$3" max="$4" output="$5" q
-  for q in 82 78 74 70 66 62 58 54 50 46 42; do
-    convert "$input" -resize "${w}x${h}^" -gravity center -extent "${w}x${h}" -strip \
-      -define webp:method=6 -define webp:auto-filter=true -quality "$q" "$output"
-    if [ "$(stat -c %s "$output")" -le "$max" ]; then return 0; fi
+  local input="$1" w="$2" h="$3" max="$4" output="$5" q soften
+  # Very detailed pictures (foliage, circuit boards) can miss the budget even at low quality; a touch of
+  # softening is the last resort and is only used for those.
+  for soften in 0 0.7 1.4; do
+    for q in 82 78 74 70 66 62 58 54 50 46 42 38 34 30; do
+      convert "$input" -resize "${w}x${h}^" -gravity center -extent "${w}x${h}" -strip \
+        $([ "$soften" != 0 ] && echo "-blur 0x$soften") \
+        -define webp:method=6 -define webp:auto-filter=true -quality "$q" "$output"
+      if [ "$(stat -c %s "$output")" -le "$max" ]; then return 0; fi
+    done
   done
   echo "could not fit $output into $max bytes" >&2
   return 1

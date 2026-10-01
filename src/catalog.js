@@ -141,26 +141,36 @@ export const ENGINE_LABELS = {
  * @type {Record<string, string>}
  */
 export const GAME_PHOTOS = {
+  'arcade-facts': "Arcade joystick and round buttons on a dark wooden control panel, no logo",
   'arcade-pairs': "Pairs of brass arcade tokens in a wooden grid tray",
+  'brain-busters': "Interlocking wooden brain-teaser puzzle on a table",
   'bug-blaster': "Retro tin toy ray gun on a workbench",
   'button-masher': "Oversized red push button with a finger above it",
   'coin-flip-clash': "Plain blank gold coin spinning mid-air",
   'connect-four': "Upright blue four-in-a-row frame with red and yellow discs, no logo",
   'dice-duel': "Two ivory dice tumbling on green felt",
+  'eight-bit-riddles': "Generic retro handheld console with abstract blocky pixels on its screen, no logo",
   'emoji-decode': "Colourful generic smiley stickers on a wooden table",
   'emoji-flip': "Cream cards with hand-drawn generic smiley faces",
   'five-in-row': "Large wooden drop-frame with red and yellow discs, side light",
   'laser-duel': "Red and green laser beams crossing in fog",
+  'maze-runner': "Aerial view of a green hedge maze in a garden",
   'memory-match': "Face-down navy cards on a table, two turned up",
+  'movie-mayhem': "Blank clapperboard and a bowl of popcorn, no writing, no poster",
   'neon-gomoku': "Go board with black and white stones, close crop",
+  'neon-labyrinth': "Narrow maze corridor lit by orange and cyan neon strips",
   'neon-pairs': "Memory cards with glowing geometric backs on dark glass",
+  'number-chase': "Wooden number tiles and a small chalkboard with chalk numerals",
+  'pixel-pop-quiz': "Four coloured plastic quiz buzzers on a wooden table, no logo",
   'pixel-tac-toe': "Wooden tic-tac-toe board with turned X and O pieces",
   'pixel-tap': "Big blue arcade push button on a metal panel",
   'reaction-rush': "Vintage stopwatch mid-run held in a hand",
+  'retro-rewind': "Audio cassette and blank video tape with plain labels, no branding",
   'retro-trivia': "Vintage wood-cased television in a cosy room, no brand",
   'rock-paper-scissors': "Three hands showing rock, paper and scissors",
   'spacebar-showdown': "Macro of a mechanical keyboard spacebar with blank keycaps",
   'turbo-charge': "Boost gauge on a car dashboard, needle high, no numbers",
+  'word-scramble': "Wooden letter tiles scattered on a table, no brand, no board",
 };
 
 /** Picture, srcset and engine badge for a game card, lobby banner or game dialog. */

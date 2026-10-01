@@ -51,3 +51,23 @@ may use them in this product. Replacing one with a real photo: keep the file nam
 | games/retro-trivia-640.webp | Vintage wood-cased television in a cosy room, no brand (640 px variant) | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
 | games/emoji-decode.webp | Colourful generic smiley stickers on a wooden table | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
 | games/emoji-decode-640.webp | Colourful generic smiley stickers on a wooden table (640 px variant) | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| games/arcade-facts.webp | Arcade joystick and round buttons on a dark wooden control panel, no logo | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| games/arcade-facts-640.webp | Arcade joystick and round buttons on a dark wooden control panel, no logo (640 px variant) | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| games/pixel-pop-quiz.webp | Four coloured plastic quiz buzzers on a wooden table, no logo | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| games/pixel-pop-quiz-640.webp | Four coloured plastic quiz buzzers on a wooden table, no logo (640 px variant) | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| games/movie-mayhem.webp | Blank clapperboard and a bowl of popcorn, no writing, no poster | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| games/movie-mayhem-640.webp | Blank clapperboard and a bowl of popcorn, no writing, no poster (640 px variant) | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| games/word-scramble.webp | Wooden letter tiles scattered on a table, no brand, no board | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| games/word-scramble-640.webp | Wooden letter tiles scattered on a table, no brand, no board (640 px variant) | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| games/number-chase.webp | Wooden number tiles and a small chalkboard with chalk numerals | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| games/number-chase-640.webp | Wooden number tiles and a small chalkboard with chalk numerals (640 px variant) | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| games/brain-busters.webp | Interlocking wooden brain-teaser puzzle on a table | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| games/brain-busters-640.webp | Interlocking wooden brain-teaser puzzle on a table (640 px variant) | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| games/eight-bit-riddles.webp | Generic retro handheld console with abstract blocky pixels on its screen, no logo | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| games/eight-bit-riddles-640.webp | Generic retro handheld console with abstract blocky pixels on its screen, no logo (640 px variant) | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| games/retro-rewind.webp | Audio cassette and blank video tape with plain labels, no branding | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| games/retro-rewind-640.webp | Audio cassette and blank video tape with plain labels, no branding (640 px variant) | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| games/maze-runner.webp | Aerial view of a green hedge maze in a garden | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| games/maze-runner-640.webp | Aerial view of a green hedge maze in a garden (640 px variant) | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| games/neon-labyrinth.webp | Narrow maze corridor lit by orange and cyan neon strips | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| games/neon-labyrinth-640.webp | Narrow maze corridor lit by orange and cyan neon strips (640 px variant) | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
