@@ -113,3 +113,10 @@ test('index.html carries the social tags and the icon links', () => {
   assert.match(html, /og:image:width" content="1200"/);
   assert.match(html, /og:image:height" content="630"/);
 });
+
+test('the hero preload in index.html matches the hero image the landing page draws', () => {
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  assert.ok(html.includes(`hero.href = '${HERO_ARTWORK.src}'`), 'the preload fetches the same file');
+  assert.ok(html.includes(`'${HERO_ARTWORK.srcset}'`), 'with the same srcset');
+  assert.ok(html.includes("setAttribute('imagesizes', '100vw')"), 'and the same sizes as artImage() uses for the hero');
+});

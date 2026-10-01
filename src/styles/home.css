@@ -36,12 +36,10 @@
 
 /* ---------- Facts ---------- */
 .stat-strip { display: grid; gap: var(--sp-3); grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.stat-strip > i { display: none; }
-.stat-strip > div:not(.stat-right) { display: grid; gap: 2px; padding: var(--sp-4); border: 1px solid var(--line); border-radius: var(--r-3); background: var(--surface-1); }
+.stat-strip > div { display: grid; gap: 2px; padding: var(--sp-4); border: 1px solid var(--line); border-radius: var(--r-3); background: var(--surface-1); }
 .stat-strip b { font-family: var(--font-display); font-size: var(--fs-6); line-height: 1.1; color: var(--primary); font-variant-numeric: tabular-nums; }
 .stat-strip span { color: var(--ink-muted); font-size: var(--fs-2); line-height: 1.3; }
-.stat-right { display: none; }
-@media (max-width: 480px) { .stat-strip { grid-template-columns: 1fr; } .stat-strip > div:not(.stat-right) { grid-template-columns: auto 1fr; align-items: center; gap: var(--sp-3); } }
+@media (max-width: 480px) { .stat-strip { grid-template-columns: 1fr; } .stat-strip > div { grid-template-columns: auto 1fr; align-items: center; gap: var(--sp-3); } }
 
 /* ---------- Game cards: photo on top, big readable copy below ---------- */
 .game-grid { display: grid; gap: var(--sp-5); grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); }

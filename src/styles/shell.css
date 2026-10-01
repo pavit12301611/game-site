@@ -51,7 +51,6 @@
 .nav-item.is-active::before { content: ''; position: absolute; left: 0; top: 10px; bottom: 10px; width: 4px; border-radius: 0 4px 4px 0; background: var(--primary); }
 .nav-item.is-active .icon { color: var(--primary); }
 .nav-count { margin-left: auto; min-width: 28px; padding: 1px 8px; border-radius: var(--r-pill); background: var(--surface-3); color: var(--ink); font-size: var(--fs-1); text-align: center; }
-.nav-key { margin-left: auto; color: var(--ink-subtle); font-size: var(--fs-1); }
 .sidebar-divider { height: 1px; background: var(--line); }
 .sidebar-promo { display: grid; gap: var(--sp-2); margin-top: auto; padding: var(--sp-4); border: 1px solid var(--line); border-radius: var(--r-3); background: var(--surface-2); }
 .sidebar-promo p { color: var(--ink); font-size: var(--fs-2); line-height: 1.45; }
@@ -116,8 +115,6 @@
   max-width: var(--content-max); margin: 0 auto; padding: var(--sp-3) var(--sp-4) 0;
   color: var(--ink-muted); font-size: var(--fs-2);
 }
-.page-context .context-dot { display: none; }
-.page-context > .context-divider { display: none; }
 .page-context > .page-context-name { color: var(--ink); font-weight: 600; }
 .page-context .network-status { margin-left: auto; }
 @media (min-width: 1024px) { .page-context { padding: var(--sp-4) var(--sp-6) 0; } }

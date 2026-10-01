@@ -27,6 +27,17 @@
           var pref = localStorage.getItem('psd-theme-preference');
           var sysLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
           var theme = pref === 'light' || pref === 'dark' ? pref : sysLight ? 'light' : 'dark';
+          // The landing hero is the largest paint, but it is an <img> that JavaScript draws, so the browser would only find it
+          // after the app has run. On the landing route, start fetching it now (keep in sync with HERO_ARTWORK in src/catalog.js).
+          var h = location.hash;
+          if (!h || h === '#' || h === '#/' || h === '#/home') {
+            var hero = document.createElement('link');
+            hero.rel = 'preload'; hero.as = 'image'; hero.href = '/images/hero.webp';
+            hero.setAttribute('imagesrcset', '/images/hero-800.webp 800w, /images/hero.webp 1600w');
+            hero.setAttribute('imagesizes', '100vw');
+            hero.setAttribute('fetchpriority', 'high');
+            document.head.appendChild(hero);
+          }
           document.documentElement.dataset.theme = theme;
           document.documentElement.style.colorScheme = theme;
           var meta = document.getElementById('meta-theme-color');

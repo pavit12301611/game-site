@@ -256,7 +256,7 @@ input[type='radio'], input[type='checkbox'] { width: 22px; height: 22px; margin:
   font-weight: 600;
   white-space: nowrap;
 }
-.network-status > i, .friend-online-label > i, .live-tag > i, .private-tag > i, .lobby-live > i, .admin-live > i, .friend-status > i, .connection-dot, .live-pulse, .context-dot, .playing-pulse {
+.network-status > i, .friend-online-label > i, .live-tag > i, .private-tag > i, .lobby-live > i, .admin-live > i, .friend-status > i, .connection-dot, .live-pulse, .playing-pulse {
   display: inline-block; flex: none;
   width: 10px; height: 10px;
   border-radius: 50%;

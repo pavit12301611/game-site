@@ -89,7 +89,7 @@ kbd {
 
 ::selection { background: var(--primary); color: var(--on-primary); }
 
-.tnum, .game-count b, .nav-count, .quiz-progress b, .race-lane strong, .duel-score strong, .rally-score strong, .match-player strong { font-variant-numeric: tabular-nums; }
+.game-count b, .nav-count, .quiz-progress b, .race-lane strong, .duel-score strong, .rally-score strong, .match-player strong { font-variant-numeric: tabular-nums; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
