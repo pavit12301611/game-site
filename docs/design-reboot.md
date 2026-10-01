@@ -32,7 +32,7 @@ measurements here), ImageMagick 6.9 **with WebP** (resize/convert), and **no SVG
 3. UI chrome is quiet and neutral (warm greys); **one** brass/amber primary; colour is saved for players and states.
 4. Boards are **physical objects** and look the same in both themes; only the table around them changes.
 5. Each of 4 player colours is paired with a **shape** (circle, triangle, square, diamond) and a letter: colour is never the only signal.
-6. Type does the hierarchy: Inter for everything; Chakra Petch only for the wordmark and score digits; mono only for room codes and key caps. No text below 12 px.
+6. Type does the hierarchy: Inter for everything; Chakra Petch only for the wordmark and score digits; mono only for room codes and key caps. No text below 13 px; body 17 px.
 7. Real spacing scale (4-pt), 4 radii, 3 elevations, 4 durations. No one-off numbers.
 8. Photography leads: every game has its own image; no overlays painted on it except a text scrim where text sits.
 9. Motion explains cause and effect (a disc falls, a card flips, a button depresses) and has a reduced-motion twin for every effect.
@@ -142,17 +142,20 @@ Same three npm packages already bundled (no new dependency); fewer weights shipp
 
 | Token | Size / line | Use |
 | --- | --- | --- |
-| `--fs-1` | 12 / 16 | captions, key caps, badges (the minimum, nothing smaller) |
-| `--fs-2` | 14 / 20 | secondary text, table cells, chips |
-| `--fs-3` | 16 / 24 | body, inputs, buttons (16 px also stops iOS zoom on focus) |
-| `--fs-4` | 18 / 26 | lead paragraphs, card titles |
-| `--fs-5` | 22 / 28 | section headings (h3) |
-| `--fs-6` | 28 / 34 | page headings (h2) |
-| `--fs-7` | clamp(32, 5vw, 44) / 1.1 | page titles (h1) |
-| `--fs-8` | clamp(40, 7vw, 64) / 1.05 | landing hero only |
+| `--fs-1` | 13 / 18 | captions, key caps, badges (the minimum, nothing smaller) |
+| `--fs-2` | 15 / 22 | secondary text, table cells, chips |
+| `--fs-3` | 17 / 26 | body, inputs, buttons (≥ 16 px also stops iOS zoom on focus) |
+| `--fs-4` | 19 / 28 | lead paragraphs, card titles |
+| `--fs-5` | 24 / 30 | section headings (h3) |
+| `--fs-6` | 30 / 36 | page headings (h2) |
+| `--fs-7` | clamp(34, 5vw, 48) / 1.1 | page titles (h1) |
+| `--fs-8` | clamp(42, 7vw, 68) / 1.05 | landing hero only |
+
+Bigger on purpose (owner request, D6): today's body is 15 px and much of the UI is 9-11 px; the new
+base is 17 px with a 13 px floor, so it reads well on a phone held at arm's length and on a desktop.
 
 Weights: 400 body, 500 UI labels, 600 buttons and card titles, 700 headings. Small-caps "eyebrow"
-labels (10 px mono, letter-spaced, today everywhere) are replaced by sentence-case 12 px `--ink-muted`
+labels (10 px mono, letter-spaced, today everywhere) are replaced by sentence-case 13 px `--ink-muted`
 labels. `font-variant-numeric: tabular-nums` on every score, timer and counter, so digits never jiggle.
 
 ### 3.3 Space, radius, elevation, motion, layout
@@ -161,16 +164,16 @@ labels. `font-variant-numeric: tabular-nums` on every score, timer and counter, 
 - **Radius:** `--r-1 4` (pieces, key caps), `--r-2 8` (inputs, buttons, chips), `--r-3 12` (cards, panels), `--r-4 20` (dialogs, hero), `--r-pill 999`. Boards use their own small radii (a real board has 2–6 px corners).
 - **Elevation** (warm black, light from top-left; light theme halves the alpha): `--shadow-1` `1px 2px 3px / .30` (cards at rest), `--shadow-2` `2px 6px 16px / .30` (hover, popovers), `--shadow-3` `4px 18px 44px / .36` (dialogs). Plus `--shadow-inset` (wells, board grooves), `--shadow-piece` (`1px 2px 3px / .45`), and `--press` (button depth: the 3 px "ledge" under a button collapses to 1 px on `:active`).
 - **Motion:** `--dur-1 100ms` (hover/press), `--dur-2 180ms` (state change), `--dur-3 280ms` (dialog, drawer), `--dur-4 600ms` (disc drop, card flip, reveal). Easing `--ease-out cubic-bezier(.2,.7,.2,1)` and `--ease-io cubic-bezier(.4,0,.2,1)`. Under `prefers-reduced-motion: reduce`: all durations become 0 except opacity cross-fades ≤ 120 ms; no transforms, trails, pulses or parallax.
-- **Layout:** works from **320 px**; breakpoints 480 / 720 / 1024 / 1280; content max-width 1200; sidebar 240 px from 1024 up, bottom bar below. Touch targets ≥ 44×44 (inline links get 44 px of padding hit area). Focus ring: `outline: 2px solid var(--focus-ring); outline-offset: 2px` on every focusable element, never removed; plus a 1 px inner `--surface-1` ring on dark photos.
+- **Layout:** works from **320 px**; breakpoints 480 / 720 / 1024 / 1280; content max-width 1200; sidebar 240 px from 1024 up, bottom bar below. Touch targets ≥ 48×48 (WCAG asks for 44; we go bigger on purpose, D6). Inline links get 48 px of hit area. **Boxes are big:** game cards are at least 300 px wide (1 column up to 640 px, 2 up to 1024 px, 3–4 above), card titles use `--fs-4`, panels pad with `--sp-5`, and the board uses `min(100%, 78vh)` so it fills the screen on a phone and a desktop. Focus ring: `outline: 2px solid var(--focus-ring); outline-offset: 2px` on every focusable element, never removed; plus a 1 px inner `--surface-1` ring on dark photos.
 - **Images in layout:** every image sits in a box with a fixed `aspect-ratio` (cards 16:10, hero 16:9, lobby banner 21:9) and carries `width`/`height`, so loading cannot shift anything (CLS target < 0.1).
 
 ## 4. Component inventory
 
 | Component | Variants | States that must be visible | Notes |
 | --- | --- | --- | --- |
-| Button | primary, secondary (outlined), quiet (text), danger; sizes md (44 px), sm (36 px, only in dense tables), icon-only (44×44) | hover, `:focus-visible`, active (`--press`), disabled (text + 3:1 border kept, not just 45% opacity), loading (spinner + `aria-busy`) | primary = `--primary` fill + `--on-primary` text |
+| Button | primary, secondary (outlined), quiet (text), danger; sizes md (48 px), sm (40 px, only in dense tables), icon-only (48×48) | hover, `:focus-visible`, active (`--press`), disabled (text + 3:1 border kept, not just 45% opacity), loading (spinner + `aria-busy`) | primary = `--primary` fill + `--on-primary` text |
 | Field | text, search, select, checkbox/switch, radio group | focus, invalid (icon + message linked with `aria-describedby`), disabled, read-only | label always visible; border `--control-edge` |
-| Card | game card, panel, stat tile | hover (lift to `--shadow-2`), focus, pressed, favourite on/off | whole card is one link/button; favourite is a separate 44 px button |
+| Card | game card, panel, stat tile | hover (lift to `--shadow-2`), focus, pressed, favourite on/off | whole card is one link/button; favourite is a separate 48 px button |
 | Chip / pill | filter, status, "HOST", "YOU" | selected (`aria-pressed`: fill + check icon), disabled | status chips: icon + word + colour |
 | Avatar | player 1–4, guest, CPU | here / away / left ring + label (presence stays meaningful) | shape + letter from §3.1 |
 | Player slot | filled, empty, host | is-here, is-away, is-left, you | replaces `.player-slot` / `.match-player`; keeps the presence words |
@@ -186,7 +189,7 @@ labels. `font-variant-numeric: tabular-nums` on every score, timer and counter, 
 
 | Screen | Today | After |
 | --- | --- | --- |
-| Shell | 252 px dark sidebar with "PSD ™" lockup, promo card, "YOUR ARCADE / QUICK PLAY" mono captions; topbar with ⌘K search, status pill, theme, bell, profile; extra breadcrumb strip; 5-item mobile bar | Calm 240 px sidebar (logo, 3–4 nav, connection status at the bottom: wording unchanged), slim topbar (search, theme, inbox, profile), breadcrumb strip removed (the page `h1` does that job), skip-link to `#page-content`, bottom bar ≥ 44 px targets on mobile |
+| Shell | 252 px dark sidebar with "PSD ™" lockup, promo card, "YOUR ARCADE / QUICK PLAY" mono captions; topbar with ⌘K search, status pill, theme, bell, profile; extra breadcrumb strip; 5-item mobile bar | Calm 240 px sidebar (logo, 3–4 nav, connection status at the bottom: wording unchanged), slim topbar (search, theme, inbox, profile), breadcrumb strip removed (the page `h1` does that job), skip-link to `#page-content`, bottom bar ≥ 56 px tall with 48 px targets on mobile |
 | Landing | hero with stock photo, CSS-drawn "console", glows and gridlines; stat strip; 4 featured games; shortlist; invite banner | Hero = real photo (LCP, `fetchpriority="high"`), one headline, two buttons, status chip; "How it works" in 3 steps (pick, share link, play); featured row with real per-game photos; invite banner as a plain card |
 | Catalog | "INSERT FRIENDS HERE" kicker, filter pills, count, grid of identical-looking art | Page title + search + 5 category tabs (with counts), 16:10 photo cards with title, category, players, engine tag; designed empty state; loading skeleton; results count in a live region |
 | Game modal | Art with overlays, rules text, buttons | Photo header, 3-fact strip (players, time, input), how-to-play, "Play with friends" / "Practice vs CPU" |
@@ -197,7 +200,7 @@ labels. `font-variant-numeric: tabular-nums` on every score, timer and counter, 
 | Admin | metric tiles + table | Same data, real table, stacked below 720 px |
 | Settings / prefs | modal with theme + sound | Same controls (theme, sound, plus a reduced-motion override and "large board" toggle if cheap), restyled; nothing removed |
 | Setup dialog + banners | long dialog | Same words, steps as numbered list with copy buttons |
-| Recovery screen | card with "!" badge | Same text, wider card, `role="alert"`, buttons ≥ 44 px, works with zero CSS images |
+| Recovery screen | card with "!" badge | Same text, wider card, `role="alert"`, buttons ≥ 48 px, works with zero CSS images |
 | Toasts | bottom-right pill, rebuilt on each paint | Persistent live region, stacked, dismissible, pause on hover/focus |
 | Favicon / social | data-URI SVG, no OG | `favicon.svg`, 48 px PNG/ICO, 180 px apple-touch-icon, `og-image.jpg` 1200×630, OG + Twitter tags |
 
@@ -286,7 +289,7 @@ recognisable characters.
 - **No layout shift:** every state (empty, filled, disabled, win) occupies the same box; counters are `tabular-nums`; status text has a reserved two-line height.
 - Disabled ≠ invisible: a not-your-turn control keeps full contrast, shows a lock/clock icon or "Waiting for Sam", and is `aria-disabled`/`disabled`.
 - Win/last-move/hit are shown by **shape or icon + colour + text**; reduced motion removes movement but keeps every marker.
-- Dark + light + 320 px checked per board (board scales by `min(100%, 70vh)` with `aspect-ratio`; the one known exception to 44 px targets is the 9×9 Gomoku board: full-bleed at 320 px its cells are ≈ 35 px, so it gets a visible focus/press state and zoom-friendly spacing, and the PR will say so).
+- Dark + light + 320 px checked per board (board scales by `min(100%, 78vh)` with `aspect-ratio`; the one known exception to 48 px targets is the 9×9 Gomoku board: full-bleed at 320 px its cells are ≈ 35 px, so it gets a visible focus/press state and zoom-friendly spacing, and the PR will say so).
 - Ten boards, ten sets of jsdom tests: markup contract (labels, roles, disabled states), win/last-move classes, keyboard handler maps, no ≤ 11 px text.
 
 ### 7.2 Per engine
@@ -299,7 +302,7 @@ recognisable characters.
 | **race** | Lanes on a track with ticks (`slate`/felt); one token per player; big plastic button with a 6 px ledge | Progress ticks = score; "3, 2, 1" countdown card; you = labelled "You"; finish line flag icon | Button reachable by Tab, **Space/Enter** both fire; `aria-label="Boost, 7 of 16"`; keeps focus across repaints (A6); `event.repeat` decision D5 | Button depresses 100 ms; token slides 180 ms (jump) |
 | **rps / coin / dice** | Hand signs, a two-faced coin and pipped dice as inline SVG on felt | Three/two/six large choice buttons with icon + word; locked choice shows a check and "Locked in"; result card shows both picks, winner and a round history list | Radio-like group (arrows + Enter); result announced in the live region | Hands shake 3×, coin rotates, dice tumble ≤ 600 ms (swap to final face) |
 | **quiz** | Question card on paper (`surface-1`), answer buttons with letter badges A–D | Countdown ring (text seconds inside it); per-player score strip; after reveal: correct = check icon + "Correct", yours-wrong = cross icon + "Your answer" (colour-blind safe: shapes differ, not just green/red) | Buttons keys **A–D** and 1–4 also answer; the reveal text goes to the live region; "Next question" gets focus after reveal | Ring drains linearly (static text only) |
-| **maze** | Tiled floor, walls with top/side bevel, star at the exit (`slate` + stone) | Player tokens use shape+letter; footsteps counter per player; D-pad ≥ 56 px on touch | Board is `tabindex="0"` with `aria-label` "Maze, use arrow keys"; **arrows** move (ignored while typing in an input); D-pad buttons duplicate; focus never leaves the board | Token slides 100 ms (jump) |
+| **maze** | Tiled floor, walls with top/side bevel, star at the exit (`slate` + stone) | Player tokens use shape+letter; footsteps counter per player; D-pad keys ≥ 56 px on touch (shown only on `pointer: coarse`) | Board is `tabindex="0"` with `aria-label` "Maze, use arrow keys"; **arrows** move (ignored while typing in an input); D-pad buttons duplicate; focus never leaves the board | Token slides 100 ms (jump) |
 | **battle** (6×6) | Radar glass (`slate`): your fleet grid and the target grid, sonar rings | Own fleet vs target grids side by side (stacked < 720 px); hit = peg with ✕ icon, miss = hollow peg with · icon; crosshair follows hover/focus; target picker for 3 players | Cells are buttons `aria-label="Row 3, column B, untouched"`; arrows move the crosshair, Enter fires; turn text in live region | Peg drops 180 ms (instant), sonar sweep static |
 | **rally** (3 lanes) | Top-down table: green table-tennis table with net, or air-hockey rink with centre line; paddle and ball/puck | Three lane buttons (up/centre/down) with arrows + words; scoreboard; ball/puck shown at the last exchange with a short trail | Lane buttons are a toolbar (←/→ + Enter, or 1–3); score announced | Ball arcs 280 ms with a 3-frame trail (jump, no trail) |
 | **code** (4 digits 0–5, 10 tries) | Brass dials / peg board; feedback pegs | Each of the six symbols = **colour + shape + digit**; guess history rows with feedback pegs: exact = solid, near = hollow, plus text "2 exact, 1 near"; remaining-guesses counter | Dial buttons keep `code-digit` (cycle) and also take **↑/↓** and digit keys 0–5; Enter = `code-submit`; draft is local state (`state.codeDraft`), no engine change | Dial clicks 100 ms (none) |
@@ -320,10 +323,37 @@ light / dark / reduced-motion each checked, owner confirms on the Vercel preview
 
 Baseline to protect: **316 tests, 289 pass, 27 skip, 0 fail**. The count only grows.
 
-## 9. Open decisions for the owner
+## 9. Decisions (owner answers, session 2)
 
-- **D1 Branching.** The brief asks for a new branch per phase. This working session is pinned to one branch (`arena/01a0f6c5-psd-gaming`), so Phase 0 is on it. For Phases 1+ either each phase gets its own session/branch, or phases stack on one PR. Say which.
-- **D2 Imagery.** Default is AI-generated, labelled `generated`, faces avoided. If you prefer real stock photos, send the files or say "use Pexels"; licences must then be recorded per file.
-- **D3 Fonts.** Default keeps the three installed packages and uses fewer weights. A new face would be a new dependency, which the rules forbid.
-- **D4 Brand.** The sidebar says "PSD ™". Keep the ™?  Default: drop it (no registered mark known).
-- **D5 Race Space-bar.** Holding Space currently auto-repeats `tap`s. Ignoring `event.repeat` is fair but changes the game's feel. Default: ignore repeats; say if you disagree.
+| # | Decision | Status |
+| --- | --- | --- |
+| D1 | Branching | **Decided:** all phases stack as commits on PR #13's branch (`arena/01a0f6c5-psd-gaming`). |
+| D2 | Imagery | **Decided:** a dedicated image for every game, generated by the agent, labelled `generated` in `CREDITS.md`. Faces avoided. |
+| D3 | Fonts | Default stands: the three installed packages, no new dependency. |
+| D4 | Brand "™" | Default stands: dropped. |
+| D5 | Race Space-bar `event.repeat` | Default stands: repeats ignored. Say so if you want the old feel back. |
+| D6 | Size | **Decided:** bigger text and bigger boxes for mobile and PC (see 3.2, 3.3). |
+| D7 | Direction | **Decided:** "game table" (warm, realistic) **plus** a few ideas from the owner's old Pixel Party Arcade codebase (section 10). Neon/CRT does not come back. |
+
+## 10. What was taken from the owner's old codebase
+
+Reviewed: `agon-agent_1-7f97644b.zip` on `main` (old React + Tailwind + Supabase "Pixel Party Arcade",
+57 files, no photos). The owner confirmed the rights. Only *ideas* are reused; no code, framework, font
+import or asset is copied.
+
+| Idea in the old code | Adopted as |
+| --- | --- |
+| `.pixel-btn`: chunky button with a 4 px ledge that collapses on press | `--press` (3.3); every primary/secondary button and the race button |
+| `MobileControls`: 56 px D-pad and round action keys, shown only for touch (`pointer: coarse`), hold-to-repeat | Maze D-pad and race button on touch (7.2); repeat is a UI concern and respects D5 |
+| `TurnBanner`: pill with a dot that says whose turn it is | Board status line (7.1): a pill with icon + text, `aria-live`, **no** blinking under reduced motion |
+| Score chips with "me" and "lead" states | Score strips (memory, rally, quiz): "You" and a trophy icon on the leader, not colour alone |
+| `WinnerOverlay`: result card, scores, rematch button, confetti | Result card with replay (5); confetti only without reduced motion, and never over the board controls |
+| `.stage`: one shared framed play area for every game | The board "table" surface (7.1): same frame, different material per engine |
+| Bottom tab bar with `env(safe-area-inset-bottom)` | Mobile nav (5) |
+| Category tiles with their own accent | Four category covers (6) |
+| `prefers-reduced-motion` block | Kept and extended: every effect has a twin (3.3) |
+
+Deliberately **not** taken: the Google Fonts `@import` (the CSP forbids it), the Arena recording and
+element-picker scripts at the top of its `index.html` (they load `rrweb` from a CDN), Tailwind/React/lucide
+(new frameworks are forbidden), 7–9 px "Press Start 2P" labels, CRT scanlines and neon glow, and the
+48-game list (Chess, Ludo, …): the engine baseline freezes exactly these 40 games.

@@ -102,10 +102,10 @@ test('the board spec covers every engine and keeps every board data-action', () 
   }
 });
 
-test('the brief never asks for text below 12 px and keeps the three installed font packages', () => {
+test('the brief never asks for text below 13 px and keeps the three installed font packages', () => {
   const scale = [...brief.matchAll(/^\| `--fs-\d` \| (?:clamp\()?(\d+)/gm)].map((match) => Number(match[1]));
   assert.ok(scale.length >= 8);
-  assert.ok(Math.min(...scale) >= 12);
+  assert.ok(Math.min(...scale) >= 13);
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
   for (const font of ['chakra-petch', 'inter', 'jetbrains-mono']) {
     assert.ok(pkg.dependencies[`@fontsource/${font}`], `@fontsource/${font} must stay installed`);
