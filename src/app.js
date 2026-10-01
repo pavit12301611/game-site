@@ -244,6 +244,7 @@ function handleClick(event) {
 }
 
 async function resetCurrentGame() {
+  if (state.modal?.type === 'result') state.modal = null;
   try {
     if (state.local) {
       const game = getGame(state.local.gameId);

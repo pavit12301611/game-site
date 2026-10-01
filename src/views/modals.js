@@ -11,9 +11,10 @@
 import { GAMES, getGame, getGameArtwork } from '../catalog.js';
 import { connection, onlineUnavailableNote } from '../connection.js';
 import { firebaseReady, firebaseSetup } from '../firebase.js';
-import { state } from '../state.js';
+import { currentGame, currentGameState, currentPlayers, currentUid, state } from '../state.js';
+import { resultKind } from '../result-popup.js';
 import { artImage, esc, icon, renderBrand } from '../ui/html.js';
-import { isGoogleUser, playerDisplayName } from '../ui/players.js';
+import { activeName, isGoogleUser, playerDisplayName } from '../ui/players.js';
 import { suggestUsername } from '../helpers.js';
 
 /* global __PSD_BUILD__ */
@@ -51,9 +52,46 @@ export function renderLiveCheck(conn) {
   return `<section class="live-check" aria-label="Live Firebase check"><div class="live-check-head"><div><b>Live Firebase check</b><small>${conn.onlineFeatures ? 'Signs in as a guest and reads one Firestore document, so it needs Anonymous sign-in and the published rules. Google sign-in, Email/Password and Authorized domains can only be confirmed by using them once.' : esc(onlineUnavailableNote(conn))}</small></div><button class="button button-outline button-small" data-action="run-live-check" ${disabled ? 'disabled' : ''}>${check?.running ? 'Checking…' : 'Run check'}</button></div>${steps.length ? `<ul class="live-check-steps">${steps.map((step) => `<li class="${step.ok ? 'is-ok' : 'is-fail'}"><i>${step.ok ? '✓' : '!'}</i><span><b>${esc(step.label)}</b><small>${esc(step.detail)}</small></span></li>`).join('')}</ul>` : ''}</section>`;
 }
 
+const CONFETTI_COLORS = ['#ff4db8', '#2ee6ff', '#86ff5c', '#ffd23f', '#b79bff'];
+
+/** Decorative only (aria-hidden): the same 30 pieces every time, so the markup is deterministic. */
+function renderConfetti() {
+  return `<div class="result-confetti" aria-hidden="true">${Array.from({ length: 30 }, (_, i) => `<i style="--x:${(i * 37 + 11) % 100}%;--dl:${((i % 7) * 0.11).toFixed(2)}s;--t:${(1.9 + (i % 5) * 0.28).toFixed(2)}s;--r:${(i * 53) % 360}deg;--c:${CONFETTI_COLORS[i % CONFETTI_COLORS.length]}"></i>`).join('')}</div>`;
+}
+
+/**
+ * The dialog that opens when a game finishes (src/result-popup.js): who won, the score, and what to do next.
+ * Pure like every view; it reads the finished game from state.
+ */
+export function renderResultModal() {
+  const game = currentGame();
+  const gameState = currentGameState();
+  if (!game || !gameState) return '';
+  const players = currentPlayers();
+  const me = currentUid();
+  const kind = resultKind();
+  const winner = gameState.winnerUid ? activeName(gameState.winnerUid, players) : '';
+  const title = kind === 'win' ? 'You win!' : kind === 'loss' ? `${esc(winner)} wins!` : 'It’s a draw!';
+  const line = kind === 'win' ? `That ${esc(game.title)} round is yours. Sweet.`
+    : kind === 'loss' ? `${esc(winner)} took this one. A rematch could change that.`
+      : 'Nobody blinked. Settle it with a rematch.';
+  const scores = gameState.scores
+    ? `<ul class="result-scores" aria-label="Final score">${players.map((player) => `<li class="${player.uid === gameState.winnerUid ? 'is-winner' : ''}"><span>${esc(player.name)}${player.uid === me ? ' <i>You</i>' : ''}</span><b>${gameState.scores[player.uid] ?? 0}</b>${player.uid === gameState.winnerUid ? '<small>Winner</small>' : ''}</li>`).join('')}</ul>`
+    : '';
+  const hero = kind === 'win'
+    ? '<img class="result-trophy" src="/images/trophy.webp" alt="" width="480" height="480" loading="lazy" decoding="async">'
+    : `<div class="result-glyph" aria-hidden="true">${kind === 'loss' ? 'GG' : 'TIE'}</div>`;
+  const isHost = Boolean(state.local) || state.room?.hostUid === state.user?.uid;
+  const invite = state.local
+    ? `<button class="button button-outline" data-action="create-room-for-game" data-game-id="${esc(game.id)}">${icon('people')} Play a friend online</button>`
+    : `<button class="button button-outline" data-action="copy-room-link">${icon('copy')} Copy room link</button>`;
+  return `<div class="modal-backdrop result-backdrop" data-action="modal-backdrop"><section class="modal-card result-modal is-${kind}" role="dialog" aria-modal="true" aria-labelledby="result-title"><button class="modal-close" data-action="close-modal" aria-label="Close and view the board">${icon('close')}</button>${kind === 'win' ? renderConfetti() : ''}<div class="result-hero">${hero}</div><span class="eyebrow">${esc(game.title)} · Final</span><h2 id="result-title">${title}</h2><p>${line}</p>${scores}<div class="result-actions">${isHost ? `<button class="button button-primary" data-action="play-again">Play again ${icon('arrow')}</button>` : '<p class="result-note">The host starts the next round.</p>'}<button class="button button-quiet" data-action="leave-session">${icon('grid')} Choose another game</button>${invite}<button class="text-button" data-action="close-modal">View the board</button></div></section></div>`;
+}
+
 export function renderModal() {
   if (!state.modal) return '';
   const modal = state.modal;
+  if (modal.type === 'result') return renderResultModal();
   if (modal.type === 'game') {
     const game = getGame(modal.gameId);
     if (!game) return '';

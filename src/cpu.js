@@ -51,7 +51,7 @@ export function localMove(uid, action) {
     if (!game) return;
     const next = applyGameAction(game, state.local.gameState, uid, action, state.local.players);
     state.local.gameState = next;
-    playUiTone(next.phase === 'finished' ? 'win' : 'tap');
+    playUiTone('tap'); // the result dialog plays the win or lose jingle
     render();
     if (game.engine !== 'race') scheduleCpuMove();
   } catch (error) {
