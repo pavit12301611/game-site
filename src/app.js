@@ -7,9 +7,12 @@ import {
   getGame,
   getGameArtwork,
   getGameGuide,
-  getMemoryCardIcon,
   getQuizQuestion,
 } from './catalog.js';
+import { state, currentGame, currentGameState, currentPlayers, currentUid } from './state.js';
+import { esc, icon } from './ui/html.js';
+import { activeName, playerIndex, playerMark } from './ui/players.js';
+import { renderEngineBoard } from './views/boards.js';
 import { auth, createGoogleProvider, db, firebaseReady, firebaseSetup } from './firebase.js';
 import { describeConnection } from './connection-status.js';
 import { describeFirebaseError, withErrorContext } from './firebase-errors.js';
@@ -28,10 +31,7 @@ import {
 import {
   DISPLAY_NAME_STORAGE_KEY,
   FAVORITES_STORAGE_KEY,
-  RECENT_STORAGE_KEY,
   SOUND_STORAGE_KEY,
-  getStoredThemePreference,
-  loadStoredGameIds,
   nextToggledTheme,
   recordRecentGameId,
   resolveTheme,
@@ -65,43 +65,6 @@ const BUILD_INFO = typeof __PSD_BUILD__ === 'undefined'
 
 const appRoot = document.querySelector('#app');
 const emptyUnsubscribe = () => {};
-const state = {
-  page: 'home',
-  query: '',
-  focusSearchAfterRoute: false,
-  category: 'All games',
-  user: null,
-  profile: null,
-  isAdmin: false,
-  room: null,
-  roomId: null,
-  roomError: '',
-  local: null,
-  modal: null,
-  toast: null,
-  friendResults: [],
-  friendSearchTerm: '',
-  friends: [],
-  requests: [],
-  invites: [],
-  adminData: null,
-  adminLoading: false,
-  selectedBattleTarget: '',
-  codeDraft: [0, 0, 0, 0],
-  displayName: localStorage.getItem(DISPLAY_NAME_STORAGE_KEY) || '',
-  themePreference: getStoredThemePreference(),
-  resolvedTheme: resolveTheme(getStoredThemePreference(), window.matchMedia?.('(prefers-color-scheme: light)').matches ?? false),
-  soundEnabled: localStorage.getItem(SOUND_STORAGE_KEY) === 'true',
-  favorites: loadStoredGameIds(localStorage, FAVORITES_STORAGE_KEY, new Set(GAMES.map((game) => game.id))),
-  recentGames: loadStoredGameIds(localStorage, RECENT_STORAGE_KEY, new Set(GAMES.map((game) => game.id))),
-  online: navigator.onLine !== false,
-  redirectChecked: false,
-  authError: '',
-  socialError: '',
-  liveCheck: null,
-  cpuTimer: null,
-  cpuPending: false,
-};
 
 let stopRoom = emptyUnsubscribe;
 let stopRequests = emptyUnsubscribe;
@@ -110,38 +73,8 @@ let stopInvites = emptyUnsubscribe;
 let roomOpening = '';
 let toastTimer = 0;
 
-const ICONS = {
-  grid: '<path d="M4 4h16v16H4zM4 10h16M10 4v16"/><path d="M7 7h.01M16 16h.01"/>',
-  home: '<path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
-  people: '<path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M10 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM20 8v6M23 11h-6"/>',
-  trophy: '<path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0zM7 6H4v2a4 4 0 0 0 4 4M17 6h3v2a4 4 0 0 1-4 4"/>',
-  spark: '<path d="m12 3 1.9 5.8L20 11l-6.1 2.2L12 19l-1.9-5.8L4 11l6.1-2.2L12 3ZM19 15l1 2.5 2.5 1-2.5 1-1 2.5-1-2.5-2.5-1 2.5-1 1-2.5Z"/>',
-  search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>',
-  chevron: '<path d="m9 18 6-6-6-6"/>',
-  arrow: '<path d="M5 12h14m-6-6 6 6-6 6"/>',
-  link: '<path d="M10 13a5 5 0 0 0 7.1 0l3-3A5 5 0 0 0 13 2.9l-1.7 1.7M14 11a5 5 0 0 0-7.1 0l-3 3A5 5 0 0 0 11 21.1l1.7-1.7"/>',
-  copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/>',
-  bell: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/>',
-  check: '<path d="m5 12 4 4L19 6"/>',
-  close: '<path d="m18 6-12 12M6 6l12 12"/>',
-  menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
-  shield: '<path d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11Z"/><path d="m9 12 2 2 4-4"/>',
-  gamepad: '<path d="M6 12h4m-2-2v4m8-3h.01M18 13h.01M7 7h10a4 4 0 0 1 3.9 3.1l1 4A3 3 0 0 1 19 18l-3.2-2.1H8.2L5 18a3 3 0 0 1-2.9-3.9l1-4A4 4 0 0 1 7 7Z"/>',
-  exit: '<path d="M10 17l5-5-5-5M15 12H3m9-8h7a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-7"/>',
-  plus: '<path d="M12 5v14M5 12h14"/>',
-  settings: '<path d="M12 3v2m0 14v2M3 12h2m14 0h2M5.6 5.6 7 7m10 10 1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4"/><circle cx="12" cy="12" r="3.5"/>',
-  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4"/>',
-  moon: '<path d="M20.5 15.2A8.5 8.5 0 0 1 8.8 3.5 8.5 8.5 0 1 0 20.5 15.2Z"/>',
-  wifi: '<path d="M2 8.5a15.5 15.5 0 0 1 20 0M5 12a10.8 10.8 0 0 1 14 0M8.5 15.5a6 6 0 0 1 7 0M12 19h.01"/>',
-};
 
-function icon(name, className = '') {
-  return `<svg class="icon ${className}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ICONS.spark}</svg>`;
-}
 
-function esc(value = '') {
-  return String(value).replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
-}
 
 function systemPrefersLight() {
   return Boolean(window.matchMedia?.('(prefers-color-scheme: light)').matches);
@@ -196,27 +129,9 @@ function toggleFavorite(gameId) {
   showToast(`${game?.title || 'Game'} ${state.favorites.includes(gameId) ? 'added to favorites' : 'removed from favorites'}.`);
 }
 
-function currentUid() {
-  return state.local ? 'local-you' : state.user?.uid || '';
-}
 
-function currentGame() {
-  if (state.local) return getGame(state.local.gameId);
-  return state.room ? getGame(state.room.gameId) : null;
-}
 
-function currentPlayers() {
-  if (state.local) return state.local.players;
-  if (!state.room) return [];
-  return (state.room.playerUids || []).map((uid, index) => ({
-    uid,
-    name: state.room.playerNames?.[uid] || `Player ${index + 1}`,
-  }));
-}
 
-function currentGameState() {
-  return state.local?.gameState || state.room?.state || null;
-}
 
 function parseHash() {
   const path = location.hash.replace(/^#\/?/, '') || 'home';
@@ -832,13 +747,7 @@ function reportAuthError(error, context = {}) {
   }
 }
 
-function activeName(uid, players = currentPlayers()) {
-  return players.find((player) => player.uid === uid)?.name || 'A player';
-}
 
-function playerIndex(uid, players) {
-  return players.findIndex((player) => player.uid === uid);
-}
 
 function renderBrand() {
   return `<span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 40 40"><path d="M8 15 14 7h12l6 8-2 17H10z" fill="white"/><path d="M9 16h22l-2 8H11z" fill="#071c38"/><path d="M17 28h6" stroke="#57d9ff" stroke-width="2" stroke-linecap="round"/></svg></span>`;
@@ -1108,100 +1017,17 @@ function renderGameScreen() {
       <button class="text-button rail-back" data-action="navigate" data-page="catalog">Back to game shelf ${icon('arrow')}</button></aside></div>`;
 }
 
-function renderEngineBoard(game, gameState, players, me) {
-  switch (game.engine) {
-    case 'line': return renderLineBoard(gameState, players, me);
-    case 'drop': return renderDropBoard(gameState, players, me);
-    case 'memory': return renderMemoryBoard(gameState, players, me);
-    case 'race': return renderRaceBoard(gameState, players, me);
-    case 'rps': return renderRpsBoard(game, gameState, players, me);
-    case 'quiz': return renderQuizBoard(gameState, players, me);
-    case 'maze': return renderMazeBoard(gameState, players, me);
-    case 'battle': return renderBattleBoard(gameState, players, me);
-    case 'rally': return renderRallyBoard(gameState, players, me);
-    case 'code': return renderCodeBoard(gameState, players, me);
-    default: return `<div class="board-fallback">This game mode is not available yet.</div>`;
-  }
-}
 
-function renderLineBoard(gameState, players, me) {
-  const mine = gameState.turnUid === me && gameState.phase === 'playing';
-  return `<div class="line-game-wrap"><div class="line-board" style="--board-size:${gameState.size}" role="grid" aria-label="${gameState.size} by ${gameState.size} game board">${gameState.board.map((uid, index) => `<button class="line-cell ${uid ? `mark-${Math.max(0, playerIndex(uid, players))}` : ''}" data-action="line-move" data-index="${index}" ${uid || !mine ? 'disabled' : ''} aria-label="Square ${index + 1}${uid ? `, ${esc(activeName(uid, players))}` : ', empty'}">${uid ? playerMark(playerIndex(uid, players)) : ''}</button>`).join('')}</div><div class="board-instruction"><span>↗</span> ${mine ? 'Choose an open square' : `Waiting for ${esc(activeName(gameState.turnUid, players))}`}</div></div>`;
-}
 
-function playerMark(index) {
-  return ['✕', '◯', '◇'][Math.max(0, index) % 3];
-}
 
-function renderDropBoard(gameState, players, me) {
-  const mine = gameState.turnUid === me && gameState.phase === 'playing';
-  return `<div class="drop-game-wrap"><div class="drop-board" style="--drop-cols:${gameState.cols};--drop-rows:${gameState.rows}" role="grid" aria-label="Drop token board"><div class="drop-controls">${Array.from({ length: gameState.cols }, (_, col) => `<button data-action="drop-move" data-col="${col}" ${!mine || gameState.board[col] !== null ? 'disabled' : ''} aria-label="Drop token in column ${col + 1}">↓</button>`).join('')}</div>${gameState.board.map((uid, index) => `<div class="drop-cell"><i class="${uid ? `disc disc-${Math.max(0, playerIndex(uid, players))}` : ''}"></i></div>`).join('')}</div><div class="board-instruction"><span>↘</span> ${mine ? 'Pick a column to drop your token' : `Waiting for ${esc(activeName(gameState.turnUid, players))}`}</div></div>`;
-}
 
-function renderMemoryBoard(gameState, players, me) {
-  const mine = gameState.turnUid === me && gameState.phase === 'playing';
-  const shown = new Set([...gameState.matched, ...gameState.opened]);
-  return `<div class="memory-game-wrap"><div class="memory-score-strip">${players.map((player, index) => `<span class="memory-score ${player.uid === me ? 'is-me' : ''}"><i class="player-dot player-dot-${index}"></i>${esc(player.name)} <b>${gameState.scores[player.uid] || 0}</b></span>`).join('')}<span class="memory-turn-hint">${mine ? 'YOUR FLIP' : `${esc(activeName(gameState.turnUid, players))}’S FLIP`}</span></div><div class="memory-board" style="--memory-cols:${gameState.cards.length === 16 ? 4 : 4}">${gameState.cards.map((card, index) => `<button class="memory-card ${shown.has(index) ? 'is-revealed' : ''} ${gameState.matched.includes(index) ? 'is-matched' : ''}" data-action="memory-flip" data-index="${index}" ${!mine || gameState.matched.includes(index) ? 'disabled' : ''} aria-label="${shown.has(index) ? `Card ${getMemoryCardIcon(index)}` : `Flip card ${index + 1}`}" >${shown.has(index) ? getMemoryCardIcon(index) : '<span>?</span>'}</button>`).join('')}</div><div class="board-instruction"><span>✦</span> Match a pair to keep your turn. Highest pair count wins.</div></div>`;
-}
 
-function renderRaceBoard(gameState, players, me) {
-  const max = gameState.target;
-  return `<div class="race-board"><div class="race-round"><span><b>FIRST TO ${max}</b></span><span>Tap or press <kbd>SPACE</kbd> to boost</span></div><div class="race-lanes">${players.map((player, index) => {
-    const score = gameState.scores[player.uid] || 0;
-    return `<div class="race-lane ${player.uid === me ? 'is-me' : ''}"><div class="race-lane-head"><span class="race-player-mark mark-${index}">${player.uid === 'local-cpu' ? 'CPU' : esc(player.name.slice(0, 1).toUpperCase())}</span><span><b>${esc(player.name)}</b><small>${player.uid === me ? 'YOU' : 'RIVAL'}</small></span><strong>${score}<small>/${max}</small></strong></div><div class="race-progress"><i style="width:${Math.min(100, score / max * 100)}%"></i></div><div class="race-pixels">${Array.from({ length: max }, (_, cell) => `<i class="${cell < score ? `filled mark-${index}` : ''}"></i>`).join('')}</div></div>`;
-  }).join('')}</div><button class="boost-button" data-action="race-tap" ${gameState.phase !== 'playing' ? 'disabled' : ''}><span class="boost-icon">ϟ</span><span>BOOST</span><small>CLICK ME FAST</small></button><div class="board-instruction"><span>↗</span> No turns. Every tap adds one boost point.</div></div>`;
-}
 
-function renderRpsBoard(game, gameState, players, me) {
-  const myPick = gameState.picks[me];
-  const options = gameState.mode === 'rps' ? [['rock', '✊', 'Rock'], ['paper', '✋', 'Paper'], ['scissors', '✌', 'Scissors']]
-    : gameState.mode === 'coin' ? [['heads', '◉', 'Heads'], ['tails', '◌', 'Tails']]
-      : ['1', '2', '3', '4', '5', '6'].map((choice) => [choice, choice, `Roll ${choice}`]);
-  return `<div class="duel-board"><div class="duel-round-label"><span>ROUND <b>${gameState.lastRound?.round || gameState.round}</b></span><span>FIRST TO ${gameState.target} WINS</span></div><div class="duel-score-row">${players.map((player, index) => `<div class="duel-score ${player.uid === me ? 'is-me' : ''}"><span class="player-dot player-dot-${index}"></span><b>${esc(player.name)}</b><strong>${gameState.scores[player.uid] || 0}</strong><small>${gameState.picks[player.uid] ? 'LOCKED IN' : 'CHOOSING'}</small></div>`).join('')}</div>${gameState.lastRound ? `<div class="last-round-result">${gameState.lastRound.winnerUids.length ? `ROUND WON BY ${gameState.lastRound.winnerUids.map((uid) => esc(activeName(uid, players))).join(' + ')}` : 'NO SCORE THIS ROUND'}<small>${players.map((player) => `${esc(player.name)}: ${esc(gameState.lastRound.picks[player.uid])}`).join(' · ')}</small></div>` : ''}<div class="choice-label">${myPick ? 'Choice locked — waiting for the others' : 'Make your move'}</div><div class="choice-grid ${gameState.mode !== 'rps' ? 'choice-grid-small' : ''}">${options.map(([value, glyph, label]) => `<button class="choice-button ${myPick === value ? 'is-chosen' : ''}" data-action="duel-choice" data-choice="${value}" ${myPick || gameState.phase !== 'playing' ? 'disabled' : ''}><span>${glyph}</span><b>${label}</b></button>`).join('')}</div><div class="board-instruction"><span>✦</span> Choices reveal after everyone locks in.</div></div>`;
-}
 
-function renderQuizBoard(gameState, players, me) {
-  const question = getQuizQuestion(gameState.questionIndex);
-  const answered = Object.hasOwn(gameState.answers, me);
-  const allAnswered = players.every((player) => Object.hasOwn(gameState.answers, player.uid));
-  return `<div class="quiz-board"><div class="quiz-progress"><div><span>QUESTION</span><b>${String(gameState.questionIndex + 1).padStart(2, '0')}<i> / ${String(gameState.rounds).padStart(2, '0')}</i></b></div><div class="quiz-track">${Array.from({ length: gameState.rounds }, (_, index) => `<i class="${index <= gameState.questionIndex ? 'is-filled' : ''}"></i>`).join('')}</div><div class="quiz-scores">${players.map((player, index) => `<span><i class="player-dot player-dot-${index}"></i>${esc(player.name)} <b>${gameState.scores[player.uid] || 0}</b></span>`).join('')}</div></div><div class="quiz-question"><span class="question-mark">?</span><h2>${esc(question.prompt)}</h2><div class="quiz-options">${question.choices.map((choice, index) => `<button class="quiz-option ${allAnswered && index === question.answer ? 'is-correct' : ''} ${allAnswered && gameState.answers[me] === index && index !== question.answer ? 'is-wrong' : ''}" data-action="quiz-answer" data-answer="${index}" ${answered || gameState.phase !== 'playing' ? 'disabled' : ''}><i>${String.fromCharCode(65 + index)}</i><span>${esc(choice)}</span>${allAnswered && index === question.answer ? icon('check') : ''}</button>`).join('')}</div></div><div class="quiz-bottom">${allAnswered ? `<span class="answer-reveal">${gameState.answers[me] === question.answer ? 'Nice! You got it.' : `Answer: ${question.choices[question.answer]}`}</span><button class="button button-primary" data-action="quiz-next">${gameState.questionIndex + 1 >= gameState.rounds ? 'See final scores' : 'Next question'} ${icon('arrow')}</button>` : `<span class="answer-reveal">${answered ? 'Answer locked. Waiting for the rest…' : 'Choose the answer you think is right.'}</span><span class="answered-count">${Object.keys(gameState.answers).length} / ${players.length} IN</span>`}</div></div>`;
-}
 
-function renderMazeBoard(gameState, players, me) {
-  const tokens = new Map(players.map((player, index) => [player.uid, index]));
-  const grid = Array.from({ length: gameState.width * gameState.height }, (_, index) => {
-    const x = index % gameState.width; const y = Math.floor(index / gameState.width);
-    const playerAtCell = players.find((player) => gameState.positions[player.uid].x === x && gameState.positions[player.uid].y === y);
-    const isGoal = x === gameState.goal.x && y === gameState.goal.y;
-    return `<div class="maze-cell ${gameState.walls.includes(index) ? 'is-wall' : ''} ${isGoal ? 'is-goal' : ''}">${playerAtCell ? `<span class="maze-token maze-token-${tokens.get(playerAtCell.uid)}" title="${esc(playerAtCell.name)}">${playerAtCell.uid === me ? '●' : '◆'}</span>` : isGoal ? '✦' : ''}</div>`;
-  }).join('');
-  return `<div class="maze-board-wrap"><div class="maze-score-row">${players.map((player, index) => `<span><i class="player-dot player-dot-${index}"></i>${esc(player.name)} <b>${gameState.scores[player.uid] || 0} steps</b></span>`).join('')}<small>FIND THE STAR</small></div><div class="maze-board" style="--maze-cols:${gameState.width}" role="grid" aria-label="Maze race board">${grid}</div><div class="maze-controls"><span>MOVE WITH <kbd>←</kbd> <kbd>↑</kbd> <kbd>↓</kbd> <kbd>→</kbd></span><div><button data-action="maze-move" data-direction="up" aria-label="Move up">↑</button><button data-action="maze-move" data-direction="left" aria-label="Move left">←</button><button data-action="maze-move" data-direction="down" aria-label="Move down">↓</button><button data-action="maze-move" data-direction="right" aria-label="Move right">→</button></div></div></div>`;
-}
 
-function renderBattleBoard(gameState, players, me) {
-  const targets = players.filter((player) => player.uid !== me);
-  if (!state.selectedBattleTarget || !targets.some((player) => player.uid === state.selectedBattleTarget)) state.selectedBattleTarget = targets[0]?.uid || '';
-  const targetUid = state.selectedBattleTarget;
-  const alreadyShot = new Set((gameState.shots[me] || []).filter((key) => key.startsWith(`${targetUid}:`)).map((key) => Number(key.split(':')[1])));
-  const myTurn = gameState.turnUid === me && gameState.phase === 'playing';
-  return `<div class="battle-board-wrap"><div class="battle-targets"><span>FIRE AT</span>${targets.map((player, index) => `<button class="target-chip ${targetUid === player.uid ? 'is-active' : ''}" data-action="battle-target" data-uid="${esc(player.uid)}"><i class="player-dot player-dot-${playerIndex(player.uid, players)}"></i>${esc(player.name)}</button>`).join('')}</div><div class="battle-map" style="--battle-cols:${gameState.boardSize}" role="grid" aria-label="${esc(activeName(targetUid, players))}’s hidden fleet map">${Array.from({ length: gameState.boardSize ** 2 }, (_, index) => {
-    const shotKey = `${targetUid}:${index}`;
-    const fired = alreadyShot.has(index);
-    const hit = fired && gameState.ships[targetUid]?.includes(index);
-    return `<button class="battle-cell ${fired ? (hit ? 'is-hit' : 'is-miss') : ''}" data-action="battle-fire" data-index="${index}" ${!myTurn || fired ? 'disabled' : ''} aria-label="Target square ${index + 1}${fired ? hit ? ', hit' : ', missed' : ''}">${fired ? hit ? '✹' : '·' : ''}</button>`;
-  }).join('')}</div><div class="battle-legend"><span><i class="legend-hit"></i> HIT</span><span><i class="legend-miss"></i> MISS</span><b>${myTurn ? `YOUR TURN · ${esc(activeName(targetUid, players))}’S FLEET` : `WAITING FOR ${esc(activeName(gameState.turnUid, players))}`}</b></div></div>`;
-}
 
-function renderRallyBoard(gameState, players, me) {
-  const mine = gameState.turnUid === me && gameState.phase === 'playing';
-  return `<div class="rally-board"><div class="rally-scoreboard">${players.map((player, index) => `<div class="rally-score ${player.uid === me ? 'is-me' : ''}"><span class="player-dot player-dot-${index}"></span><b>${esc(player.name)}</b><strong>${gameState.scores[player.uid] || 0}</strong><small>FIRST TO ${gameState.target}</small></div>`).join('')}</div><div class="rally-court"><div class="court-line"></div><span class="court-puck">●</span><div class="court-center">${gameState.lastAction ? 'RALLY!' : 'SERVE'}</div></div><div class="lane-label">${mine ? 'Choose your return lane' : `${esc(activeName(gameState.turnUid, players))} is serving`}</div><div class="lane-buttons">${['UP', 'CENTER', 'DOWN'].map((lane, index) => `<button data-action="rally-hit" data-lane="${index}" ${!mine ? 'disabled' : ''}><i>${['↗', '→', '↘'][index]}</i><b>${lane}</b></button>`).join('')}</div><div class="board-instruction"><span>↔</span> Each clean volley scores a point. First to ${gameState.target} wins.</div></div>`;
-}
 
-function renderCodeBoard(gameState, players, me) {
-  const mine = gameState.turnUid === me && gameState.phase === 'playing';
-  const draft = state.codeDraft.slice(0, gameState.digits);
-  return `<div class="code-board-wrap"><div class="code-header"><span>CRACK THE ${gameState.digits}-DIGIT CODE</span><span>${gameState.guesses.length} / ${gameState.maxGuesses} GUESSES</span></div><div class="code-status">${mine ? 'Your turn — set a sequence and submit.' : `${esc(activeName(gameState.turnUid, players))} is decoding…`}</div><div class="code-draft">${draft.map((digit, index) => `<button data-action="code-digit" data-index="${index}" aria-label="Cycle digit ${index + 1}">${digit}<small>↕</small></button>`).join('')}<button class="button button-primary code-submit" data-action="code-submit" ${!mine ? 'disabled' : ''}>Try code ${icon('arrow')}</button></div><div class="code-legend"><span><i class="exact-dot"></i> Right digit, right place</span><span><i class="near-dot"></i> Right digit, other place</span></div><div class="guess-history">${gameState.guesses.length ? [...gameState.guesses].reverse().map((guess, index) => `<div class="guess-row"><span class="guess-player">${esc(activeName(guess.uid, players))}</span><span class="guess-digits">${guess.guess.map((digit) => `<i>${digit}</i>`).join('')}</span><span class="guess-hints"><b>${guess.exact}</b><small>EXACT</small><b>${guess.misplaced}</b><small>NEAR</small></span></div>`).join('') : `<div class="guess-empty">No guesses yet — digits range from 0 to 5.</div>`}</div>${gameState.phase === 'finished' ? `<div class="code-reveal">THE CODE WAS <b>${gameState.secret.join(' ')}</b></div>` : ''}</div>`;
-}
 
 function describeBuild() {
   const parts = [BUILD_INFO.vercelEnv || BUILD_INFO.mode];
