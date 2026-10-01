@@ -229,3 +229,37 @@ test('rendering never throws for any page', () => {
     assert.ok($('#page-content').textContent.trim().length > 0, `#/${page} has content`);
   }
 });
+
+test('landing and catalog images: sized, lazy except the hero, and every game card shows its own file', () => {
+  setHash('#/home');
+  const hero = all('img.hero-artwork');
+  assert.equal(hero.length, 1, 'one hero image');
+  assert.equal(hero[0].getAttribute('fetchpriority'), 'high');
+  assert.equal(all('img[fetchpriority="high"]').length, 1, 'only the hero is high priority');
+  for (const img of all('img')) {
+    assert.ok(img.getAttribute('width') && img.getAttribute('height'), `${img.getAttribute('src')} has width and height`);
+    if (!img.classList.contains('hero-artwork')) {
+      assert.equal(img.getAttribute('loading'), 'lazy', `${img.getAttribute('src')} is lazy`);
+      assert.equal(img.getAttribute('decoding'), 'async');
+    }
+  }
+  assert.equal(all('.category-card').length, 4, 'four category covers on the landing page');
+
+  setHash('#/catalog');
+  const clear = button('clear-filters');
+  if (clear) click(clear);
+  click(all('[data-action="filter-category"]').find((node) => node.dataset.category === 'All games'));
+  const sources = all('.game-card img').map((img) => img.getAttribute('src'));
+  assert.equal(sources.length, 40);
+  assert.equal(new Set(sources).size, 40, 'no two cards share a picture');
+});
+
+test('a category cover on the landing page opens the catalog filtered to that category', () => {
+  setHash('#/home');
+  click(all('.category-card').find((node) => node.dataset.category === 'Strategy'));
+  assert.equal(dom.window.location.hash, '#/catalog');
+  assert.ok($('#catalog-grid'), 'the catalog is showing');
+  assert.ok(all('.filter-pill.is-active').some((node) => node.dataset.category === 'Strategy'), 'the Strategy filter is active');
+  assert.ok(all('.game-card').length > 0 && all('.game-card').length < 40);
+  click(all('[data-action="filter-category"]').find((node) => node.dataset.category === 'All games'));
+});

@@ -101,6 +101,18 @@
 .game-count b { color: var(--ink); }
 .catalog-bottom { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-3); padding-top: var(--sp-4); border-top: 1px solid var(--line); color: var(--ink-muted); font-size: var(--fs-2); }
 
+/* ---------- Category covers ---------- */
+.category-row { display: grid; gap: var(--sp-3); grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0; padding: 0; list-style: none; }
+.category-card { position: relative; display: block; width: 100%; min-height: 48px; padding: 0; overflow: hidden; border: 1px solid var(--line); border-radius: var(--r-3); background: var(--surface-1); color: var(--ink); text-align: left; cursor: pointer; transition: transform 0.15s ease, border-color 0.15s ease; }
+.category-card:hover { border-color: var(--primary); transform: translateY(-2px); }
+.category-card-image { display: block; width: 100%; height: auto; aspect-ratio: 16 / 10; object-fit: cover; }
+.category-card-copy { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-2); padding: var(--sp-3) var(--sp-4); }
+.category-card-copy b { font-family: var(--font-display); font-size: var(--fs-4); }
+.category-card-copy small { color: var(--ink-muted); font-size: var(--fs-2); }
+@media (min-width: 900px) { .category-row { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (max-width: 380px) { .category-row { grid-template-columns: 1fr; } }
+@media (prefers-reduced-motion: reduce) { .category-card { transition: none; } .category-card:hover { transform: none; } }
+
 /* ---------- Shelves, invite banner ---------- */
 .personal-shelves { display: grid; gap: var(--sp-5); }
 .personal-shelf { display: grid; gap: var(--sp-3); }

@@ -11,7 +11,7 @@
  * Every value that comes from another player (names, room ids, game titles) goes through `esc()`.
  */
 
-import { CATEGORIES, GAME_COVERS, GAMES, getGame, getGameArtwork, getGameGuide } from '../catalog.js';
+import { CATEGORIES, CATEGORY_ARTWORK, GAMES, HERO_ARTWORK, getGame, getGameArtwork, getGameGuide } from '../catalog.js';
 import { connection } from '../connection.js';
 import { firebaseReady, firebaseSetup } from '../firebase.js';
 import { state, currentGame, currentGameState, currentPlayers, currentPresence, currentUid } from '../state.js';
@@ -57,16 +57,25 @@ export function renderSetupCallout(conn = connection()) {
   return `<aside class="setup-callout is-alert" aria-label="Firebase setup needed">${icon('spark')}<span><b>${esc(conn.detail)}</b>${conn.hint ? ` <small>${esc(conn.hint)}</small>` : ''}<small>Online rooms, accounts and friends are off until this is fixed. Local practice works.</small></span><button data-action="show-setup">Setup guide ${icon('arrow')}</button></aside>`;
 }
 
+export function renderCategoryRow() {
+  const cards = Object.keys(CATEGORY_ARTWORK).map((name) => {
+    const count = GAMES.filter((game) => game.category === name).length;
+    return `<li><button class="category-card" data-action="filter-category" data-category="${esc(name)}">${artImage(CATEGORY_ARTWORK[name], { className: 'category-card-image', sizes: '(min-width: 1024px) 280px, (min-width: 560px) 45vw, 100vw' })}<span class="category-card-copy"><b>${esc(name)}</b><small>${count} games</small></span></button></li>`;
+  }).join('');
+  return `<section class="section-block category-section" aria-labelledby="category-title"><div class="section-heading"><div><div class="eyebrow">Find your mood</div><h2 id="category-title">Browse by category<span>.</span></h2></div></div><ul class="category-row">${cards}</ul></section>`;
+}
+
 export function renderHome() {
   const featured = GAMES.slice(0, 6);
   const conn = connection();
   return `<section class="hero-panel">
-    ${artImage({ src: GAME_COVERS.Hero, width: 1120, height: 640, alt: '' }, { className: 'hero-artwork', hero: true })}
+    ${artImage(HERO_ARTWORK, { className: 'hero-artwork', hero: true })}
     <div class="hero-copy"><div class="hero-kicker"><span class="live-pulse is-${conn.kind}"></span>${esc(conn.label)}<i>·</i> No downloads</div><h1>Your arcade.<br><em>Everywhere.</em></h1><p>Forty bite-size retro games. Your people on the other side of the link. That’s the whole setup.</p><div class="hero-actions"><button class="button button-primary" data-action="navigate" data-page="catalog">Explore all 40 games ${icon('arrow')}</button><button class="button button-glass" data-action="open-friends">Play with friends ${icon('people')}</button></div><div class="hero-footnote">Made for <b>2–3 players</b> · works on laptops &amp; phones</div></div>
   </section>
   ${renderSetupCallout(conn)}
   <section class="stat-strip" aria-label="Arcade facts"><div><b>40</b><span>tiny game worlds</span></div><div><b>2–3</b><span>players per room</span></div><div><b>0</b><span>downloads required</span></div></section>
   <section class="section-block featured-section"><div class="section-heading"><div><div class="eyebrow">Pick up and play</div><h2>Start with a classic<span>.</span></h2><p>Easy to learn. Hard to leave the lobby.</p></div><button class="text-button" data-action="navigate" data-page="catalog">Browse all 40 ${icon('arrow')}</button></div>${renderGameGrid(featured)}</section>
+  ${renderCategoryRow()}
   ${renderPersonalShelves()}
   <section class="invite-banner"><div class="invite-symbol">${icon('link')}</div><div><div class="eyebrow">A better way to say “you on?”</div><h2>Make a room. Share the link.</h2><p>Your friends join in the browser. No install, no matching accounts required to try a guest room.</p></div><button class="button button-dark" data-action="quick-room">Create a game room ${icon('arrow')}</button></section>
 `;

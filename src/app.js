@@ -179,7 +179,7 @@ function handleClick(event) {
   if (action === 'open-settings') { modalOpen({ type: 'settings' }); return; }
   if (action === 'toggle-favorite') { toggleFavorite(gameId); return; }
   if (action === 'open-game') { recordRecentGame(gameId); modalOpen({ type: 'game', gameId }); return; }
-  if (action === 'filter-category') { state.category = category; render(); return; }
+  if (action === 'filter-category') { state.category = category; if (state.page !== 'catalog') { navigate('catalog'); return; } render(); return; }
   if (action === 'clear-filters') { state.query = ''; state.category = 'All games'; render(); return; }
   if (action === 'quick-play') { const game = GAMES[Math.floor(Math.random() * GAMES.length)]; recordRecentGame(game.id); modalOpen({ type: 'game', gameId: game.id }); return; }
   if (action === 'quick-room') { openRoomModal(GAMES[0].id); return; }
