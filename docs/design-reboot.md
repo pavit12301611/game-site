@@ -27,10 +27,10 @@ measurements here), ImageMagick 6.9 **with WebP** (resize/convert), and **no SVG
 
 ## 2. Direction in 10 lines
 
-1. **A game table, not a neon cabinet.** The product reads as warm wood, felt, paper and plastic under one soft lamp.
+1. **An arcade, not a spreadsheet.** The product reads as a neon game room: deep indigo cabinets, hot pink, cyan, lime and yellow, chunky ledged buttons. See §11 (this replaced the warm "game table" draft).
 2. One light source, top-left, everywhere. Shadows fall bottom-right; insets are darker top-left.
-3. UI chrome is quiet and neutral (warm greys); **one** brass/amber primary; colour is saved for players and states.
-4. Boards are **physical objects** and look the same in both themes; only the table around them changes.
+3. Chrome is dark indigo with bold edges; **one** yellow primary (violet in the light theme); neon pink, cyan, lime and violet mark categories, boards and states.
+4. Boards are **cabinet screens**: dark neon glass in both themes; only the room around them changes.
 5. Each of 4 player colours is paired with a **shape** (circle, triangle, square, diamond) and a letter: colour is never the only signal.
 6. Type does the hierarchy: Inter for everything; Chakra Petch only for the wordmark and score digits; mono only for room codes and key caps. No text below 13 px; body 17 px.
 7. Real spacing scale (4-pt), 4 radii, 3 elevations, 4 durations. No one-off numbers.
@@ -45,96 +45,110 @@ token swap, with **no** per-component overrides (that is how Phase 5 deletes the
 
 ### 3.1 Colour (measured)
 
+> **Arcade direction (§11) replaced the warm palette of the first draft.** The tables below are the current
+> values; `tests/design-brief.test.js` recomputes every ratio from them.
+
 Token → hex, both themes:
 
 | Token | Dark | Light | Role |
 | --- | --- | --- | --- |
-| `--bg` | #14110F | #F6F1E8 | page background |
-| `--surface-1` | #1C1815 | #FFFDF8 | cards, panels, sidebar |
-| `--surface-2` | #262019 | #EFE8DB | inputs, raised cards, table stripes |
-| `--surface-3` | #322A22 | #E4DAC8 | wells and inset areas only (no controls, no status text) |
-| `--ink` | #F4EEE5 | #241F1A | body text, headings |
-| `--ink-muted` | #C2B7A8 | #554C41 | secondary text |
-| `--ink-subtle` | #A09484 | #675D50 | captions, placeholders (never on --surface-3) |
-| `--control-edge` | #8C8070 | #8A7D6C | borders of inputs, buttons, chips (UI contrast) |
-| `--primary` | #E8A33D | #8F5200 | primary button fill, links, active nav |
-| `--on-primary` | #1A1208 | #FFFFFF | text/icon on --primary |
-| `--focus-ring` | #8CC4FF | #1B4FD1 | 2px focus ring |
-| `--ok` | #6FCF97 | #16774A | success text and icon |
-| `--bad` | #FF9A8A | #B3321F | error text and icon |
-| `--warn` | #F2C14E | #8A5A00 | warning text and icon |
-| `--info` | #86BDF2 | #1F5FA8 | info text and icon |
-| `--line` | #3B332A | #D8CCB8 | decorative hairlines only; carries no meaning |
+| `--bg` | #0B0720 | #F6F1FF | page background |
+| `--surface-1` | #150D36 | #FFFFFF | cards, panels, sidebar |
+| `--surface-2` | #20154F | #ECE5FF | inputs, raised cards, table stripes |
+| `--surface-3` | #2E2068 | #DDD2FF | wells and inset areas only (no controls, no status text) |
+| `--ink` | #F7F3FF | #1A1040 | body text, headings |
+| `--ink-muted` | #CFC6F5 | #463B86 | secondary text |
+| `--ink-subtle` | #AA9FE0 | #574C96 | captions, placeholders (never on --surface-3) |
+| `--control-edge` | #8F80DC | #7566C0 | borders of inputs, buttons, chips (UI contrast) |
+| `--primary` | #FFD23F | #5B21D6 | primary button fill, links, active nav (yellow in dark, violet in light) |
+| `--on-primary` | #140A2E | #FFFFFF | text/icon on --primary |
+| `--focus-ring` | #5EF0FF | #0B4BD6 | 2px focus ring |
+| `--ok` | #5DFFA0 | #087040 | success text and icon |
+| `--bad` | #FF8AA0 | #C1123A | error text and icon |
+| `--warn` | #FFD23F | #8A5A00 | warning text and icon |
+| `--info` | #7ADCFF | #1250A8 | info text and icon |
+| `--neon-pink` | #FF4DB8 | #C4157F | arcade accent: Arcade category, hot highlights |
+| `--neon-cyan` | #2EE6FF | #006B8F | arcade accent: Strategy category, grid lines |
+| `--neon-lime` | #86FF5C | #256F00 | arcade accent: Puzzle category, go/ready |
+| `--neon-violet` | #B79BFF | #6A3DF0 | arcade accent: Party-adjacent glows, decorative |
+| `--line` | #3B2C80 | #D0C4F7 | decorative hairlines only; carries no meaning |
 
 Pairing rules: text uses only `--bg`, `--surface-1`, `--surface-2`; `--surface-3` may carry `--ink` and
 `--ink-muted` only. Controls never sit on `--surface-3`. Status colours are always accompanied by an
-icon and a word. Every row below is a pair the product is allowed to use, with its measured WCAG
-ratio against the requirement (4.5 text, 3 UI/graphics). Rows use the worst-case allowed surface
-(`--surface-2` is the lightest of the three in dark and the darkest in light), so the same colours on
-`--bg` and `--surface-1` pass by construction:
+icon and a word. The neon accents are used as text only in the rows measured below; a glow or an outline is
+decoration and never the only signal. Every row below is a pair the product is allowed to use, with its
+measured WCAG ratio against the requirement (4.5 text, 3 UI/graphics). Rows use the worst-case allowed
+surface (`--surface-2`), so the same colours on `--bg` and `--surface-1` pass by construction:
 
 | Context | Foreground | Background | FG hex | BG hex | Ratio | Needs |
 | --- | --- | --- | --- | --- | --- | --- |
-| dark | `--ink` | `--surface-2` | #F4EEE5 | #262019 | 13.97 | 4.5:1 |
-| dark | `--ink` | `--surface-3` | #F4EEE5 | #322A22 | 12.22 | 4.5:1 |
-| dark | `--ink-muted` | `--surface-2` | #C2B7A8 | #262019 | 8.16 | 4.5:1 |
-| dark | `--ink-muted` | `--surface-3` | #C2B7A8 | #322A22 | 7.14 | 4.5:1 |
-| dark | `--ink-subtle` | `--surface-2` | #A09484 | #262019 | 5.42 | 4.5:1 |
-| dark | `--primary` | `--surface-2` | #E8A33D | #262019 | 7.47 | 4.5:1 |
-| dark | `--on-primary` | `--primary` | #1A1208 | #E8A33D | 8.59 | 4.5:1 |
-| dark | `--ok` | `--surface-2` | #6FCF97 | #262019 | 8.48 | 4.5:1 |
-| dark | `--bad` | `--surface-2` | #FF9A8A | #262019 | 7.86 | 4.5:1 |
-| dark | `--warn` | `--surface-2` | #F2C14E | #262019 | 9.60 | 4.5:1 |
-| dark | `--info` | `--surface-2` | #86BDF2 | #262019 | 8.12 | 4.5:1 |
-| dark | `--control-edge` | `--surface-2` | #8C8070 | #262019 | 4.17 | 3:1 |
-| dark | `--focus-ring` | `--surface-2` | #8CC4FF | #262019 | 8.79 | 3:1 |
-| light | `--ink` | `--surface-2` | #241F1A | #EFE8DB | 13.40 | 4.5:1 |
-| light | `--ink` | `--surface-3` | #241F1A | #E4DAC8 | 11.79 | 4.5:1 |
-| light | `--ink-muted` | `--surface-2` | #554C41 | #EFE8DB | 6.90 | 4.5:1 |
-| light | `--ink-muted` | `--surface-3` | #554C41 | #E4DAC8 | 6.07 | 4.5:1 |
-| light | `--ink-subtle` | `--surface-2` | #675D50 | #EFE8DB | 5.29 | 4.5:1 |
-| light | `--primary` | `--surface-2` | #8F5200 | #EFE8DB | 5.11 | 4.5:1 |
-| light | `--on-primary` | `--primary` | #FFFFFF | #8F5200 | 6.22 | 4.5:1 |
-| light | `--ok` | `--surface-2` | #16774A | #EFE8DB | 4.57 | 4.5:1 |
-| light | `--bad` | `--surface-2` | #B3321F | #EFE8DB | 5.08 | 4.5:1 |
-| light | `--warn` | `--surface-2` | #8A5A00 | #EFE8DB | 4.86 | 4.5:1 |
-| light | `--info` | `--surface-2` | #1F5FA8 | #EFE8DB | 5.29 | 4.5:1 |
-| light | `--control-edge` | `--surface-2` | #8A7D6C | #EFE8DB | 3.30 | 3:1 |
-| light | `--focus-ring` | `--surface-2` | #1B4FD1 | #EFE8DB | 5.59 | 3:1 |
+| dark | `--ink` | `--surface-2` | #F7F3FF | #20154F | 15.00 | 4.5:1 |
+| dark | `--ink` | `--surface-3` | #F7F3FF | #2E2068 | 12.62 | 4.5:1 |
+| dark | `--ink-muted` | `--surface-2` | #CFC6F5 | #20154F | 10.18 | 4.5:1 |
+| dark | `--ink-muted` | `--surface-3` | #CFC6F5 | #2E2068 | 8.57 | 4.5:1 |
+| dark | `--ink-subtle` | `--surface-2` | #AA9FE0 | #20154F | 6.82 | 4.5:1 |
+| dark | `--primary` | `--surface-2` | #FFD23F | #20154F | 11.35 | 4.5:1 |
+| dark | `--on-primary` | `--primary` | #140A2E | #FFD23F | 13.07 | 4.5:1 |
+| dark | `--ok` | `--surface-2` | #5DFFA0 | #20154F | 12.70 | 4.5:1 |
+| dark | `--bad` | `--surface-2` | #FF8AA0 | #20154F | 7.33 | 4.5:1 |
+| dark | `--warn` | `--surface-2` | #FFD23F | #20154F | 11.35 | 4.5:1 |
+| dark | `--info` | `--surface-2` | #7ADCFF | #20154F | 10.54 | 4.5:1 |
+| dark | `--neon-pink` | `--surface-2` | #FF4DB8 | #20154F | 5.47 | 4.5:1 |
+| dark | `--neon-cyan` | `--surface-2` | #2EE6FF | #20154F | 10.83 | 4.5:1 |
+| dark | `--neon-lime` | `--surface-2` | #86FF5C | #20154F | 12.85 | 4.5:1 |
+| dark | `--neon-violet` | `--surface-2` | #B79BFF | #20154F | 7.14 | 4.5:1 |
+| dark | `--control-edge` | `--surface-2` | #8F80DC | #20154F | 4.91 | 3:1 |
+| dark | `--focus-ring` | `--surface-2` | #5EF0FF | #20154F | 12.00 | 3:1 |
+| light | `--ink` | `--surface-2` | #1A1040 | #ECE5FF | 14.44 | 4.5:1 |
+| light | `--ink` | `--surface-3` | #1A1040 | #DDD2FF | 12.36 | 4.5:1 |
+| light | `--ink-muted` | `--surface-2` | #463B86 | #ECE5FF | 7.72 | 4.5:1 |
+| light | `--ink-muted` | `--surface-3` | #463B86 | #DDD2FF | 6.61 | 4.5:1 |
+| light | `--ink-subtle` | `--surface-2` | #574C96 | #ECE5FF | 5.98 | 4.5:1 |
+| light | `--primary` | `--surface-2` | #5B21D6 | #ECE5FF | 6.54 | 4.5:1 |
+| light | `--on-primary` | `--primary` | #FFFFFF | #5B21D6 | 7.97 | 4.5:1 |
+| light | `--ok` | `--surface-2` | #087040 | #ECE5FF | 5.06 | 4.5:1 |
+| light | `--bad` | `--surface-2` | #C1123A | #ECE5FF | 5.04 | 4.5:1 |
+| light | `--warn` | `--surface-2` | #8A5A00 | #ECE5FF | 4.86 | 4.5:1 |
+| light | `--info` | `--surface-2` | #1250A8 | #ECE5FF | 6.29 | 4.5:1 |
+| light | `--neon-pink` | `--surface-2` | #C4157F | #ECE5FF | 4.58 | 4.5:1 |
+| light | `--neon-cyan` | `--surface-2` | #006B8F | #ECE5FF | 4.92 | 4.5:1 |
+| light | `--neon-lime` | `--surface-2` | #256F00 | #ECE5FF | 5.14 | 4.5:1 |
+| light | `--neon-violet` | `--surface-2` | #6A3DF0 | #ECE5FF | 4.87 | 4.5:1 |
+| light | `--control-edge` | `--surface-2` | #7566C0 | #ECE5FF | 3.90 | 3:1 |
+| light | `--focus-ring` | `--surface-2` | #0B4BD6 | #ECE5FF | 5.76 | 3:1 |
 
 **Player colours** (pieces, dots, lane tokens). A piece is `fill + 2 px edge + shape + letter`, so
 legibility never depends on the fill alone. Edge-to-fill contrast, measured:
 
 | Player | Shape | Fill (dark) | Fill (light) |
 | --- | --- | --- | --- |
-| P1 red | circle | #E5533D | #D6402B |
-| P2 yellow | triangle | #F2C230 | #E0A800 |
-| P3 blue | square | #5AAEF0 | #2F7FD0 |
-| P4 green | diamond | #4CC38A | #23995F |
+| P1 red-pink | circle | #FF5A7A | #C8123F |
+| P2 yellow | triangle | #FFD23F | #D99A00 |
+| P3 blue | square | #38C8FF | #1676D6 |
+| P4 green | diamond | #5DFF9A | #1A9250 |
 
 | Context | Foreground | Background | FG hex | BG hex | Ratio | Needs |
 | --- | --- | --- | --- | --- | --- | --- |
-| P1 red piece, dark | edge | fill | #1A1208 | #E5533D | 4.97 | 3:1 |
-| P1 red piece, light | edge | fill | #241F1A | #D6402B | 3.60 | 3:1 |
-| P2 yellow piece, dark | edge | fill | #1A1208 | #F2C230 | 11.05 | 3:1 |
-| P2 yellow piece, light | edge | fill | #241F1A | #E0A800 | 7.60 | 3:1 |
-| P3 blue piece, dark | edge | fill | #1A1208 | #5AAEF0 | 7.71 | 3:1 |
-| P3 blue piece, light | edge | fill | #241F1A | #2F7FD0 | 3.94 | 3:1 |
-| P4 green piece, dark | edge | fill | #1A1208 | #4CC38A | 8.36 | 3:1 |
-| P4 green piece, light | edge | fill | #241F1A | #23995F | 4.51 | 3:1 |
+| P1 red-pink piece, dark | edge | fill | #140A2E | #FF5A7A | 6.29 | 3:1 |
+| P1 red-pink piece, light | edge | fill | #1A1040 | #C8123F | 3.03 | 3:1 |
+| P2 yellow piece, dark | edge | fill | #140A2E | #FFD23F | 13.07 | 3:1 |
+| P2 yellow piece, light | edge | fill | #1A1040 | #D99A00 | 7.19 | 3:1 |
+| P3 blue piece, dark | edge | fill | #140A2E | #38C8FF | 9.77 | 3:1 |
+| P3 blue piece, light | edge | fill | #1A1040 | #1676D6 | 3.86 | 3:1 |
+| P4 green piece, dark | edge | fill | #140A2E | #5DFF9A | 14.59 | 3:1 |
+| P4 green piece, light | edge | fill | #1A1040 | #1A9250 | 4.42 | 3:1 |
 
-Yellow on a light surface is only ~2.1:1 by itself, which is exactly why the edge and shape are mandatory.
-
-**Board materials** are theme-independent (a wooden board is wooden in both themes). Text printed on them:
+**Board materials** are theme-independent (a neon cabinet screen is dark in both themes). Text printed on them:
 
 | Context | Foreground | Background | FG hex | BG hex | Ratio | Needs |
 | --- | --- | --- | --- | --- | --- | --- |
-| maple wood (line board) | label | material | #2B1A0E | #D9B27C | 8.44 | 4.5:1 |
-| walnut frame | label | material | #F3E3C3 | #5B3A24 | 7.99 | 4.5:1 |
-| green felt (dice, race) | label | material | #F1F5EE | #1F5A3D | 7.36 | 4.5:1 |
-| blue plastic frame (drop) | label | material | #FFFFFF | #1D4F9C | 7.92 | 4.5:1 |
-| dark slate (battle, maze, rally) | label | material | #6EE7A0 | #0F1A22 | 11.42 | 4.5:1 |
-| card back (memory) | label | material | #F1E7C8 | #23305E | 10.27 | 4.5:1 |
+| neon glass (line, memory, maze boards) | label | material | #E6FBFF | #0D0826 | 18.16 | 4.5:1 |
+| blue frame (drop board) | label | material | #FFFFFF | #1B2A8F | 11.83 | 4.5:1 |
+| card back (memory) | label | material | #FFE27A | #2B1A7A | 10.72 | 4.5:1 |
+| card face (memory, choices) | label | material | #140A2E | #FFF7D6 | 17.55 | 4.5:1 |
+| radar glass (battle) | label | material | #5DFFA0 | #04141A | 14.53 | 4.5:1 |
+| court (rally) | label | material | #EAFFF4 | #0B3A2F | 12.11 | 4.5:1 |
+| arcade-red button (race) | label | material | #FFFFFF | #B3123A | 6.85 | 4.5:1 |
 
 ### 3.2 Type
 
@@ -162,7 +176,7 @@ labels. `font-variant-numeric: tabular-nums` on every score, timer and counter, 
 
 - **Space (4-pt):** `--sp-1 4`, `-2 8`, `-3 12`, `-4 16`, `-5 24`, `-6 32`, `-7 48`, `-8 64`, `-9 96` px.
 - **Radius:** `--r-1 4` (pieces, key caps), `--r-2 8` (inputs, buttons, chips), `--r-3 12` (cards, panels), `--r-4 20` (dialogs, hero), `--r-pill 999`. Boards use their own small radii (a real board has 2–6 px corners).
-- **Elevation** (warm black, light from top-left; light theme halves the alpha): `--shadow-1` `1px 2px 3px / .30` (cards at rest), `--shadow-2` `2px 6px 16px / .30` (hover, popovers), `--shadow-3` `4px 18px 44px / .36` (dialogs). Plus `--shadow-inset` (wells, board grooves), `--shadow-piece` (`1px 2px 3px / .45`), and `--press` (button depth: the 3 px "ledge" under a button collapses to 1 px on `:active`).
+- **Elevation** (superseded by §11: arcade tokens use hard offset shadows plus dark-theme glows; the numbers in this bullet describe the first draft): `--shadow-1` `1px 2px 3px / .30` (cards at rest), `--shadow-2` `2px 6px 16px / .30` (hover, popovers), `--shadow-3` `4px 18px 44px / .36` (dialogs). Plus `--shadow-inset` (wells, board grooves), `--shadow-piece` (`1px 2px 3px / .45`), and `--press` (button depth: the 3 px "ledge" under a button collapses to 1 px on `:active`).
 - **Motion:** `--dur-1 100ms` (hover/press), `--dur-2 180ms` (state change), `--dur-3 280ms` (dialog, drawer), `--dur-4 600ms` (disc drop, card flip, reveal). Easing `--ease-out cubic-bezier(.2,.7,.2,1)` and `--ease-io cubic-bezier(.4,0,.2,1)`. Under `prefers-reduced-motion: reduce`: all durations become 0 except opacity cross-fades ≤ 120 ms; no transforms, trails, pulses or parallax.
 - **Layout:** works from **320 px**; breakpoints 480 / 720 / 1024 / 1280; content max-width 1200; sidebar 240 px from 1024 up, bottom bar below. Touch targets ≥ 48×48 (WCAG asks for 44; we go bigger on purpose, D6). Inline links get 48 px of hit area. **Boxes are big:** game cards are at least 300 px wide (1 column up to 640 px, 2 up to 1024 px, 3–4 above), card titles use `--fs-4`, panels pad with `--sp-5`, and the board uses `min(100%, 78vh)` so it fills the screen on a phone and a desktop. Focus ring: `outline: 2px solid var(--focus-ring); outline-offset: 2px` on every focusable element, never removed; plus a 1 px inner `--surface-1` ring on dark photos.
 - **Images in layout:** every image sits in a box with a fixed `aspect-ratio` (cards 16:10, hero 16:9, lobby banner 21:9) and carries `width`/`height`, so loading cannot shift anything (CLS target < 0.1).
@@ -205,6 +219,8 @@ labels. `font-variant-numeric: tabular-nums` on every score, timer and counter, 
 | Favicon / social | data-URI SVG, no OG | `favicon.svg`, 48 px PNG/ICO, 180 px apple-touch-icon, `og-image.jpg` 1200×630, OG + Twitter tags |
 
 ## 6. Per-game image brief
+
+> Status: the 40 per-game photos follow this brief (warm, real objects). The hero, category covers, social image, backdrop and trophy were regenerated as neon arcade art (§11.4); the game photos are unified in the UI with a scanline overlay, saturation and a category-coloured frame until they are regenerated in neon.
 
 **Output spec.** `public/images/games/<game-id>.webp` 1280×800 (16:10), `<game-id>-640.webp` 640×400 for
 `srcset`/`sizes`. Hero `public/images/hero.webp` 1600×900 (+800 w), four covers
@@ -294,6 +310,8 @@ recognisable characters.
 
 ### 7.2 Per engine
 
+> The **Physical object** column below is the first-draft wording. The arcade materials in §11.3 replace it; the layout, states, keyboard and motion columns still apply unchanged.
+
 | Engine (games) | Physical object | Layout and states | Keyboard and a11y | Motion (reduced-motion twin) |
 | --- | --- | --- | --- | --- |
 | **line** (3×3, 9×9) | Maple board with routed grid lines (`maple`, `walnut` border); turned-wood X and O pieces with `--shadow-piece` | Square board; empty cell shows faint ghost of your piece on hover/focus; last move ringed; winning line drawn as a brass bar and the pieces lift 2 px | `role="grid"` → real `row`/`gridcell` wrappers with the `<button>` inside; `aria-label="Row 2, column 3, empty"` / `"…, X by Sam"`; arrows move focus between cells, Enter/Space places | Piece settles 180 ms (instant) |
@@ -333,7 +351,7 @@ Baseline to protect: **316 tests, 289 pass, 27 skip, 0 fail**. The count only gr
 | D4 | Brand "™" | Default stands: dropped. |
 | D5 | Race Space-bar `event.repeat` | Default stands: repeats ignored. Say so if you want the old feel back. |
 | D6 | Size | **Decided:** bigger text and bigger boxes for mobile and PC (see 3.2, 3.3). |
-| D7 | Direction | **Decided:** "game table" (warm, realistic) **plus** a few ideas from the owner's old Pixel Party Arcade codebase (section 10). Neon/CRT does not come back. |
+| D7 | Direction | First decided "game table" (warm, realistic). **Superseded by the owner's arcade request (§11):** neon, bold, playful, with the ideas from the owner's old Pixel Party Arcade codebase (section 10). |
 
 ## 10. What was taken from the owner's old codebase
 
@@ -355,5 +373,31 @@ import or asset is copied.
 
 Deliberately **not** taken: the Google Fonts `@import` (the CSP forbids it), the Arena recording and
 element-picker scripts at the top of its `index.html` (they load `rrweb` from a CDN), Tailwind/React/lucide
-(new frameworks are forbidden), 7–9 px "Press Start 2P" labels, CRT scanlines and neon glow, and the
+(new frameworks are forbidden), 7–9 px "Press Start 2P" labels, and the
 48-game list (Chess, Ludo, …): the engine baseline freezes exactly these 40 games.
+
+## 11. Direction change: arcade (owner request, supersedes the warm draft)
+
+The owner asked for a full arcade look: neon, bold, playful, never boring, on the images, the interface and the boards. Everything in §2, §3 (tokens), §6 (hero/covers) and §7 (materials) that says warm, wood, felt or brass is superseded by this section. Accessibility, performance, the engines and the catalog are unchanged.
+
+### 11.1 Palette rationale
+
+- **Surfaces** are deep indigo, not black (`--bg` #0B0720 up to `--surface-3` #2E2068), so neon has something to glow against and the page does not look like a plain dark mode.
+- **One primary.** Yellow `--primary` #FFD23F with dark ink in the dark theme; violet #5B21D6 with white ink in the light theme. Primary buttons have a 4 px ledge (`--primary-ledge`) that collapses on `:active`.
+- **Neon accents** `--neon-pink`, `--neon-cyan`, `--neon-lime`, `--neon-violet`, `--neon-yellow` are used for borders, glows, headings and category colours (Arcade pink, Party violet, Strategy cyan, Puzzle lime). In the light theme they are darkened until each one is at least 4.5:1 on `--surface-2` (the contrast table in §3.1 holds the measured values), so they are safe for text.
+- **Status** colours (`--ok`, `--bad`, `--warn`, `--info`) are separate from the neon accents and are never the only signal.
+
+### 11.2 Effects
+
+- **Hard shadows**: `--shadow-1/2/3` are offset, not blurred. **Glows** (`--glow-*`, `--text-glow`, `--primary-glow`) exist in the dark theme only; in the light theme they become a solid outline or nothing, because blurred light on white reads as dirt.
+- **Scanlines** (`--scanlines`) are a faint repeating gradient on the game stage and game photos, `none` in the light theme.
+- **Backdrop**: `public/images/backdrop.webp` sits in a fixed `body::before`, washed with `--page-wash` (90 % indigo / 93 % lavender), so text contrast is measured against the wash, not the picture.
+- **Motion** (each has a `prefers-reduced-motion` twin that stops it): the blinking "PRESS START" line, the scrolling marquee strip under the hero (decorative, `aria-hidden`), the pulsing turn chip, the pulsing win banner.
+
+### 11.3 Boards
+
+Boards are **theme-independent glass**: `--board-glass` #0D0826 with `--board-ink` text and the board player colours `--bp1..4` (the dark-theme `--p1..4` values, #FF5A7A / #FFD23F / #38C8FF / #5DFF9A), so a board looks the same in both themes. Board edges use the fixed `--bn-*` neons: line cyan, drop pink, memory violet, maze lime, battle radar green, rally court white, duel pink. Controls and score strips outside the glass keep the themed tokens. Piece edges and shapes are unchanged (colour is never the only signal), and the geometry, `data-action` names and `data-*` payloads are unchanged.
+
+### 11.4 Images
+
+New generated art (see `public/images/CREDITS.md`): hero, four category covers, social image, backdrop, trophy, favicon and touch icon, built by `scripts/build-arcade-art.sh`. Budgets are unchanged (full-size <= 150 KB; game-photo 640 px variants <= 36 KB, category-cover 640 px variants <= 40 KB, because the covers are denser).

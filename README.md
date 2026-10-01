@@ -140,25 +140,27 @@ focus ring, `.sr-only`), `components` (buttons, chips, forms, cards), `shell` (s
 - **Tokens first.** Colours, sizes, spacing, radii, shadows and timings are custom properties in
   `tokens.css`. Dark is the default; `[data-theme='light']` swaps the same names. Both themes are first-class:
   the token pairs are measured in `docs/design-reboot.md` (text 4.5:1, controls 3:1) and recomputed by
-  `tests/design-brief.test.js`. The board materials (`--maple`, `--felt`, `--frame-blue`, `--brass`, ...) are
-  tokens too; `boards.css` still has a few literal shades for tiles and pegs that are drawn, not themed.
-- **Warm, physical look.** Charcoal-brown surfaces (`--bg`, `--surface-1/2/3`), cream ink (`--ink`, `--ink-muted`,
-  `--ink-subtle`) and one amber accent (`--primary`) with a hard 4 px "ledge" under primary buttons, like a key
-  cap. Player colours (`--p1` ... `--p4`) are always paired with a shape and a letter, never colour alone.
+  `tests/design-brief.test.js`. The board glass (`--board-glass`, `--board-ink`, `--bp1..4`, `--bn-*`) is theme-independent and
+  defined as tokens too.
+- **Arcade look.** Deep indigo surfaces (`--bg`, `--surface-1/2/3`), light-lavender ink (`--ink`, `--ink-muted`,
+  `--ink-subtle`), one yellow primary (`--primary`; violet in the light theme) with a hard 4 px "ledge" under
+  primary buttons, and neon pink, cyan, lime and violet accents for categories, boards and focus. Player colours
+  (`--p1` ... `--p4`) are always paired with a shape and a letter, never colour alone. See `docs/design-reboot.md` §11.
 - **Type.** Chakra Petch for headings and buttons, Inter for reading, JetBrains Mono for labels and room
   codes, all installed from npm (`@fontsource/*`) so the strict CSP (`font-src 'self' data:`) holds. Body text
   is 17 px (`--fs-3`), the smallest text anywhere is 13 px (`--fs-1`), the landing headline is fluid up to 68 px.
 - **Targets and spacing.** Every control is at least 44 px and normally 48 px (`--target`). Spacing is the
   `--sp-1` ... `--sp-9` scale (4 to 96 px). Radii: `--r-1` 4 px (pieces), `--r-2` 8, `--r-3` 12 (cards),
-  `--r-4` 20 (hero, dialogs), `--r-pill`. Elevation is three hard-edged shadows, not glows.
+  `--r-4` 20 (hero, dialogs), `--r-pill`. Elevation is three hard-edged offset shadows; neon glows are an extra layer in the dark theme only.
 - **Pictures.** Every image sits in a box with a fixed `aspect-ratio` and carries `width`/`height`, so loading
   cannot shift the page. Each game has its own generated photo (`public/images/games/<id>.webp`, 1280x800, plus
-  a 640 px `srcset` variant); the hero, the four category covers (`public/images/categories/`), the social image
-  and the icons are composites and drawings built by `scripts/build-composites.sh`. Every file is listed in
+  a 640 px `srcset` variant); the hero, the four category covers (`public/images/categories/`), the social image,
+  the page backdrop, the trophy and the icons are neon arcade art generated for this project and sized by
+  `scripts/build-arcade-art.sh`. Every file is listed in
   `public/images/CREDITS.md`. Only the hero is eager (`fetchpriority="high"`, preloaded from `index.html`);
   everything else is `loading="lazy"` and `decoding="async"`.
-- **Boards are objects.** Each engine looks like the thing it is (maple board with turned pieces, blue
-  Connect-Four frame, felt table, radar glass, brass dials). Colour is never the only signal: wins, last
+- **Boards are cabinet screens.** Every board is a dark neon glass panel in both themes, with its own edge
+  colour (cyan line board, pink drop frame, violet memory grid, lime maze, green radar, court-white rally). Colour is never the only signal: wins, last
   moves, hits and misses also change shape, icon or text.
 - **Keyboard and screen readers** live in `src/a11y.js`: one persistent `aria-live="polite"` region outside
   `#app` (the turn, the result and toasts), focus that survives `render()` repainting the page, dialog focus
@@ -168,8 +170,8 @@ focus ring, `.sr-only`), `components` (buttons, chips, forms, cards), `shell` (s
   that motion would have drawn (last move, win line, hit) stay.
 - **Dev-only image scripts** (not part of the app, not dependencies; they need ImageMagick):
   `scripts/build-images.sh <dir> [ids]` turns a source picture into the two budgeted WebP files for a game
-  (<= 150 KB and <= 36 KB); `scripts/build-composites.sh` rebuilds the hero, covers, social image and icons from
-  the game photos. To replace a game's picture with a real photo, keep the file names and fix its line in
+  (<= 150 KB and <= 36 KB); `scripts/build-arcade-art.sh <dir>` turns the arcade source pictures into the hero, covers, social image,
+  backdrop, trophy and icons. To replace a game's picture with a real photo, keep the file names and fix its line in
   `CREDITS.md`; `tests/artwork.test.js` checks sizes, uniqueness and credits.
 
 The fonts are imported in `src/main.js`, so Vite hashes them into `dist/assets/` with the rest of the bundle.
@@ -216,7 +218,7 @@ The sidebar, top bar, home hero, friends page, and dialogs all show the same sta
 | --- | --- | --- |
 | **Online rooms ready** | The Firebase config was found and validated, Firebase initialized, **and** the browser is online. | Nothing. This does **not** prove the Firebase project has its sign-in methods enabled or its rules published. Use **Setup guide → Run check**, or try a guest room. |
 | **Offline · local play** | The config is fine, but the browser is offline. | Reconnect. Local practice keeps working and the online buttons stay disabled until you are back. |
-| **Local practice mode** (plus an amber setup banner) | The config is missing or invalid, or Firebase refused to start with it. The banner states the exact reason. | Fix the `VITE_FIREBASE_*` variables and redeploy (or restart `npm run dev`). |
+| **Local practice mode** (plus a setup banner) | The config is missing or invalid, or Firebase refused to start with it. The banner states the exact reason. | Fix the `VITE_FIREBASE_*` variables and redeploy (or restart `npm run dev`). |
 
 A config problem always wins over "offline": without a valid config the app cannot go online at all, so it never pretends otherwise.
 
@@ -348,7 +350,7 @@ There are no composite indexes to create for the current queries. `firebase.json
    - `[psd-gaming] ✔ The VITE_FIREBASE_* variables are set for this Vercel production (project "…", authDomain "…")`: good.
    - `[psd-gaming] ⚠ The Firebase config (VITE_FIREBASE_* variables) is not set for this Vercel preview.`: not set for this environment. Fix it and redeploy.
    - `[psd-gaming] ⚠ The Firebase config (VITE_FIREBASE_* variables) is invalid …: Missing required Firebase variable(s): …`: add or fix the named variable(s) and redeploy.
-2. **The site.** The sidebar, top bar, and home hero read **Online rooms ready**, and there is no amber banner.
+2. **The site.** The sidebar, top bar, and home hero read **Online rooms ready**, and there is no setup banner.
 3. **Setup guide dialog** (Game library → *How online play works*): **Firebase config: Loaded**, your **Project**, and a **Build** row naming the environment, commit, and build time, which tells you which deployment you are looking at.
 4. **Run check** in the same dialog: it signs in as a guest and reads one Firestore document. A pass proves the API key, Anonymous sign-in, the Firestore database, and the published rules all work for this deployment; a failure names the missing piece. Google sign-in, Email/Password, and Authorized domains can only be confirmed by using them once.
 5. Browser console: no `[PSD-gaming] …` lines.
