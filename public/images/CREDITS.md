@@ -31,3 +31,23 @@ may use them in this product. Replacing one with a real photo: keep the file nam
 | games/pixel-tap-640.webp | Big blue arcade push button on a metal panel (640 px variant) | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
 | games/button-masher.webp | Oversized red push button with a finger above it | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
 | games/button-masher-640.webp | Oversized red push button with a finger above it (640 px variant) | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| games/turbo-charge.webp | Boost gauge on a car dashboard, needle high, no numbers | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| games/turbo-charge-640.webp | Boost gauge on a car dashboard, needle high, no numbers (640 px variant) | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| games/reaction-rush.webp | Vintage stopwatch mid-run held in a hand | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| games/reaction-rush-640.webp | Vintage stopwatch mid-run held in a hand (640 px variant) | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| games/spacebar-showdown.webp | Macro of a mechanical keyboard spacebar with blank keycaps | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| games/spacebar-showdown-640.webp | Macro of a mechanical keyboard spacebar with blank keycaps (640 px variant) | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| games/bug-blaster.webp | Retro tin toy ray gun on a workbench | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| games/bug-blaster-640.webp | Retro tin toy ray gun on a workbench (640 px variant) | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| games/rock-paper-scissors.webp | Three hands showing rock, paper and scissors | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| games/rock-paper-scissors-640.webp | Three hands showing rock, paper and scissors (640 px variant) | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| games/laser-duel.webp | Red and green laser beams crossing in fog | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| games/laser-duel-640.webp | Red and green laser beams crossing in fog (640 px variant) | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| games/coin-flip-clash.webp | Plain blank gold coin spinning mid-air | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| games/coin-flip-clash-640.webp | Plain blank gold coin spinning mid-air (640 px variant) | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| games/dice-duel.webp | Two ivory dice tumbling on green felt | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| games/dice-duel-640.webp | Two ivory dice tumbling on green felt (640 px variant) | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| games/retro-trivia.webp | Vintage wood-cased television in a cosy room, no brand | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| games/retro-trivia-640.webp | Vintage wood-cased television in a cosy room, no brand (640 px variant) | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| games/emoji-decode.webp | Colourful generic smiley stickers on a wooden table | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| games/emoji-decode-640.webp | Colourful generic smiley stickers on a wooden table (640 px variant) | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
