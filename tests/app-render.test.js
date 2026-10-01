@@ -16,6 +16,8 @@ import { JSDOM } from 'jsdom';
 let dom;
 let app;
 let appRoot;
+/** Everything written to console.error while src/app.js loaded and painted for the first time. */
+const startupErrors = [];
 
 before(async () => {
   dom = new JSDOM('<!doctype html><html><head><meta id="meta-theme-color" content=""></head><body><div id="app"></div></body></html>', {
@@ -40,7 +42,15 @@ before(async () => {
 
   appRoot = window.document.querySelector('#app');
   // Imported after the globals exist: src/app.js touches document/localStorage as it loads.
-  app = await import('../src/app.js');
+  // console.error is watched meanwhile: the recovery screen (render.js) and the start-up guard
+  // (app.js) both keep the page visible but report through it, and that must count as a failure.
+  const originalError = console.error;
+  console.error = (...args) => { startupErrors.push(args); originalError.apply(console, args); };
+  try {
+    app = await import('../src/app.js');
+  } finally {
+    console.error = originalError;
+  }
 });
 
 /** @param {string} selector */
@@ -67,10 +77,21 @@ function setHash(hash) {
   dom.window.dispatchEvent(new dom.window.HashChangeEvent('hashchange'));
 }
 
-test('the app renders the shell in local practice mode', () => {
+test('start-up ends in a painted page: shell, sidebar brand and hero are in #app', () => {
+  // The blank-page outage was exactly this assertion failing in production: #app stayed empty
+  // because start-up threw before the first paint. Everything below must hold synchronously
+  // after `import('../src/app.js')` in local practice mode.
+  assert.ok($('.app-shell'), 'the app shell is painted');
+  assert.ok($('.sidebar .brand-lockup'), 'the sidebar brand is there');
+  assert.match($('.sidebar .brand-lockup').textContent, /PSD/);
+  assert.ok($('.hero-panel'), 'the landing page hero is there');
+  assert.ok($('.hero-panel h1'), 'with its headline');
+  assert.ok($('#page-content'), 'and the page container');
   assert.ok(appRoot.innerHTML.length > 1000, 'the shell is rendered');
   assert.match(appRoot.textContent, /PSD/);
   assert.match(appRoot.textContent, /Your arcade/, 'the hero copy is there');
+  assert.equal($('.fatal-error'), null, 'it is the real page, not the recovery screen');
+  assert.deepEqual(startupErrors, [], 'start-up wrote nothing to console.error');
   assert.match(appRoot.querySelector('.sidebar-bottom').textContent, /Local practice mode/, 'no Firebase config means local practice, honestly labelled');
   assert.equal(all('.nav-item').length >= 3, true, 'the sidebar shows Home / Game library / Friends');
 });

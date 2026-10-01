@@ -942,6 +942,20 @@ select { appearance: none; cursor: pointer; }
 .game-stage-footer > span { display: flex; align-items: center; gap: 5px; }
 .game-stage-footer .icon { width: 11px; height: 11px; color: #6eaaff; }
 
+/* Presence: who is still in the room (src/online/presence.js). Colour and copy only; the slot and
+   rail geometry is untouched, so a verdict change never moves anything. */
+.player-slot > small.is-away { color: var(--gold); }
+.player-slot > small.is-away i { background: var(--gold); }
+.player-slot > small.is-left { color: #7790ac; }
+.player-slot > small.is-left i { background: #7790ac; }
+.host-wait em { display: block; margin-top: 4px; color: var(--gold); font-size: 10px; font-style: normal; }
+.host-wait.is-left em { color: #93a4c0; }
+.match-player.is-away .match-player-avatar, .match-player.is-left .match-player-avatar { opacity: .55; }
+.match-player.is-away .match-player-copy small { color: var(--gold); }
+.match-player.is-left .match-player-copy small { color: #7790ac; }
+[data-theme='light'] .player-slot > small.is-away, [data-theme='light'] .host-wait em, [data-theme='light'] .match-player.is-away .match-player-copy small { color: var(--gold); }
+[data-theme='light'] .player-slot > small.is-left, [data-theme='light'] .host-wait.is-left em, [data-theme='light'] .match-player.is-left .match-player-copy small { color: #647792; }
+
 /* Common board widgets */
 .line-game-wrap, .drop-game-wrap, .memory-game-wrap, .race-board, .duel-board, .quiz-board, .maze-board-wrap, .battle-board-wrap, .rally-board, .code-board-wrap { width: min(100%, 600px); margin: 0 auto; }
 .line-board { display: grid; width: min(100%, 380px); aspect-ratio: 1; grid-template-columns: repeat(var(--board-size), minmax(0, 1fr)); grid-template-rows: repeat(var(--board-size), minmax(0, 1fr)); margin: 10px auto 0; padding: 9px; gap: 7px; border: 1px solid rgba(92,153,238,.24); border-radius: 15px; background: radial-gradient(circle at 50% 45%, rgba(44,117,213,.15), rgba(5,17,37,.58)); box-shadow: inset 0 0 28px rgba(38,105,203,.09), 0 14px 36px rgba(0,6,25,.16); }

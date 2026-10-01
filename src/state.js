@@ -15,6 +15,7 @@ import {
   resolveTheme,
 } from './helpers.js';
 import { GAMES, getGame } from './catalog.js';
+import { presenceVerdicts } from './presence-status.js';
 
 /**
  * @type {Record<string, any>}
@@ -32,6 +33,10 @@ export const state = {
   room: null,
   roomId: null,
   roomError: '',
+  /** uid -> { lastSeenMs, status } for the current online room (src/online/presence.js). */
+  presence: {},
+  /** Server clock minus local clock, measured from our own heartbeat; 0 until known. */
+  presenceClockOffsetMs: 0,
   local: null,
   modal: null,
   toast: null,
@@ -79,4 +84,19 @@ export function currentPlayers() {
 
 export function currentGameState() {
   return (/** @type {any} */ (state.local)?.gameState) || (/** @type {any} */ (state.room)?.state) || null;
+}
+
+/** The server clock, as well as this client can tell: what presence ages are measured against. */
+export function presenceNow() {
+  return Date.now() + (state.presenceClockOffsetMs || 0);
+}
+
+/**
+ * Who is still in the current online room, keyed by uid. Empty in local practice and before the
+ * first presence snapshot, which renders exactly like the room did before presence existed.
+ * @returns {Record<string, import('./presence-status.js').PresenceVerdict>}
+ */
+export function currentPresence() {
+  if (state.local || !state.room) return {};
+  return presenceVerdicts(state.room.playerUids || [], state.presence || {}, presenceNow());
 }

@@ -1,21 +1,25 @@
 import {
   GAMES,
-  applyGameAction,
   createInitialGameState,
   getGame,
-  getQuizQuestion,
 } from './catalog.js';
 import {
   state,
   currentGame,
 } from './state.js';
+import { boot } from './boot.js';
 import { runLiveCheck } from './diagnostics.js';
-import { scheduleCpuMove, sendGameAction, startPractice } from './cpu.js';
+import { scheduleCpuMove, sendGameAction, startCpuRaceLoop, startPractice } from './cpu.js';
+import {
+  handleGoogleSignIn,
+  processGoogleRedirect,
+  refreshAccount,
+  registerProfile,
+} from './accounts.js';
 import { applyTheme, toggleTheme } from './ui/theme.js';
 import { setSoundEnabled } from './ui/sound.js';
 import { recordRecentGame, toggleFavorite } from './ui/prefs.js';
 import { copyRoomLink, shareRoomLink } from './ui/links.js';
-import { isGoogleUser } from './ui/players.js';
 import {
   appRoot,
   render,
@@ -27,82 +31,57 @@ import {
 import { ensureOnlineUser } from './online/session.js';
 import {
   navigate,
+  parseHash,
   routeFromHash,
-  setHash,
 } from './router.js';
 import {
   joinGameInvite,
   requestFriendSearch,
   respondToFriend,
   sendFriendRequest,
-  subscribeSocial,
 } from './social.js';
 import { loadAdminData } from './online/admin.js';
 import {
   createOnlineRoom,
-  doOnlineAction,
   leaveWaitingRoom,
   openRoomFromLink,
   startRoom,
 } from './online/rooms.js';
 import { showToast } from './ui/toast.js';
-import {
-  connection,
-  setupError,
-} from './connection.js';
+import { setupError } from './connection.js';
 import {
   filteredGames,
   renderGameGrid,
 } from './views/pages.js';
 import {
   auth,
-  createGoogleProvider,
   db,
   firebaseReady,
 } from './firebase.js';
 
 import {
   createUserWithEmailAndPassword,
-  getRedirectResult,
-  linkWithPopup,
-  linkWithRedirect,
   onAuthStateChanged,
   signInWithEmailAndPassword,
-  signInWithPopup,
-  signInWithRedirect,
   signOut,
 } from 'firebase/auth';
 import {
   DISPLAY_NAME_STORAGE_KEY,
-  SOUND_STORAGE_KEY,
-  nextToggledTheme,
-  recordRecentGameId,
-  resolveTheme,
-  saveThemePreference,
   suggestUsername,
-  toggleFavoriteGameId,
-  validateUsername,
 } from './helpers.js';
 import {
-  collection,
   doc,
-  getDoc,
-  getDocs,
-  limit,
-  onSnapshot,
-  query,
   runTransaction,
   serverTimestamp,
-  setDoc,
-  updateDoc,
-  where,
-  writeBatch,
 } from 'firebase/firestore';
 
-/** A no-op unsubscribe, so the `stop*` variables are always safe to call. */
-const emptyUnsubscribe = () => {};
-
-let toastTimer = 0;
+/**
+ * `auth` and `db` are null only when Firebase never started. Every use below sits behind a
+ * `firebaseReady` check, or behind a sign-in or a room that can only exist with Firebase running,
+ * so these casts state what those guards already guarantee (the same pattern as src/accounts.js).
+ */
+const authInstance = /** @type {import('firebase/auth').Auth} */ (auth);
+const store = /** @type {import('firebase/firestore').Firestore} */ (db);
 
 function routeBackToCatalog() {
   window.clearTimeout(state.cpuTimer);
@@ -152,15 +131,16 @@ async function handleAuthSubmit(form) {
   const email = String(formData.get('email') || '').trim();
   const password = String(formData.get('password') || '');
   if (mode === 'register') {
-    const existingAccount = auth.currentUser && !auth.currentUser.isAnonymous && auth.currentUser.email === email && !state.profile;
+    const current = authInstance.currentUser;
+    const existingAccount = current && !current.isAnonymous && current.email === email && !state.profile;
     const credential = existingAccount
-      ? { user: auth.currentUser }
-      : await createUserWithEmailAndPassword(auth, email, password);
+      ? { user: current }
+      : await createUserWithEmailAndPassword(authInstance, email, password);
     await registerProfile(credential.user, String(formData.get('username') || ''));
     state.modal = null;
     showToast('Account ready. Go find your people.');
   } else {
-    await signInWithEmailAndPassword(auth, email, password);
+    await signInWithEmailAndPassword(authInstance, email, password);
     state.modal = null;
     showToast('Welcome back to the arcade.');
   }
@@ -242,7 +222,7 @@ function handleClick(event) {
   }
   if (action === 'run-live-check') { void runLiveCheck(); return; }
   if (action === 'account-menu') { modalOpen({ type: 'account' }); return; }
-  if (action === 'sign-out') { void signOut(auth).then(() => { modalClose(); showToast('Signed out. Come back anytime.'); }); return; }
+  if (action === 'sign-out') { void signOut(authInstance).then(() => { modalClose(); showToast('Signed out. Come back anytime.'); }); return; }
   if (action === 'auth-mode') { state.authError = ''; modalOpen({ type: 'auth', mode: actionButton.dataset.mode }); return; }
   if (action === 'guest-play') {
     state.authError = '';
@@ -265,6 +245,7 @@ async function resetCurrentGame() {
   try {
     if (state.local) {
       const game = getGame(state.local.gameId);
+      if (!game) throw new Error('This game is no longer in the catalog.');
       state.local.gameState = createInitialGameState(game, state.local.players, `${state.local.seed}:again:${Date.now()}`);
       state.codeDraft = [0, 0, 0, 0];
       render();
@@ -273,8 +254,9 @@ async function resetCurrentGame() {
     }
     if (!state.room || !state.user) return;
     if (state.room.hostUid !== state.user.uid) throw new Error('Only the room host can reset the game.');
-    await runTransaction(db, async (transaction) => {
-      const roomRef = doc(db, 'rooms', state.room.id);
+    const roomId = state.room.id;
+    await runTransaction(store, async (transaction) => {
+      const roomRef = doc(store, 'rooms', roomId);
       const snapshot = await transaction.get(roomRef);
       if (!snapshot.exists()) throw new Error('The room no longer exists.');
       const room = snapshot.data();
@@ -335,7 +317,7 @@ function handleInput(event) {
 function handleKeydown(event) {
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
     event.preventDefault();
-    const search = document.querySelector('#global-search');
+    const search = /** @type {HTMLInputElement | null} */ (document.querySelector('#global-search'));
     search?.focus();
     search?.select();
     return;
@@ -346,13 +328,15 @@ function handleKeydown(event) {
     const direction = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' }[event.key];
     void sendGameAction({ direction });
   }
-  if (state.page === 'game' && currentGame()?.engine === 'race' && event.code === 'Space' && !['INPUT', 'TEXTAREA', 'BUTTON'].includes(document.activeElement?.tagName)) {
+  if (state.page === 'game' && currentGame()?.engine === 'race' && event.code === 'Space' && !['INPUT', 'TEXTAREA', 'BUTTON'].includes(document.activeElement?.tagName ?? '')) {
     event.preventDefault();
     void sendGameAction({ type: 'tap' });
   }
 }
 
 function attachAppEvents() {
+  // index.html without #app: nothing to attach to, and render() is a no-op for the same reason.
+  if (!appRoot) return;
   appRoot.addEventListener('click', handleClick);
   appRoot.addEventListener('submit', handleSubmit);
   appRoot.addEventListener('input', handleInput);
@@ -375,9 +359,19 @@ const themeMedia = window.matchMedia?.('(prefers-color-scheme: light)');
 themeMedia?.addEventListener?.('change', () => {
   if (state.themePreference === 'system') applyTheme('system', true);
 });
-if (firebaseReady) {
-  onAuthStateChanged(auth, (user) => { void refreshAccount(user); });
-  void processGoogleRedirect().finally(() => routeFromHash());
-} else {
+try {
+  // The collaborators are resolved here, before the mode check, so a name that is not imported
+  // fails in local practice mode (and in the jsdom tests) too - not only on a deployment.
+  void boot({
+    firebaseReady,
+    routeFromHash,
+    watchAuth: (onUser) => onAuthStateChanged(authInstance, onUser),
+    refreshAccount,
+    processGoogleRedirect,
+    reportAuthError,
+  });
+} catch (error) {
+  // A start-up bug must never leave the page blank: draw the shell and keep the error readable.
+  console.error('[PSD-gaming] Start-up failed; drawing the page anyway:', error);
   routeFromHash();
 }

@@ -67,6 +67,13 @@ function allowStatements(text = code) {
   }));
 }
 
+/** The statements of one collection's block, without those of sub-collections nested inside it. */
+function ownStatements(name) {
+  const block = matchBlock(name);
+  const nested = block.indexOf('match /');
+  return allowStatements(nested === -1 ? block : block.slice(0, nested));
+}
+
 test('the file is a Firestore rules_version 2 ruleset', () => {
   assert.match(code, /^\s*rules_version\s*=\s*'2'\s*;/);
   assert.match(code, /service cloud\.firestore\s*{/);
@@ -141,7 +148,7 @@ test('admin flags are readable only by their owner and never writable from the c
 });
 
 test('rooms: unlistable except for admins, and a missing room reads as "not found" instead of permission-denied', () => {
-  const statements = allowStatements(matchBlock('rooms'));
+  const statements = ownStatements('rooms');
   const get = statements.find(({ methods }) => methods.length === 1 && methods[0] === 'get');
   assert.ok(get, 'rooms needs a dedicated get rule');
   assert.match(get.condition, /resource == null/, 'reading a room that does not exist must not throw permission-denied');
@@ -166,4 +173,23 @@ test('friendships and usernames are immutable once created, and profiles cannot 
     const denied = allowStatements(matchBlock(name)).filter(({ condition }) => condition === 'false').flatMap((item) => item.methods);
     for (const method of methods) assert.ok(denied.includes(method), `${name}: ${method} must be denied`);
   }
+});
+
+test('presence: heartbeats live with the room, are written only by their owner and read only by members', () => {
+  assert.ok(matchBlock('rooms').includes('match /presence/{uid}'), 'presence is a sub-collection of the room: guests have no profile document to put it on');
+  const statements = allowStatements(matchBlock('presence'));
+  const read = statements.find(({ methods }) => methods.includes('get') && methods.includes('list'));
+  assert.ok(read, 'members need get and list (the lobby watches the whole sub-collection)');
+  assert.match(read.condition, /isRoomMember\(roomData\(\)\)/, 'only members of that room may see who is in it');
+  const write = statements.find(({ methods }) => methods.includes('create') && methods.includes('update'));
+  assert.ok(write, 'the heartbeat is a create the first time and an update after that');
+  assert.match(write.condition, /request\.auth\.uid == uid/, 'you may only write your own heartbeat');
+  assert.match(write.condition, /isRoomMember\(roomData\(\)\)/, 'and only while you are in the room');
+  assert.match(write.condition, /hasOnly\(\['status', 'lastSeenAt'\]\)/, 'exactly two fields: nothing else can be smuggled in');
+  assert.match(write.condition, /status in \['here', 'left'\]/);
+  assert.match(write.condition, /lastSeenAt == request\.time/, 'server time only, so a wrong clock cannot fake "here"');
+  const remove = statements.find(({ methods }) => methods.includes('delete'));
+  assert.match(remove.condition, /request\.auth\.uid == uid/, 'your heartbeat is yours to remove');
+  assert.doesNotMatch(remove.condition, /roomData\(\)/, 'deleting must not look the room up: the last player deletes room and heartbeat in one transaction');
+  assert.ok(matchBlock('presence').indexOf('function roomData') < matchBlock('presence').indexOf('allow'), 'one named lookup, so every rule reads the same room document');
 });

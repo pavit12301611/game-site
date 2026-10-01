@@ -225,6 +225,25 @@ service cloud.firestore {
           || (resource.data.hostUid == request.auth.uid && resource.data.status == 'waiting')
           // A waiting room nobody is left in is litter: whoever is still in it may clear it away.
           || (resource.data.status == 'waiting' && resource.data.playerUids.hasOnly([request.auth.uid])));
+
+      match /presence/{uid} {
+        // "Who is still in this room": one heartbeat document per member, written only by that
+        // member, readable by every member. Guests have no profile document, so presence lives
+        // here with the room. The room itself stays unlistable; only its members can see these.
+        function roomData() {
+          return get(/databases/$(database)/documents/rooms/$(roomId)).data;
+        }
+        allow get, list: if signedIn() && (isRoomMember(roomData()) || isAdmin());
+        allow create, update: if signedIn()
+          && request.auth.uid == uid
+          && isRoomMember(roomData())
+          && request.resource.data.keys().hasOnly(['status', 'lastSeenAt'])
+          && request.resource.data.status in ['here', 'left']
+          && request.resource.data.lastSeenAt == request.time;
+        // Your own heartbeat is yours to remove, also once the room is gone (the last player to
+        // leave deletes the room and their heartbeat in one transaction).
+        allow delete: if signedIn() && (request.auth.uid == uid || isAdmin());
+      }
     }
   }
 }

@@ -1,11 +1,11 @@
 {
   "//": [
     "tsc --checkJs type checking for the plain-JavaScript source (npm run typecheck).",
-    "Phase 1 scope: every pure module is checked - engines, catalog, helpers, config, errors,",
-    "emulator and firebase.js. src/app.js (and its entry point src/main.js, which imports the",
-    "stylesheet) is excluded on purpose: it is the 1600-line file that item 91 splits into modules,",
-    "and it gets typed as those modules land.",
-    "noImplicitAny stays off until then; every public function is annotated with JSDoc."
+    "Every module under src/ is checked, including the entry point (src/main.js) and the wiring",
+    "layer (src/app.js). Nothing is excluded: the blank-page outage was a missing import in",
+    "src/app.js that tsc would have reported if the file had been in scope. Keep it that way.",
+    "noImplicitAny stays off for now; every public function is annotated with JSDoc.",
+    "tests/tsconfig.entry-point.json extends this file for the unresolved-identifier test."
   ],
   "compilerOptions": {
     "target": "ES2022",
@@ -20,7 +20,6 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src/**/*.js",
-    "src/**/*.d.ts", "scripts/**/*.js"],
-  "exclude": ["node_modules", "dist", "src/app.js", "src/main.js"]
+  "include": ["src/**/*.js", "src/**/*.d.ts", "scripts/**/*.js"],
+  "exclude": ["node_modules", "dist"]
 }

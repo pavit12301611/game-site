@@ -22,6 +22,7 @@ import { render } from '../render.js';
 import { state } from '../state.js';
 import { playerDisplayName } from '../ui/players.js';
 import { ensureOnlineUser } from './session.js';
+import { deletePresenceIn, startPresence, stopPresence } from './presence.js';
 import { DISPLAY_NAME_STORAGE_KEY } from '../helpers.js';
 
 /**
@@ -38,10 +39,16 @@ let stopRoom = emptyUnsubscribe;
 /** Which room id a join is in flight for, so a double navigation cannot open it twice. */
 let roomOpening = '';
 
-export function subscribeToRoom(roomId) {
+/**
+ * Listen to a room you are a member of, and start saying "I am here" in it.
+ * @param {string} roomId
+ * @param {string} uid  the member listening; only members may write presence (firestore.rules)
+ */
+export function subscribeToRoom(roomId, uid) {
   stopRoom();
   state.roomId = roomId;
   state.roomError = '';
+  startPresence(roomId, uid);
   stopRoom = onSnapshot(doc(store, 'rooms', roomId), (snapshot) => {
     if (!snapshot.exists()) {
       state.room = null;
@@ -84,7 +91,7 @@ export async function openRoomFromLink(roomId) {
         updatedAt: serverTimestamp(),
       });
     });
-    subscribeToRoom(roomId);
+    subscribeToRoom(roomId, user.uid);
   } catch (error) {
     state.roomError = friendlyError(error);
     render();
@@ -140,7 +147,7 @@ export async function createOnlineRoom(gameId, maxPlayers = 2, friend = null, ch
   state.page = 'room';
   state.roomError = '';
   if (location.hash !== `#/room/${roomRef.id}`) location.hash = `#/room/${roomRef.id}`;
-  subscribeToRoom(roomRef.id);
+  subscribeToRoom(roomRef.id, user.uid);
 }
 
 /**
@@ -155,6 +162,9 @@ export async function leaveWaitingRoom() {
   const user = state.user;
   if (!room || !user || room.status !== 'waiting') return;
   const roomRef = doc(store, 'rooms', room.id);
+  // Stop the heartbeat first (without a "left" write: the seat itself goes away below), and take
+  // the heartbeat document with you in the same transaction, so a deleted room leaves no litter.
+  stopPresence({ markLeft: false });
   await runTransaction(store, async (transaction) => {
     const snapshot = await transaction.get(roomRef);
     if (!snapshot.exists()) return;
@@ -162,6 +172,7 @@ export async function leaveWaitingRoom() {
     if (current.status !== 'waiting') return;
     const uids = (current.playerUids || []).filter((uid) => uid !== user.uid);
     if (uids.length === (current.playerUids || []).length) return; // you were not in it
+    deletePresenceIn(transaction, room.id, user.uid);
     if (!uids.length) {
       transaction.delete(roomRef);
       return;
@@ -219,6 +230,7 @@ export async function doOnlineAction(action) {
 }
 
 export function stopActiveRoom() {
+  stopPresence({ markLeft: true });
   stopRoom();
   stopRoom = emptyUnsubscribe;
   state.room = null;

@@ -56,6 +56,12 @@ function canReach({ host, port }, timeout = 2000) {
 }
 
 const target = emulatorTarget();
+/**
+ * `firebase emulators:exec` (behind `npm run test:rules`, which is what CI runs) exports
+ * FIRESTORE_EMULATOR_HOST. When it is set, "no emulator" is a failure, not a skip: the rules job
+ * must never go green because every test in this file quietly skipped.
+ */
+const EMULATOR_EXPECTED = Boolean(process.env.FIRESTORE_EMULATOR_HOST);
 let emulatorReady = false;
 let testEnv = null;
 let ruts = null;
@@ -63,10 +69,14 @@ let ruts = null;
 const ts = () => serverTimestamp();
 
 before(async () => {
-  if (!(await canReach(target))) return;
+  if (!(await canReach(target))) {
+    if (EMULATOR_EXPECTED) throw new Error(`FIRESTORE_EMULATOR_HOST is set to ${target.host}:${target.port} but nothing answers there: the emulator did not start, so these tests must not be skipped.`);
+    return;
+  }
   try {
     ruts = await import('@firebase/rules-unit-testing');
-  } catch {
+  } catch (error) {
+    if (EMULATOR_EXPECTED) throw error;
     return; // dev dependencies are not installed here: skip instead of failing the suite
   }
   testEnv = await ruts.initializeTestEnvironment({
@@ -466,4 +476,95 @@ test('game invites need a real friendship and a room you host', async (t) => {
   await ruts.assertFails(setDoc(doc(alice, 'gameInvites', 'i3'), { ...invite, friendshipId: 'nope' }), 'the friendship must be real');
   await ruts.assertFails(setDoc(doc(bob, 'gameInvites', 'i4'), invite), 'the sender must be you');
   await ruts.assertSucceeds(updateDoc(doc(bob, 'gameInvites', 'i1'), { status: 'accepted', respondedAt: ts() }));
+});
+
+/** The heartbeat document src/online/presence.js writes. */
+function heartbeat(status = 'here') {
+  return { status, lastSeenAt: ts() };
+}
+
+/** A two-player room with Alice (host) and Bob in it, seeded with the rules off. */
+async function seedPair(roomId, status = 'waiting') {
+  await seed(async (db) => setDoc(doc(db, 'rooms', roomId), {
+    ...waitingRoom(ALICE),
+    playerUids: [ALICE, BOB],
+    playerNames: { [ALICE]: 'Alice', [BOB]: 'Bob' },
+    status,
+  }));
+}
+
+test('presence: a member writes their own heartbeat and nobody else\'s', async (t) => {
+  if (!ready(t)) return;
+  await seedPair('p-own');
+  const alice = testEnv.authenticatedContext(ALICE).firestore();
+  const bob = testEnv.authenticatedContext(BOB).firestore();
+  await ruts.assertSucceeds(setDoc(doc(bob, 'rooms', 'p-own', 'presence', BOB), heartbeat()), 'a guest in the room beats');
+  await ruts.assertSucceeds(setDoc(doc(bob, 'rooms', 'p-own', 'presence', BOB), heartbeat()), 'and beats again (update)');
+  await ruts.assertSucceeds(setDoc(doc(bob, 'rooms', 'p-own', 'presence', BOB), heartbeat('left')), 'and can say they left');
+  await ruts.assertSucceeds(setDoc(doc(alice, 'rooms', 'p-own', 'presence', ALICE), heartbeat()), 'the host too');
+  await ruts.assertFails(setDoc(doc(alice, 'rooms', 'p-own', 'presence', BOB), heartbeat('left')), 'the host cannot mark Bob as gone');
+  await ruts.assertFails(setDoc(doc(bob, 'rooms', 'p-own', 'presence', ALICE), heartbeat()), 'nor Bob the host as here');
+});
+
+test('presence: only room members read or write it, and the room stays unlistable', async (t) => {
+  if (!ready(t)) return;
+  await seedPair('p-members', 'playing');
+  const bob = testEnv.authenticatedContext(BOB).firestore();
+  const carol = testEnv.authenticatedContext(CAROL).firestore();
+  const guest = testEnv.unauthenticatedContext().firestore();
+  await ruts.assertSucceeds(setDoc(doc(bob, 'rooms', 'p-members', 'presence', BOB), heartbeat()));
+  await ruts.assertSucceeds(getDocs(collection(bob, 'rooms', 'p-members', 'presence')), 'a member sees everyone\'s heartbeat');
+  await ruts.assertSucceeds(getDoc(doc(bob, 'rooms', 'p-members', 'presence', ALICE)), 'even one that does not exist yet (not found, not denied)');
+  await ruts.assertFails(setDoc(doc(carol, 'rooms', 'p-members', 'presence', CAROL), heartbeat()), 'someone who is not in the room cannot claim to be');
+  await ruts.assertFails(getDocs(collection(carol, 'rooms', 'p-members', 'presence')), 'nor watch who is');
+  await ruts.assertFails(getDoc(doc(carol, 'rooms', 'p-members', 'presence', BOB)));
+  await ruts.assertFails(setDoc(doc(guest, 'rooms', 'p-members', 'presence', BOB), heartbeat()));
+  await ruts.assertFails(getDocs(collection(guest, 'rooms', 'p-members', 'presence')));
+  await ruts.assertFails(getDocs(collection(bob, 'rooms')), 'presence does not make rooms listable');
+});
+
+test('presence: a heartbeat is exactly { status, lastSeenAt: server time }', async (t) => {
+  if (!ready(t)) return;
+  await seedPair('p-shape');
+  const bob = testEnv.authenticatedContext(BOB).firestore();
+  const ref = doc(bob, 'rooms', 'p-shape', 'presence', BOB);
+  await ruts.assertFails(setDoc(ref, { status: 'here', lastSeenAt: new Date() }), 'a client clock is not a heartbeat');
+  await ruts.assertFails(setDoc(ref, { status: 'here' }), 'the time is required');
+  await ruts.assertFails(setDoc(ref, { status: 'typing', lastSeenAt: ts() }), 'only here or left');
+  await ruts.assertFails(setDoc(ref, { status: 'here', lastSeenAt: ts(), name: 'Bob' }), 'no extra fields (names live on the room)');
+  await ruts.assertFails(setDoc(ref, { status: 'here', lastSeenAt: ts(), uid: ALICE }), 'no impersonation field either');
+  await ruts.assertSucceeds(setDoc(ref, heartbeat()));
+});
+
+test('presence: you take your heartbeat with you when you leave, also when the room goes', async (t) => {
+  if (!ready(t)) return;
+  await seedPair('p-leave');
+  const alice = testEnv.authenticatedContext(ALICE).firestore();
+  const bob = testEnv.authenticatedContext(BOB).firestore();
+  await ruts.assertSucceeds(setDoc(doc(alice, 'rooms', 'p-leave', 'presence', ALICE), heartbeat()));
+  await ruts.assertSucceeds(setDoc(doc(bob, 'rooms', 'p-leave', 'presence', BOB), heartbeat()));
+  await ruts.assertFails(deleteDoc(doc(alice, 'rooms', 'p-leave', 'presence', BOB)), 'the host cannot delete Bob\'s heartbeat');
+  // Bob gives his seat back and removes his heartbeat in one batch (what leaveWaitingRoom does).
+  const leave = writeBatch(bob);
+  leave.update(doc(bob, 'rooms', 'p-leave'), { playerUids: [ALICE], playerNames: { [ALICE]: 'Alice' }, updatedAt: ts() });
+  leave.delete(doc(bob, 'rooms', 'p-leave', 'presence', BOB));
+  await ruts.assertSucceeds(leave.commit());
+  await ruts.assertFails(setDoc(doc(bob, 'rooms', 'p-leave', 'presence', BOB), heartbeat('left')), 'out of the room, out of its presence');
+  // Alice, last one in, deletes the room and her heartbeat together: no litter left behind.
+  const last = writeBatch(alice);
+  last.delete(doc(alice, 'rooms', 'p-leave', 'presence', ALICE));
+  last.delete(doc(alice, 'rooms', 'p-leave'));
+  await ruts.assertSucceeds(last.commit());
+  // And a heartbeat left under a room that is already gone can still be removed by its owner.
+  await seed(async (db) => setDoc(doc(db, 'rooms', 'p-gone', 'presence', BOB), { status: 'here', lastSeenAt: ts() }));
+  await ruts.assertSucceeds(deleteDoc(doc(bob, 'rooms', 'p-gone', 'presence', BOB)));
+  await ruts.assertFails(setDoc(doc(bob, 'rooms', 'p-gone', 'presence', BOB), heartbeat()), 'but not re-created');
+});
+
+test('under `npm run test:rules` nothing in this file was skipped', (t) => {
+  if (!EMULATOR_EXPECTED) {
+    t.skip('only meaningful under firebase emulators:exec, which sets FIRESTORE_EMULATOR_HOST');
+    return;
+  }
+  assert.equal(emulatorReady, true, 'the emulator answered and the rules were loaded');
 });
