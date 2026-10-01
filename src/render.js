@@ -11,6 +11,8 @@
 import { renderShell } from './views/shell.js';
 import { renderFatal } from './views/fatal.js';
 import { state } from './state.js';
+import { applyFx } from './ui/fx.js';
+import { trackResult } from './result-popup.js';
 import { captureFocus, restoreFocus, syncLiveRegion, manageDialogFocus, focusPageStart } from './a11y.js';
 
 /** The root element the app renders into (`#app` in index.html). */
@@ -42,4 +44,6 @@ export function render() {
   else restoreFocus(appRoot, before);
   manageDialogFocus(appRoot, before, pageChanged);
   syncLiveRegion(appRoot);
+  applyFx(appRoot);
+  trackResult(render);
 }

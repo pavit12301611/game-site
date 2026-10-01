@@ -20,6 +20,12 @@ import { formatAwayFor } from '../presence-status.js';
 import { activeName, isGoogleUser } from '../ui/players.js';
 import { renderEngineBoard } from './boards.js';
 
+/** The 640 px picture of a game, used as the backdrop of the game stage heading. */
+function stageArt(game) {
+  const art = getGameArtwork(game);
+  return (art.srcset || '').split(' ')[0] || art.src;
+}
+
 export function renderGameCard(game, index = 0, level = 3) {
   const artwork = getGameArtwork(game);
   const isFavorite = state.favorites.includes(game.id);
@@ -210,7 +216,7 @@ export function renderGameScreen() {
     ? gameState.winnerUid ? `${activeName(gameState.winnerUid, players)} takes the round` : 'That’s a draw'
     : isTurn ? 'Your move' : `${activeName(gameState.turnUid, players)} is up${turnNote}`;
   return `<div class="play-topline"><button class="text-button" data-action="leave-session">${icon('exit')} Leave game</button><div class="playing-label"><span class="playing-pulse"></span>${state.local ? 'Local practice' : 'Live room'} <i>·</i> ${esc(game.category)}</div><span class="room-code">${state.local ? 'Practice' : `Room ${esc((state.room?.id || '').slice(0, 7).toUpperCase())}`}</span></div>
-    <div class="play-layout"><section class="game-stage surface"><div class="game-stage-heading"><div class="game-stage-title"><span class="game-mini-icon art-${game.accent}">${esc(game.icon)}</span><div><div class="eyebrow">${esc(game.category)} · Round ${gameState.round || gameState.questionIndex + 1 || 1}</div><h1>${esc(game.title)}</h1></div></div><div class="turn-chip ${gameState.phase === 'finished' ? 'is-finished' : ''}"><span></span>${esc(statusText)}</div></div>
+    <div class="play-layout"><section class="game-stage surface"><div class="game-stage-heading" style="--stage-art:url('${esc(stageArt(game))}')"><div class="game-stage-title"><span class="game-mini-icon art-${game.accent}">${esc(game.icon)}</span><div><div class="eyebrow">${esc(game.category)} · Round ${gameState.round || gameState.questionIndex + 1 || 1}</div><h1>${esc(game.title)}</h1></div></div><div class="turn-chip ${gameState.phase === 'finished' ? 'is-finished' : ''}"><span></span>${esc(statusText)}</div></div>
       ${renderHowToPlay(game)}
       ${renderEngineBoard(game, gameState, players, me)}
       <div class="stage-foot">${gameState.phase === 'finished' ? `<div class="result-banner ${gameState.winnerUid === me ? 'is-win' : ''}"><span class="result-mark">${gameState.winnerUid === me ? '✦' : gameState.winnerUid ? '◉' : '＝'}</span><div><b>${gameState.winnerUid ? (gameState.winnerUid === me ? 'Nice one — you win!' : `${esc(activeName(gameState.winnerUid, players))} wins this one.`) : 'A perfectly even match.'}</b><small>${gameState.result === 'draw' ? 'Run it back and settle the score.' : 'Well played. Fancy another round?'}</small></div><button class="button button-outline button-small" data-action="play-again">Play again ${icon('arrow')}</button></div>` : `<div class="game-stage-footer"><span>${icon('spark')} ${esc(game.blurb)}</span><span>Moves sync automatically ${state.local ? 'on this device' : 'for every player'}</span></div>`}</div>

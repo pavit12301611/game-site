@@ -86,7 +86,7 @@
 }
 .drop-cell::before { content: ''; position: absolute; inset: 11%; border-radius: 50%; background: var(--board-glass); box-shadow: inset 2px 4px 8px rgb(0 0 0 / 0.7); }
 .drop-cell > i { position: absolute; inset: 11%; border-radius: 50%; }
-.disc { background: radial-gradient(circle at 35% 30%, rgb(255 255 255 / 0.55), transparent 36%), var(--bp1); box-shadow: 0 0 14px currentColor, inset 0 -3px 5px rgb(0 0 0 / 0.3); animation: disc-drop var(--dur-4) var(--ease-out); }
+.disc { background: radial-gradient(circle at 35% 30%, rgb(255 255 255 / 0.55), transparent 36%), var(--bp1); box-shadow: 0 0 14px currentColor, inset 0 -3px 5px rgb(0 0 0 / 0.3); }
 .disc-0 { background-color: var(--bp1); color: var(--bp1); }
 .disc-1 { background-color: var(--bp2); color: var(--bp2); }
 .disc-2 { background-color: var(--bp3); color: var(--bp3); }
