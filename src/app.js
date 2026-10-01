@@ -23,6 +23,13 @@ import {
 } from './errors.js';
 import { ensureOnlineUser } from './online/session.js';
 import { loadAdminData } from './online/admin.js';
+import {
+  createOnlineRoom,
+  doOnlineAction,
+  openRoomFromLink,
+  startRoom,
+  stopActiveRoom,
+} from './online/rooms.js';
 import { showToast } from './ui/toast.js';
 import {
   connection,
@@ -80,11 +87,9 @@ import {
 /** A no-op unsubscribe, so the `stop*` variables are always safe to call. */
 const emptyUnsubscribe = () => {};
 
-let stopRoom = emptyUnsubscribe;
 let stopRequests = emptyUnsubscribe;
 let stopFriends = emptyUnsubscribe;
 let stopInvites = emptyUnsubscribe;
-let roomOpening = '';
 let toastTimer = 0;
 
 function systemPrefersLight() {
@@ -150,15 +155,6 @@ function setHash(path) {
   const nextHash = `#/${path}`;
   if (location.hash === nextHash) routeFromHash();
   else location.hash = nextHash;
-}
-
-function stopActiveRoom() {
-  stopRoom();
-  stopRoom = emptyUnsubscribe;
-  state.room = null;
-  state.roomId = null;
-  state.roomError = '';
-  roomOpening = '';
 }
 
 function routeFromHash() {
@@ -365,127 +361,6 @@ function reportSocialError(source, error) {
   if (state.socialError === message) return;
   state.socialError = message;
   render();
-}
-
-function subscribeToRoom(roomId) {
-  stopRoom();
-  state.roomId = roomId;
-  state.roomError = '';
-  stopRoom = onSnapshot(doc(db, 'rooms', roomId), (snapshot) => {
-    if (!snapshot.exists()) {
-      state.room = null;
-      state.roomError = 'This invite room no longer exists.';
-    } else {
-      state.room = { id: snapshot.id, ...snapshot.data() };
-      state.roomError = '';
-      if (state.room.gameId && !getGame(state.room.gameId)) state.roomError = 'This room points to a game that is not in the catalog.';
-    }
-    render();
-  }, (error) => {
-    state.roomError = friendlyError(error);
-    render();
-  });
-}
-
-async function openRoomFromLink(roomId) {
-  if (roomOpening === roomId || state.roomId === roomId && state.room) return;
-  roomOpening = roomId;
-  try {
-    const user = await ensureOnlineUser();
-    const roomRef = doc(db, 'rooms', roomId);
-    await runTransaction(db, async (transaction) => {
-      const snapshot = await transaction.get(roomRef);
-      if (!snapshot.exists()) throw new Error('This invite link is invalid or has expired.');
-      const room = snapshot.data();
-      const uids = room.playerUids || [];
-      if (uids.includes(user.uid)) return;
-      if (room.status !== 'waiting') throw new Error('This match has already started. Ask the host for a new room.');
-      if (uids.length >= room.maxPlayers) throw new Error('This room is full. Ask the host for another invite.');
-      const name = playerDisplayName(user);
-      const nextUids = [...uids, user.uid];
-      const nextNames = { ...(room.playerNames || {}), [user.uid]: name };
-      const nextPlayers = nextUids.map((uid, index) => ({ uid, name: nextNames[uid] || `Player ${index + 1}` }));
-      transaction.update(roomRef, {
-        playerUids: nextUids,
-        playerNames: nextNames,
-        state: createInitialGameState(room.gameId, nextPlayers, room.id),
-        updatedAt: serverTimestamp(),
-      });
-    });
-    subscribeToRoom(roomId);
-  } catch (error) {
-    state.roomError = friendlyError(error);
-    render();
-  } finally {
-    roomOpening = '';
-  }
-}
-
-async function createOnlineRoom(gameId, maxPlayers = 2, friend = null, chosenName = '') {
-  const game = getGame(gameId);
-  if (!game) throw new Error('Choose one of the games in the catalog.');
-  const user = await ensureOnlineUser();
-  if (![2, 3].includes(Number(maxPlayers))) throw new Error('Choose a room size of 2 or 3 players.');
-  const name = chosenName.trim().slice(0, 20) || playerDisplayName(user);
-  state.displayName = name;
-  localStorage.setItem(DISPLAY_NAME_STORAGE_KEY, name);
-  const roomRef = doc(collection(db, 'rooms'));
-  const initialPlayers = [{ uid: user.uid, name }];
-  const gameState = createInitialGameState(game, initialPlayers, roomRef.id);
-  await setDoc(roomRef, {
-    hostUid: user.uid,
-    hostName: name,
-    gameId,
-    playerUids: [user.uid],
-    playerNames: { [user.uid]: name },
-    maxPlayers: Number(maxPlayers),
-    status: 'waiting',
-    state: gameState,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  });
-  if (friend?.uid) {
-    const inviteRef = doc(collection(db, 'gameInvites'));
-    await setDoc(inviteRef, {
-      fromUid: user.uid,
-      toUid: friend.uid,
-      fromName: name,
-      toName: friend.name,
-      friendshipId: friend.friendshipId,
-      roomId: roomRef.id,
-      gameId,
-      status: 'pending',
-      createdAt: serverTimestamp(),
-    });
-  }
-  state.local = null;
-  state.page = 'room';
-  state.roomError = '';
-  if (location.hash !== `#/room/${roomRef.id}`) location.hash = `#/room/${roomRef.id}`;
-  subscribeToRoom(roomRef.id);
-}
-
-async function startRoom() {
-  if (!state.room || !state.user) return;
-  if (state.room.hostUid !== state.user.uid) throw new Error('Only the host can start this room.');
-  if ((state.room.playerUids || []).length < 2) throw new Error('Invite at least one friend before starting.');
-  await updateDoc(doc(db, 'rooms', state.room.id), { status: 'playing', updatedAt: serverTimestamp() });
-}
-
-async function doOnlineAction(action) {
-  if (!state.room || !state.user) throw new Error('Join a room before making a move.');
-  const roomRef = doc(db, 'rooms', state.room.id);
-  const user = state.user;
-  await runTransaction(db, async (transaction) => {
-    const snapshot = await transaction.get(roomRef);
-    if (!snapshot.exists()) throw new Error('The room was closed.');
-    const room = snapshot.data();
-    const players = (room.playerUids || []).map((uid, index) => ({ uid, name: room.playerNames?.[uid] || `Player ${index + 1}` }));
-    if (!players.some((player) => player.uid === user.uid)) throw new Error('You are no longer in this room.');
-    const game = getGame(room.gameId);
-    const nextState = applyGameAction(game, room.state, user.uid, action, players);
-    transaction.update(roomRef, { state: nextState, updatedAt: serverTimestamp() });
-  });
 }
 
 function startPractice(gameId) {
