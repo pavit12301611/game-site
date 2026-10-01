@@ -1,9 +1,7 @@
 import {
   GAMES,
-  applyGameAction,
   createInitialGameState,
   getGame,
-  getQuizQuestion,
 } from './catalog.js';
 import {
   state,
@@ -22,7 +20,6 @@ import { applyTheme, toggleTheme } from './ui/theme.js';
 import { setSoundEnabled } from './ui/sound.js';
 import { recordRecentGame, toggleFavorite } from './ui/prefs.js';
 import { copyRoomLink, shareRoomLink } from './ui/links.js';
-import { isGoogleUser } from './ui/players.js';
 import {
   appRoot,
   render,
@@ -36,75 +33,46 @@ import {
   navigate,
   parseHash,
   routeFromHash,
-  setHash,
 } from './router.js';
 import {
   joinGameInvite,
   requestFriendSearch,
   respondToFriend,
   sendFriendRequest,
-  subscribeSocial,
 } from './social.js';
 import { loadAdminData } from './online/admin.js';
 import {
   createOnlineRoom,
-  doOnlineAction,
   leaveWaitingRoom,
   openRoomFromLink,
   startRoom,
 } from './online/rooms.js';
 import { showToast } from './ui/toast.js';
-import {
-  connection,
-  setupError,
-} from './connection.js';
+import { setupError } from './connection.js';
 import {
   filteredGames,
   renderGameGrid,
 } from './views/pages.js';
 import {
   auth,
-  createGoogleProvider,
   db,
   firebaseReady,
 } from './firebase.js';
 
 import {
   createUserWithEmailAndPassword,
-  getRedirectResult,
-  linkWithPopup,
-  linkWithRedirect,
   onAuthStateChanged,
   signInWithEmailAndPassword,
-  signInWithPopup,
-  signInWithRedirect,
   signOut,
 } from 'firebase/auth';
 import {
   DISPLAY_NAME_STORAGE_KEY,
-  SOUND_STORAGE_KEY,
-  nextToggledTheme,
-  recordRecentGameId,
-  resolveTheme,
-  saveThemePreference,
   suggestUsername,
-  toggleFavoriteGameId,
-  validateUsername,
 } from './helpers.js';
 import {
-  collection,
   doc,
-  getDoc,
-  getDocs,
-  limit,
-  onSnapshot,
-  query,
   runTransaction,
   serverTimestamp,
-  setDoc,
-  updateDoc,
-  where,
-  writeBatch,
 } from 'firebase/firestore';
 
 /**
