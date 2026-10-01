@@ -66,27 +66,62 @@ VITE_FIREBASE_AUTH_EMULATOR_PORT=9099
 
 Two things to know: the flag is **ignored by a production build** (`vite build`), so a deployment can never end up talking to `localhost`; and Firebase still needs a valid-looking `VITE_FIREBASE_*` config to start at all, because the emulator is only a different address for the same SDK.
 
+## Project layout
+
+`src/main.js` is only the entry point (stylesheet + app). Everything else is a module:
+
+| Module | What it owns |
+| --- | --- |
+| `src/app.js` | Event handlers and start-up. ~360 lines; used to be the whole app. |
+| `src/state.js` | The one mutable `state` object and the derived getters (`currentGame`, `currentPlayers`, …). |
+| `src/render.js` | `render()`: repaint `#app` from state, with a recovery screen if drawing ever throws. |
+| `src/router.js` | The hash router (`#/home`, `#/room/<id>`, …) and what landing on a page means. |
+| `src/errors.js` | Turns a Firebase error into a sentence a player can act on. |
+| `src/connection.js` | The single connection verdict (Firebase setup + browser online) every view shows. |
+| `src/accounts.js` | Guests, email/password, Google, the atomic username claim, the admin flag. |
+| `src/social.js` | Friend search, requests, the live friend/invite listeners. |
+| `src/cpu.js` | Local practice and the CPU opponent, using the same engines as online play. |
+| `src/diagnostics.js` | The setup dialog's "Run check" button. |
+| `src/online/session.js` | `ensureOnlineUser()`: guests are anonymous accounts, so a link never forces a sign-up. |
+| `src/online/rooms.js` | Create a room, join by link, start the match, make a move (all transactional). |
+| `src/online/admin.js` | The admin dashboard's reads. |
+| `src/views/` | Pure "state in, HTML out": `shell`, `pages`, `modals`, `boards`, `fatal`. |
+| `src/ui/` | Small pieces: `html` (icons, escaping), `players`, `toast`, `theme`, `sound`, `prefs`, `links`. |
+| `src/engines/` | One module per game engine, with the catalog in `src/catalog.js`. |
+| `src/firebase*.js` | Config parsing, validation, initialization, error wording, emulator switch. |
+
+Rules for contributing to this layout: views never write to state and never talk to Firebase;
+modules never import `src/app.js` (it is the wiring, so that would be a cycle); and every string
+that came from another player goes through `esc()`.
+
 ## Tests and CI
 
 ```bash
 npm test            # unit tests: no network, no Firebase credentials, no Java
 npm run typecheck   # tsc --checkJs over every pure module (JSDoc types)
 npm run test:rules  # firestore.rules against the Firestore emulator (needs Java)
-npm run audit       # npm audit --audit-level=high
+npm run audit       # npm audit --omit=dev --audit-level=high: only what ships to the browser
 ```
 
 - `.github/workflows/ci.yml` runs `npm ci`, `npm test`, `npm run typecheck` and `npm run build` on every push and pull request, a `firestore-rules` job that installs Java and runs the emulator rules tests, and an informational `npm audit` job.
+- `npm run audit` checks **what ships to the browser** (`--omit=dev`): the app has one runtime dependency, `firebase`. Advisories in the build and emulator tooling never reach a player, are not part of the deployed bundle, and are tracked by Dependabot instead, which opens grouped weekly pull requests - forcing them to block a release would only train everyone to ignore the job. The one production advisory found so far (`@firebase/firestore` pinning an old `@grpc/grpc-js`) is fixed with an npm `overrides` entry rather than by downgrading Firebase.
 - Dependabot (`.github/dependabot.yml`) opens one grouped pull request for patch and minor updates every week. Major upgrades, such as `firebase` 12 or `vite` 8, arrive alone so they can be reviewed and tested on their own.
 - `tests/app-render.test.js` boots the real UI in jsdom with no Firebase configured and walks the local-practice flow. It is the safety net for splitting `src/app.js` into modules.
 - The game rules are locked by `tests/fixtures/engine-baseline.json`, which fingerprints every state of all 40 games and replays them on every run. If you change a rule on purpose, regenerate it with `node tests/fixtures/generate-engine-baseline.mjs` and say so in the pull request.
 
 ### Type checking is JSDoc, not a rewrite
 
-`jsconfig.json` runs `tsc --checkJs` over every pure module (engines, catalog, helpers, config,
-errors, emulator and `firebase.js`), with the shared shapes named once in `src/types.js`.
-`src/main.js` is excluded until item 91 splits it: 1600 lines of DOM code is typed module by module,
-as each module is extracted. `noImplicitAny` is off for the same reason and gets switched on per
-module once the annotations are in place.
+`jsconfig.json` runs `tsc --checkJs` over every module except the entry point and the wiring layer
+(`src/main.js` and `src/app.js`), with the shared shapes named once in `src/types.js`. Everything the
+split of `src/app.js` produced is typechecked: `state`, `render`, `errors`, `router`, `accounts`,
+`social`, `cpu`, `diagnostics`, `connection`, `online/` (session, rooms, admin) and `ui/` (html,
+players, toast, theme, sound, prefs, links), plus the engines, catalog, helpers, config and
+`firebase.js`. `noImplicitAny` is off and gets switched on per module once the annotations are in
+place.
+
+`src/app.js` (about 360 lines, down from 1622) is what is left of the old single file: the event
+handlers and start-up. Every feature it used to hold now lives in a module of its own - see
+[Project layout](#project-layout).
 
 ## Connection status: what the labels mean
 

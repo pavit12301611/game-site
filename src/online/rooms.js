@@ -149,6 +149,22 @@ export async function startRoom() {
   await updateDoc(doc(store, 'rooms', state.room.id), { status: 'playing', updatedAt: serverTimestamp() });
 }
 
+/**
+ * What a move writes back to the room.
+ *
+ * Usually it is only the new game state. When that state says the match is over the room closes
+ * too, so the lobby, the admin list and anyone opening the link later see a finished match instead
+ * of one that looks abandoned mid-play. (firestore.rules allows `playing -> finished` only when the
+ * state written in the same update is finished, which is exactly this.)
+ *
+ * @param {Record<string, any>} nextState the state the engine produced
+ * @returns {Record<string, any>} the fields to update
+ */
+export function roomUpdateForMove(nextState) {
+  if (nextState?.phase !== 'finished') return { state: nextState, updatedAt: serverTimestamp() };
+  return { state: nextState, status: 'finished', winnerUid: nextState.winnerUid ?? null, updatedAt: serverTimestamp() };
+}
+
 export async function doOnlineAction(action) {
   if (!state.room || !state.user) throw new Error('Join a room before making a move.');
   const roomRef = doc(store, 'rooms', state.room.id);
@@ -162,7 +178,7 @@ export async function doOnlineAction(action) {
     const game = getGame(room.gameId);
     if (!game) throw new Error('This room points to a game that is not in the catalog.');
     const nextState = applyGameAction(game, room.state, user.uid, action, players);
-    transaction.update(roomRef, { state: nextState, updatedAt: serverTimestamp() });
+    transaction.update(roomRef, roomUpdateForMove(nextState));
   });
 }
 

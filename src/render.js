@@ -9,12 +9,23 @@
  */
 
 import { renderShell } from './views/shell.js';
+import { renderFatal } from './views/fatal.js';
 
 /** The root element the app renders into (`#app` in index.html). */
 export const appRoot = document.querySelector('#app');
 
-/** Re-paints the whole app from the current state. Safe to call at any time. */
+/**
+ * Re-paints the whole app from the current state. Safe to call at any time.
+ *
+ * If drawing throws, the page is replaced by the recovery screen instead of going blank, and the
+ * real error still goes to the console where it can be read.
+ */
 export function render() {
   if (!appRoot) return;
-  appRoot.innerHTML = renderShell();
+  try {
+    appRoot.innerHTML = renderShell();
+  } catch (error) {
+    console.error('[PSD-gaming] The page could not be drawn:', error);
+    appRoot.innerHTML = renderFatal(error);
+  }
 }

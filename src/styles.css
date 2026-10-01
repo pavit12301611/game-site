@@ -807,3 +807,12 @@ a { color: inherit; text-decoration: none; }
   .setup-callout.is-alert { flex-wrap: wrap; }.setup-callout.is-alert button { margin-left: 28px; }
   .live-check-head { flex-wrap: wrap; }
 }
+
+/* The recovery screen (src/views/fatal.js): shown when the page cannot be drawn at all, so it must
+   not depend on anything else loading. Plain, centred, and readable at 320px. */
+.fatal-error { max-width: 46rem; margin: 3rem auto; padding: 2rem 1.5rem; text-align: center; }
+.fatal-error .fatal-badge { width: 3rem; height: 3rem; margin: 0 auto 1rem; border-radius: 50%; display: grid; place-items: center; font-size: 1.5rem; font-weight: 700; background: rgba(214,72,72,.14); color: #d64848; }
+.fatal-error h1 { margin: 0 0 .75rem; }
+.fatal-error p { margin: 0 auto 1.25rem; max-width: 34rem; color: var(--muted, #8fa3bd); }
+.fatal-error .fatal-detail { max-width: 34rem; margin: 0 auto 1.5rem; padding: .75rem 1rem; overflow-x: auto; text-align: left; font-size: .8rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word; border: 1px solid var(--line, rgba(255,255,255,.12)); border-radius: .75rem; background: rgba(127,140,170,.08); color: var(--muted, #8fa3bd); }
+.fatal-error .fatal-actions { display: flex; flex-wrap: wrap; gap: .75rem; justify-content: center; }

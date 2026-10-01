@@ -313,7 +313,12 @@ test('players may move, but nobody may rewrite the room around them', async (t) 
     winnerUid: BOB,
     updatedAt: ts(),
   }), 'a finished game closes the room');
-  await ruts.assertFails(updateDoc(doc(bob, 'rooms', 'live'), { status: 'playing', updatedAt: ts() }), 'a finished room is not reopened');
+  await ruts.assertFails(updateDoc(doc(bob, 'rooms', 'live'), { status: 'playing', updatedAt: ts() }), 'a finished room is not reopened without a fresh game');
+  await ruts.assertSucceeds(updateDoc(doc(alice, 'rooms', 'live'), {
+    state: { phase: 'playing', moves: 0 },
+    status: 'playing',
+    updatedAt: ts(),
+  }), 'a finished match can be played again');
 });
 
 test('updatedAt must be the server clock, never a client one', async (t) => {

@@ -189,6 +189,7 @@ function handleClick(event) {
   if (!actionButton) return;
   const action = actionButton.dataset.action;
   const { gameId, page, category, index, col, uid, direction, choice, answer, lane, targetUid, requestId, inviteId, roomId } = actionButton.dataset;
+  if (action === 'reload') { location.reload(); return; }
   if (action === 'modal-backdrop' && event.target === actionButton) { modalClose(); return; }
   if (action === 'navigate') { navigate(page); return; }
   if (action === 'toggle-theme') { toggleTheme(); return; }
