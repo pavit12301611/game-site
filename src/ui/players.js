@@ -2,7 +2,7 @@
  * Player presentation helpers: the name shown for a uid, a player's seat index, and the mark drawn
  * for that seat on the boards.
  */
-import { currentPlayers } from '../state.js';
+import { currentPlayers, state } from '../state.js';
 
 export function activeName(uid, players = currentPlayers()) {
   return players.find((player) => player.uid === uid)?.name || 'A player';
@@ -14,4 +14,12 @@ export function playerIndex(uid, players) {
 
 export function playerMark(index) {
   return ['✕', '◯', '◇'][Math.max(0, index) % 3];
+}
+
+/**
+ * True when this account is linked to Google. Google accounts land here after a redirect with no
+ * username chosen yet, so the UI nudges them into the username step instead of the sign-up form.
+ */
+export function isGoogleUser(user = state.user) {
+  return Boolean(user?.providerData?.some((provider) => provider.providerId === 'google.com'));
 }
