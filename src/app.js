@@ -175,6 +175,7 @@ function handleClick(event) {
   if (action === 'modal-backdrop' && event.target === actionButton) { modalClose(); return; }
   if (action === 'navigate') { navigate(page); return; }
   if (action === 'toggle-theme') { toggleTheme(); return; }
+  if (action === 'skip-to-content') { const main = /** @type {HTMLElement | null} */ (document.querySelector('#page-content')); if (main) { main.setAttribute('tabindex', '-1'); main.focus(); } return; }
   if (action === 'open-settings') { modalOpen({ type: 'settings' }); return; }
   if (action === 'toggle-favorite') { toggleFavorite(gameId); return; }
   if (action === 'open-game') { recordRecentGame(gameId); modalOpen({ type: 'game', gameId }); return; }

@@ -139,7 +139,7 @@ test('a practice match renders its board and accepts a move', () => {
   const card = all('[data-action="open-game"]').find((node) => node.dataset.gameId === 'pixel-tac-toe');
   click(card);
   click(button('practice-game'));
-  assert.match($('#page-content').textContent, /LOCAL PRACTICE/, 'the practice badge is shown');
+  assert.match($('#page-content').textContent, /Local practice/, 'the practice badge is shown');
   const cells = all('[data-action="line-move"]');
   assert.equal(cells.length, 9, 'a 3x3 board is rendered');
   assert.equal(cells.filter((cell) => cell.disabled).length, 0, 'it is your turn, so every cell is live');
@@ -162,6 +162,23 @@ test('Escape closes a dialog, and the backdrop click only closes from the backdr
   assert.ok($('.modal-backdrop'), 'a dialog is open');
   dom.window.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   assert.equal($('.modal-backdrop'), null, 'Escape closed it');
+});
+
+test('starting a second practice game while the CPU is still thinking does not crash the first timer', async () => {
+  const errors = [];
+  const onError = (event) => { errors.push(event.message); event.preventDefault(); };
+  dom.window.addEventListener('error', onError);
+  const open = (id) => {
+    setHash('#/catalog');
+    click(all('[data-action="open-game"]').find((node) => node.dataset.gameId === id));
+    click(button('practice-game'));
+  };
+  open('maze-runner'); // schedules a CPU move 620 ms out
+  open('sea-battle'); // a different engine: the old timer must not act on this state
+  await new Promise((resolve) => setTimeout(resolve, 900));
+  dom.window.removeEventListener('error', onError);
+  assert.deepEqual(errors, [], 'no uncaught error from the stale CPU timer');
+  assert.ok(all('[data-action="battle-fire"]').length > 0, 'the second game is on screen');
 });
 
 test('leaving a practice match returns to the catalog', () => {

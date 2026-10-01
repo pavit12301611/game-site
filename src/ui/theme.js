@@ -21,7 +21,7 @@ export function applyTheme(preference = state.themePreference, shouldRender = fa
   document.documentElement.dataset.theme = state.resolvedTheme;
   document.documentElement.style.colorScheme = state.resolvedTheme;
   const themeMeta = document.querySelector('#meta-theme-color');
-  if (themeMeta) themeMeta.setAttribute('content', state.resolvedTheme === 'light' ? '#f3f7ff' : '#07152d');
+  if (themeMeta) themeMeta.setAttribute('content', state.resolvedTheme === 'light' ? '#f6f1e8' : '#14110f');
   if (shouldRender) render();
 }
 

@@ -1,0 +1,146 @@
+/*
+ * Design tokens. Every colour, size, radius, shadow and duration used by the other stylesheets comes
+ * from here, so a theme is a short block of overrides and nothing else needs to know about it.
+ * Values and contrast ratios are documented (and unit-tested) in docs/design-reboot.md section 3.
+ */
+:root {
+  color-scheme: dark;
+
+  /* Surfaces and text (dark, warm) */
+  --bg: #14110f;
+  --surface-1: #1c1815;
+  --surface-2: #262019;
+  --surface-3: #322a22;
+  --ink: #f4eee5;
+  --ink-muted: #c2b7a8;
+  --ink-subtle: #a09484;
+  --control-edge: #8c8070;
+  --line: #3b332a;
+
+  /* Brand and status */
+  --primary: #e8a33d;
+  --primary-hover: #f2b357;
+  --primary-ledge: #8f5f17;
+  --on-primary: #1a1208;
+  --focus-ring: #8cc4ff;
+  --ok: #6fcf97;
+  --bad: #ff9a8a;
+  --warn: #f2c14e;
+  --info: #86bdf2;
+
+  /* Players: colour + shape, never colour alone */
+  --p1: #e5533d;
+  --p2: #f2c230;
+  --p3: #5aaef0;
+  --p4: #4cc38a;
+
+  /* Photo overlays always sit on a dark scrim, in both themes */
+  --photo-ink: #f6f0e6;
+  --photo-scrim: 20 17 15;
+
+  /* Materials (boards) */
+  --maple: #d9b27c;
+  --maple-dark: #c6995c;
+  --walnut: #5b3a24;
+  --wood-ink: #2b1a0e;
+  --felt: #1f5a3d;
+  --felt-ink: #f1f5ee;
+  --frame-blue: #1d4f9c;
+  --card-back: #23305e;
+  --card-face: #f1e7c8;
+  --slate: #0f1a22;
+  --slate-ink: #6ee7a0;
+  --brass: #c9a24a;
+
+  /* Type */
+  --font-display: 'Chakra Petch', 'Inter', system-ui, sans-serif;
+  --font-body: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  --fs-1: 0.8125rem;
+  --fs-2: 0.9375rem;
+  --fs-3: 1.0625rem;
+  --fs-4: 1.1875rem;
+  --fs-5: 1.5rem;
+  --fs-6: 1.875rem;
+  --fs-7: clamp(2.125rem, 5vw, 3rem);
+  --fs-8: clamp(2.625rem, 7vw, 4.25rem);
+
+  /* Space (4-pt) */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --sp-7: 48px;
+  --sp-8: 64px;
+  --sp-9: 96px;
+  --target: 48px;
+
+  /* Radius */
+  --r-1: 4px;
+  --r-2: 8px;
+  --r-3: 12px;
+  --r-4: 20px;
+  --r-pill: 999px;
+
+  /* Elevation: warm black, light from the top left */
+  --shadow-1: 1px 2px 3px rgb(10 6 2 / 0.3);
+  --shadow-2: 2px 6px 16px rgb(10 6 2 / 0.3);
+  --shadow-3: 4px 18px 44px rgb(10 6 2 / 0.36);
+  --shadow-inset: inset 1px 2px 5px rgb(10 6 2 / 0.4);
+  --shadow-piece: 1px 2px 3px rgb(10 6 2 / 0.45);
+
+  /* Motion */
+  --dur-1: 100ms;
+  --dur-2: 180ms;
+  --dur-3: 280ms;
+  --dur-4: 600ms;
+  --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --ease-io: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Layout */
+  --sidebar-w: 264px;
+  --content-max: 1200px;
+  --nav-h: 64px;
+}
+
+[data-theme='light'] {
+  color-scheme: light;
+  --bg: #f6f1e8;
+  --surface-1: #fffdf8;
+  --surface-2: #efe8db;
+  --surface-3: #e4dac8;
+  --ink: #241f1a;
+  --ink-muted: #554c41;
+  --ink-subtle: #675d50;
+  --control-edge: #8a7d6c;
+  --line: #d8ccb8;
+  --primary: #8f5200;
+  --primary-hover: #7a4500;
+  --primary-ledge: #4d2c00;
+  --on-primary: #ffffff;
+  --focus-ring: #1b4fd1;
+  --ok: #16774a;
+  --bad: #b3321f;
+  --warn: #8a5a00;
+  --info: #1f5fa8;
+  --p1: #d6402b;
+  --p2: #e0a800;
+  --p3: #2f7fd0;
+  --p4: #23995f;
+  --shadow-1: 1px 2px 3px rgb(60 40 20 / 0.15);
+  --shadow-2: 2px 6px 16px rgb(60 40 20 / 0.16);
+  --shadow-3: 4px 18px 44px rgb(60 40 20 / 0.2);
+  --shadow-inset: inset 1px 2px 5px rgb(60 40 20 / 0.2);
+  --shadow-piece: 1px 2px 3px rgb(60 40 20 / 0.3);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-1: 0ms;
+    --dur-2: 0ms;
+    --dur-3: 0ms;
+    --dur-4: 0ms;
+  }
+}

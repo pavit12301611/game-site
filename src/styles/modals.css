@@ -1,0 +1,96 @@
+/* Dialogs: one frame for every modal, then the few things each one adds. */
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 50;
+  display: grid; place-items: center;
+  padding: var(--sp-4);
+  overflow-y: auto;
+  background: rgb(var(--photo-scrim) / 0.78);
+  animation: fade-in var(--dur-3) var(--ease-out);
+}
+.modal-card {
+  position: relative;
+  display: grid; grid-auto-rows: max-content; align-content: start; gap: var(--sp-4);
+  width: min(100%, 560px);
+  max-height: calc(100dvh - 32px);
+  padding: var(--sp-6) var(--sp-5) var(--sp-5);
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r-4);
+  background: var(--surface-1);
+  box-shadow: var(--shadow-3);
+  animation: pop-in var(--dur-3) var(--ease-out);
+}
+@media (min-width: 720px) { .modal-card { padding: var(--sp-6); } }
+.modal-card p { color: var(--ink-muted); }
+.modal-card h2 { padding-right: 56px; }
+.modal-close { position: absolute; top: var(--sp-3); right: var(--sp-3); z-index: 3; display: grid; place-items: center; width: var(--target); height: var(--target); border: 1px solid var(--control-edge); border-radius: var(--r-2); background: var(--surface-1); color: var(--ink); }
+.modal-close:hover { background: var(--surface-2); }
+.modal-close .icon { width: 22px; height: 22px; }
+@keyframes fade-in { from { opacity: 0; } }
+@keyframes pop-in { from { opacity: 0; transform: translateY(12px) scale(0.98); } }
+
+.game-modal { padding-top: 0; }
+.modal-game-art { position: relative; margin: 0 calc(var(--sp-5) * -1); aspect-ratio: 16 / 8; overflow: hidden; border-radius: var(--r-4) var(--r-4) 0 0; background: var(--surface-3); }
+@media (min-width: 720px) { .modal-game-art { margin: 0 calc(var(--sp-6) * -1); } }
+.modal-art-image { width: 100%; height: 100%; object-fit: cover; }
+.modal-game-art > span { position: absolute; left: var(--sp-4); bottom: var(--sp-3); display: grid; place-items: center; width: 52px; height: 52px; border-radius: var(--r-3); background: rgb(var(--photo-scrim) / 0.82); font-size: 28px; }
+.modal-detail-row { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.modal-detail-row > span { display: inline-flex; align-items: center; gap: var(--sp-2); min-height: 36px; padding: 0 var(--sp-3); border: 1px solid var(--control-edge); border-radius: var(--r-pill); color: var(--ink); font-size: var(--fs-2); }
+.modal-detail-row .icon { width: 18px; height: 18px; }
+.game-modal-actions { display: grid; gap: var(--sp-3); }
+@media (min-width: 560px) { .game-modal-actions { grid-template-columns: 1fr 1fr; } }
+.modal-alert { padding: var(--sp-3) var(--sp-4); border: 1px solid var(--warn); border-left-width: 6px; border-radius: var(--r-2); background: var(--surface-2); color: var(--ink); font-size: var(--fs-2); }
+.modal-small-note, .auth-legal, .auth-provider-note, .direct-invite-note { color: var(--ink-muted); font-size: var(--fs-2); }
+.direct-invite-note { display: flex; align-items: center; gap: var(--sp-2); }
+
+/* forms inside dialogs */
+.create-room-form, .auth-form, .settings-form { display: grid; gap: var(--sp-4); }
+.player-count-options, .theme-options { display: grid; gap: var(--sp-3); grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.player-count-options > label, .theme-options > label, .sound-toggle { position: relative; display: flex; align-items: center; gap: var(--sp-3); min-height: 64px; padding: var(--sp-3) var(--sp-4); border: 1px solid var(--control-edge); border-radius: var(--r-3); background: var(--surface-2); color: var(--ink); cursor: pointer; }
+.player-count-options > label:has(input:checked), .theme-options > label:has(input:checked), .sound-toggle:has(input:checked) { border: 2px solid var(--primary); padding: calc(var(--sp-3) - 1px) calc(var(--sp-4) - 1px); }
+.player-count-options span, .theme-options span, .sound-toggle > span { display: grid; line-height: 1.3; color: var(--ink); font-size: var(--fs-3); }
+.player-count-options b { font-size: var(--fs-3); }
+.player-count-options small, .theme-options small, .sound-toggle small { color: var(--ink-muted); font-size: var(--fs-1); }
+.settings-label { display: grid; gap: var(--sp-2); }
+.sound-toggle b { font-size: var(--fs-3); }
+
+.google-button { display: flex; align-items: center; justify-content: center; gap: var(--sp-3); width: 100%; min-height: var(--target); border: 1px solid var(--control-edge); border-radius: var(--r-2); background: var(--surface-2); color: var(--ink); font-weight: 600; }
+.google-button:hover:not(:disabled) { background: var(--surface-3); }
+.google-button:disabled { color: var(--ink-subtle); }
+.google-glyph { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: #fff; color: #1b4fd1; font-weight: 700; }
+.auth-divider { display: flex; align-items: center; gap: var(--sp-3); color: var(--ink-muted); font-size: var(--fs-1); font-weight: 600; }
+.auth-divider::before, .auth-divider::after { content: ''; flex: 1; height: 1px; background: var(--line); }
+.auth-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; border-radius: var(--r-2); background: var(--surface-2); border: 1px solid var(--line); }
+.auth-tabs button { min-height: 44px; border: 0; border-radius: var(--r-1); background: transparent; color: var(--ink-muted); font-weight: 600; }
+.auth-tabs button.is-active { background: var(--primary); color: var(--on-primary); }
+.auth-logo { display: flex; }
+
+/* setup guide */
+.connection-check { display: grid; gap: 1px; overflow: hidden; border: 1px solid var(--line); border-radius: var(--r-2); background: var(--line); }
+.connection-check > div { display: grid; gap: 2px; padding: var(--sp-2) var(--sp-4); background: var(--surface-2); }
+@media (min-width: 560px) { .connection-check > div { grid-template-columns: 140px 1fr; } }
+.connection-check dt { color: var(--ink-muted); font-size: var(--fs-2); }
+.connection-check dd { margin: 0; overflow-wrap: anywhere; font-size: var(--fs-2); }
+.live-check { display: grid; gap: var(--sp-3); padding: var(--sp-4); border: 1px solid var(--line); border-radius: var(--r-2); background: var(--surface-2); }
+.live-check-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-3); }
+.live-check-head > div { flex: 1 1 240px; display: grid; gap: 4px; }
+.live-check-head small { color: var(--ink-muted); font-size: var(--fs-2); }
+.live-check-steps { display: grid; gap: var(--sp-2); }
+.live-check-steps li { display: flex; gap: var(--sp-3); font-size: var(--fs-2); }
+.live-check-steps li > i { display: grid; place-items: center; flex: none; width: 24px; height: 24px; border-radius: 50%; font-style: normal; font-weight: 700; }
+.live-check-steps li.is-ok > i { background: var(--ok); color: var(--bg); }
+.live-check-steps li.is-fail > i { background: var(--bad); color: var(--bg); border-radius: 4px; }
+.live-check-steps span { display: grid; }
+.live-check-steps small { color: var(--ink-muted); }
+.setup-short-list { display: grid; gap: var(--sp-3); counter-reset: none; }
+.setup-short-list li { display: flex; gap: var(--sp-3); color: var(--ink); font-size: var(--fs-2); line-height: 1.5; }
+.setup-short-list li > i { display: grid; place-items: center; flex: none; width: 32px; height: 32px; border-radius: 50%; background: var(--primary); color: var(--on-primary); font-family: var(--font-mono); font-size: var(--fs-1); font-style: normal; font-weight: 700; }
+.setup-short-list code { padding: 1px 6px; border-radius: var(--r-1); background: var(--surface-3); font-size: 0.9em; overflow-wrap: anywhere; }
+
+/* account / username / conflict */
+.account-modal, .username-modal, .conflict-modal { text-align: left; }
+.account-avatar { width: 64px; height: 64px; font-size: var(--fs-5); }
+.username-badge { display: inline-flex; align-items: center; gap: var(--sp-2); justify-self: start; min-height: 36px; padding: 0 var(--sp-3); border: 1px solid var(--control-edge); border-radius: var(--r-pill); font-weight: 600; }
+.username-hint { color: var(--ink-muted); font-size: var(--fs-2); }
+.conflict-actions { display: grid; gap: var(--sp-3); }
+.notification-friends { justify-self: start; }

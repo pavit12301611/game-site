@@ -110,6 +110,7 @@ export function getMemoryCardIcon(index) {
   return memoryCardIcon(index);
 }
 
+/** Category covers and the landing hero: the fallback for any game that has no photo of its own yet. */
 export const GAME_COVERS = {
   Arcade: '/images/cover-arcade.jpg',
   Strategy: '/images/cover-strategy.jpg',
@@ -119,48 +120,68 @@ export const GAME_COVERS = {
   Hero: '/images/hero-arcade.jpg',
 };
 
-const ENGINE_LABELS = {
-  line: 'GRID TACTICS',
-  drop: 'DROP BOARD',
-  memory: 'MEMORY MATRIX',
-  race: 'SPEED SPRINT',
-  rps: 'QUICK DUEL',
-  quiz: 'BRAIN ROUND',
-  maze: 'LABYRINTH DASH',
-  battle: 'FLEET RADAR',
-  rally: 'COURT VOLLEY',
-  code: 'CIPHER LOGIC',
+/** Engine names shown on cards and in the lobby. */
+export const ENGINE_LABELS = {
+  line: 'Grid tactics',
+  drop: 'Drop board',
+  memory: 'Memory matrix',
+  race: 'Speed sprint',
+  rps: 'Quick duel',
+  quiz: 'Brain round',
+  maze: 'Labyrinth dash',
+  battle: 'Fleet radar',
+  rally: 'Court volley',
+  code: 'Cipher logic',
 };
 
-const FOCAL_POSITIONS = [
-  'center 40%',
-  '35% 50%',
-  '65% 45%',
-  '50% 62%',
-  '42% 35%',
-  '58% 58%',
-];
+/**
+ * Games that have a photo of their own: `public/images/games/<id>.webp` (1280x800) and
+ * `<id>-640.webp`, generated for this project (see public/images/CREDITS.md). The value is the
+ * photo's subject, used as its alt text where the picture is not purely decorative.
+ * @type {Record<string, string>}
+ */
+export const GAME_PHOTOS = {
+  'arcade-pairs': "Pairs of brass arcade tokens in a wooden grid tray",
+  'bug-blaster': "Retro tin toy ray gun on a workbench",
+  'button-masher': "Oversized red push button with a finger above it",
+  'coin-flip-clash': "Plain blank gold coin spinning mid-air",
+  'connect-four': "Upright blue four-in-a-row frame with red and yellow discs, no logo",
+  'dice-duel': "Two ivory dice tumbling on green felt",
+  'emoji-decode': "Colourful generic smiley stickers on a wooden table",
+  'emoji-flip': "Cream cards with hand-drawn generic smiley faces",
+  'five-in-row': "Large wooden drop-frame with red and yellow discs, side light",
+  'laser-duel': "Red and green laser beams crossing in fog",
+  'memory-match': "Face-down navy cards on a table, two turned up",
+  'neon-gomoku': "Go board with black and white stones, close crop",
+  'neon-pairs': "Memory cards with glowing geometric backs on dark glass",
+  'pixel-tac-toe': "Wooden tic-tac-toe board with turned X and O pieces",
+  'pixel-tap': "Big blue arcade push button on a metal panel",
+  'reaction-rush': "Vintage stopwatch mid-run held in a hand",
+  'retro-trivia': "Vintage wood-cased television in a cosy room, no brand",
+  'rock-paper-scissors': "Three hands showing rock, paper and scissors",
+  'spacebar-showdown': "Macro of a mechanical keyboard spacebar with blank keycaps",
+  'turbo-charge': "Boost gauge on a car dashboard, needle high, no numbers",
+};
 
-/** Cover image, focal point and engine badge for a game card. */
+/** Picture, srcset and engine badge for a game card, lobby banner or game dialog. */
 export function getGameArtwork(gameOrId) {
   const game = typeof gameOrId === 'string' ? getGame(gameOrId) : gameOrId;
   if (!game) {
+    return { src: GAME_COVERS.Arcade, width: 639, height: 426, focal: 'center center', alt: '', engineLabel: 'Arcade' };
+  }
+  const engineLabel = ENGINE_LABELS[game.engine] || 'Arcade mode';
+  if (Object.hasOwn(GAME_PHOTOS, game.id)) {
     return {
-      src: GAME_COVERS.Arcade,
+      src: `/images/games/${game.id}.webp`,
+      srcset: `/images/games/${game.id}-640.webp 640w, /images/games/${game.id}.webp 1280w`,
+      width: 1280,
+      height: 800,
       focal: 'center center',
-      engineLabel: 'ARCADE',
+      alt: GAME_PHOTOS[game.id],
+      engineLabel,
     };
   }
-  const index = Math.max(0, GAMES.findIndex((entry) => entry.id === game.id));
-  let src = GAME_COVERS[game.category] || GAME_COVERS.Arcade;
-  if (game.engine === 'rally' || (game.engine === 'battle' && game.category === 'Arcade')) {
-    src = index % 2 === 0 ? GAME_COVERS.Multiplayer : src;
-  }
-  return {
-    src,
-    focal: FOCAL_POSITIONS[index % FOCAL_POSITIONS.length],
-    engineLabel: ENGINE_LABELS[game.engine] || 'ARCADE MODE',
-  };
+  return { src: GAME_COVERS[game.category] || GAME_COVERS.Arcade, width: 639, height: 426, focal: 'center center', alt: '', engineLabel };
 }
 
 /** How-to-play copy shown in the game stage and the game modal. */
