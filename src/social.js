@@ -38,9 +38,19 @@ let stopRequests = emptyUnsubscribe;
 let stopFriends = emptyUnsubscribe;
 let stopInvites = emptyUnsubscribe;
 
+/** Stops the three social listeners. Safe to call twice, and when they were never started. */
+export function stopSocial() {
+  stopRequests();
+  stopFriends();
+  stopInvites();
+  stopRequests = emptyUnsubscribe;
+  stopFriends = emptyUnsubscribe;
+  stopInvites = emptyUnsubscribe;
+}
+
 export function subscribeSocial(user) {
   if (!firebaseReady || !user || user.isAnonymous) return;
-  stopRequests(); stopFriends(); stopInvites();
+  stopSocial();
   stopRequests = onSnapshot(query(collection(store, 'friendRequests'), where('toUid', '==', user.uid)), (snapshot) => {
     state.requests = rowsOf(snapshot).filter((row) => row.status === 'pending');
     render();
