@@ -14,10 +14,10 @@
   max-height: calc(100dvh - 32px);
   padding: var(--sp-6) var(--sp-5) var(--sp-5);
   overflow-y: auto;
-  border: 1px solid var(--line);
+  border: 3px solid var(--neon-pink);
   border-radius: var(--r-4);
   background: var(--surface-1);
-  box-shadow: var(--shadow-3);
+  box-shadow: var(--shadow-3), 0 0 36px rgb(var(--neon-pink-rgb) / 0.3);
   animation: pop-in var(--dur-3) var(--ease-out);
 }
 @media (min-width: 720px) { .modal-card { padding: var(--sp-6); } }

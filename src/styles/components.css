@@ -8,10 +8,13 @@
   gap: var(--sp-2);
   min-height: var(--target);
   padding: 0 var(--sp-5);
-  border: 1px solid transparent;
+  border: 2px solid transparent;
   border-radius: var(--r-2);
+  font-family: var(--font-display);
   font-size: var(--fs-3);
-  font-weight: 600;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   line-height: 1.2;
   text-align: center;
   text-decoration: none;
@@ -23,18 +26,19 @@
 
 .button-primary, .button-glow {
   background: var(--primary);
+  border-color: var(--primary-ledge);
   color: var(--on-primary);
-  box-shadow: 0 3px 0 var(--primary-ledge);
+  box-shadow: 0 4px 0 var(--primary-ledge), var(--primary-glow);
 }
-.button-primary:hover:not(:disabled), .button-glow:hover:not(:disabled) { background: var(--primary-hover); }
-.button-primary:active:not(:disabled), .button-glow:active:not(:disabled) { transform: translateY(2px); box-shadow: 0 1px 0 var(--primary-ledge); }
+.button-primary:hover:not(:disabled), .button-glow:hover:not(:disabled) { background: var(--primary-hover); transform: translateY(-1px); }
+.button-primary:active:not(:disabled), .button-glow:active:not(:disabled) { transform: translateY(3px); box-shadow: 0 1px 0 var(--primary-ledge); }
 
 .button-outline {
   background: transparent;
   border-color: var(--control-edge);
   color: var(--ink);
 }
-.button-outline:hover:not(:disabled) { background: var(--surface-2); }
+.button-outline:hover:not(:disabled) { background: var(--surface-2); border-color: var(--neon-cyan); box-shadow: var(--glow-cyan); }
 
 .button-quiet, .button-dark {
   background: var(--surface-2);
@@ -108,7 +112,7 @@ input[type='text'], input[type='email'], input[type='password'], input[type='sea
   width: 100%;
   min-height: var(--target);
   padding: 0 var(--sp-4);
-  border: 1px solid var(--control-edge);
+  border: 2px solid var(--control-edge);
   border-radius: var(--r-2);
   background: var(--surface-2);
   color: var(--ink);
@@ -135,7 +139,7 @@ input[type='radio'], input[type='checkbox'] { width: 22px; height: 22px; margin:
 /* ---------- Panels ---------- */
 .surface {
   padding: var(--sp-5);
-  border: 1px solid var(--line);
+  border: 2px solid var(--line);
   border-radius: var(--r-3);
   background: var(--surface-1);
   box-shadow: var(--shadow-1);
@@ -155,8 +159,8 @@ input[type='radio'], input[type='checkbox'] { width: 22px; height: 22px; margin:
   align-items: center;
   gap: var(--sp-4);
   padding: var(--sp-4) var(--sp-5);
-  border: 1px solid var(--control-edge);
-  border-left-width: 6px;
+  border: 2px solid var(--control-edge);
+  border-left-width: 8px;
   border-radius: var(--r-3);
   background: var(--surface-1);
   color: var(--ink);
@@ -306,3 +310,6 @@ input[type='radio'], input[type='checkbox'] { width: 22px; height: 22px; margin:
 .fatal-badge { display: grid; place-items: center; width: 72px; height: 72px; border-radius: 50%; background: var(--bad); color: var(--bg); font-size: 36px; font-weight: 700; }
 .fatal-detail { max-width: 60ch; padding: var(--sp-3) var(--sp-4); border-radius: var(--r-2); background: var(--surface-2); color: var(--ink-muted); font-family: var(--font-mono); font-size: var(--fs-2); overflow-wrap: anywhere; }
 .fatal-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--sp-3); }
+
+/* ---------- Arcade focus and field glow ---------- */
+input[type='text']:focus-visible, input[type='email']:focus-visible, input[type='password']:focus-visible, input[type='search']:focus-visible, select:focus-visible { border-color: var(--neon-cyan); box-shadow: var(--glow-cyan); }

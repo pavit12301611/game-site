@@ -9,6 +9,12 @@ html {
   background: var(--bg);
 }
 
+/* The arcade-carpet backdrop sits behind everything, washed to the theme so text contrast never depends on it. */
+body::before {
+  content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background: linear-gradient(var(--page-wash), var(--page-wash)), url('/images/backdrop.webp') center / cover no-repeat;
+}
+
 body {
   margin: 0;
   min-height: 100vh;
@@ -31,6 +37,7 @@ code, kbd { font-family: var(--font-mono); }
 [hidden] { display: none !important; }
 
 h1, h2, h3 { font-family: var(--font-display); font-weight: 700; letter-spacing: 0; color: var(--ink); text-wrap: balance; }
+h1, h2 { text-transform: uppercase; letter-spacing: 0.02em; }
 h1 { font-size: var(--fs-7); line-height: 1.1; }
 h2 { font-size: var(--fs-6); line-height: 1.2; }
 h3 { font-size: var(--fs-4); line-height: 1.3; font-weight: 600; }
@@ -38,13 +45,15 @@ h1 > span, h2 > span { color: var(--primary); }
 p { max-width: 68ch; text-wrap: pretty; }
 small { font-size: var(--fs-1); }
 
-/* Sentence-case labels, 13 px minimum. The old 10 px letter-spaced mono caps are gone. */
+/* Small arcade labels: mono caps in the cabinet-cyan, 13 px minimum. */
 .eyebrow {
-  color: var(--ink-muted);
+  color: var(--neon-cyan);
+  font-family: var(--font-mono);
   font-size: var(--fs-1);
   line-height: 18px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
 }
 
 kbd {
@@ -102,3 +111,6 @@ kbd {
 
 /* Programmatic focus targets (the dialog box and the page heading after navigation) are not controls: no ring. */
 [role="dialog"]:focus, #page-content:focus, #page-content h1:focus { outline: none; }
+
+/* Headings that receive focus from the router are not controls; the page title is announced instead of ringed. */
+h1[tabindex='-1']:focus, #page-content[tabindex='-1']:focus { outline: none; box-shadow: none; }

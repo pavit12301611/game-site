@@ -23,7 +23,7 @@ import { renderEngineBoard } from './boards.js';
 export function renderGameCard(game, index = 0, level = 3) {
   const artwork = getGameArtwork(game);
   const isFavorite = state.favorites.includes(game.id);
-  return `<article class="game-card">
+  return `<article class="game-card" data-category="${esc(game.category)}">
     <span class="game-art art-${game.accent || 'blue'}">${artImage(artwork, { className: 'game-art-image', sizes: '(min-width: 1024px) 320px, (min-width: 640px) 45vw, calc(100vw - 32px)' })}</span>
     <div class="game-card-copy"><span class="game-card-meta">${esc(game.category)} · 2–3 players · ${esc(artwork.engineLabel)}</span><h${level} class="game-card-title"><button class="game-card-hit" data-action="open-game" data-game-id="${game.id}" aria-label="Open ${esc(game.title)}">${esc(game.title)}</button></h${level}><p>${esc(game.blurb)}</p><span class="card-play" aria-hidden="true">Open ${icon('arrow')}</span></div>
     <button class="favorite-button ${isFavorite ? 'is-favorite' : ''}" data-action="toggle-favorite" data-game-id="${game.id}" aria-label="${isFavorite ? 'Remove' : 'Add'} ${esc(game.title)} ${isFavorite ? 'from' : 'to'} favorites" aria-pressed="${isFavorite}">${isFavorite ? '★' : '☆'}</button>
@@ -70,8 +70,9 @@ export function renderHome() {
   const conn = connection();
   return `<section class="hero-panel">
     ${artImage(HERO_ARTWORK, { className: 'hero-artwork', hero: true })}
-    <div class="hero-copy"><div class="hero-kicker"><span class="live-pulse is-${conn.kind}"></span>${esc(conn.label)}<i>·</i> No downloads</div><h1>Your arcade.<br><em>Everywhere.</em></h1><p>Forty bite-size retro games. Your people on the other side of the link. That’s the whole setup.</p><div class="hero-actions"><button class="button button-primary" data-action="navigate" data-page="catalog">Explore all 40 games ${icon('arrow')}</button><button class="button button-glass" data-action="open-friends">Play with friends ${icon('people')}</button></div><div class="hero-footnote">Made for <b>2–3 players</b> · works on laptops &amp; phones</div></div>
+    <div class="hero-copy"><div class="hero-kicker"><span class="live-pulse is-${conn.kind}"></span>${esc(conn.label)}<i>·</i> No downloads</div><p class="press-start" aria-hidden="true">▶ PRESS START</p><h1>Your arcade.<br><em>Everywhere.</em></h1><p>Forty bite-size retro games. Your people on the other side of the link. That’s the whole setup.</p><div class="hero-actions"><button class="button button-primary" data-action="navigate" data-page="catalog">Explore all 40 games ${icon('arrow')}</button><button class="button button-glass" data-action="open-friends">Play with friends ${icon('people')}</button></div><div class="hero-footnote">Made for <b>2–3 players</b> · works on laptops &amp; phones</div></div>
   </section>
+  <div class="marquee" aria-hidden="true"><span>★ INSERT FRIENDS ★ PRESS START ★ 40 GAMES ★ 2–3 PLAYERS ★ NO DOWNLOADS ★ SHARE A LINK ★ HIGH SCORE IS WAITING ★</span></div>
   ${renderSetupCallout(conn)}
   <section class="stat-strip" aria-label="Arcade facts"><div><b>40</b><span>tiny game worlds</span></div><div><b>2–3</b><span>players per room</span></div><div><b>0</b><span>downloads required</span></div></section>
   <section class="section-block featured-section"><div class="section-heading"><div><div class="eyebrow">Pick up and play</div><h2>Start with a classic<span>.</span></h2><p>Easy to learn. Hard to leave the lobby.</p></div><button class="text-button" data-action="navigate" data-page="catalog">Browse all 40 ${icon('arrow')}</button></div>${renderGameGrid(featured)}</section>
