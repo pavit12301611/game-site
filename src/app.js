@@ -13,11 +13,12 @@ import {
   isGoogleUser,
   playerDisplayName,
 } from './ui/players.js';
+import { appRoot, render } from './render.js';
+import { setToast, showToast } from './ui/toast.js';
 import {
   connection,
   setupError,
 } from './connection.js';
-import { renderShell } from './views/shell.js';
 import {
   filteredGames,
   renderGameGrid,
@@ -72,7 +73,8 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 
-const appRoot = document.querySelector('#app');
+
+/** A no-op unsubscribe, so the `stop*` variables are always safe to call. */
 const emptyUnsubscribe = () => {};
 
 let stopRoom = emptyUnsubscribe;
@@ -193,22 +195,6 @@ function navigate(page) {
   if (location.hash !== `#/${page}`) location.hash = `#/${page}`;
   render();
   if (page === 'admin') void loadAdminData();
-}
-
-function setToast(message, kind = 'success') {
-  state.toast = { message, kind };
-  window.clearTimeout(toastTimer);
-  render();
-  // Warnings carry setup/diagnostic instructions, so they stay long enough to be read.
-  const visibleFor = kind === 'warning' ? Math.min(10000, Math.max(5200, String(message).length * 55)) : 3400;
-  toastTimer = window.setTimeout(() => {
-    state.toast = null;
-    render();
-  }, visibleFor);
-}
-
-function showToast(message, kind = 'success') {
-  setToast(message, kind);
 }
 
 function friendlyError(error, context = {}) {
@@ -1067,11 +1053,6 @@ function attachAppEvents() {
   appRoot.addEventListener('input', handleInput);
   window.addEventListener('keydown', handleKeydown);
   window.addEventListener('hashchange', routeFromHash);
-}
-
-function render() {
-  if (!appRoot) return;
-  appRoot.innerHTML = renderShell();
 }
 
 attachAppEvents();
