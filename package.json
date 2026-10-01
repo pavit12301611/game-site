@@ -15,6 +15,9 @@
     "audit": "npm audit --omit=dev --audit-level=high"
   },
   "dependencies": {
+    "@fontsource/chakra-petch": "^5.3.0",
+    "@fontsource/inter": "^5.3.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
     "firebase": "^11.8.1"
   },
   "devDependencies": {

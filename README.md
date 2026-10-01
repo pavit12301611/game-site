@@ -89,10 +89,41 @@ Two things to know: the flag is **ignored by a production build** (`vite build`)
 | `src/ui/` | Small pieces: `html` (icons, escaping), `players`, `toast`, `theme`, `sound`, `prefs`, `links`. |
 | `src/engines/` | One module per game engine, with the catalog in `src/catalog.js`. |
 | `src/firebase*.js` | Config parsing, validation, initialization, error wording, emulator switch. |
+| `src/styles.css` | The whole design system: tokens first, then one section per area of the app. |
 
 Rules for contributing to this layout: views never write to state and never talk to Firebase;
 modules never import `src/app.js` (it is the wiring, so that would be a cycle); and every string
 that came from another player goes through `esc()`.
+
+### Design system (`src/styles.css`)
+
+One stylesheet, in two halves: a token layer at the top, then one section per area of the app
+(base/typography, shell, surfaces, buttons, landing, catalog, friends, admin, room/play, boards,
+modals, light theme).
+
+- **Type.** Three faces, all installed with npm and bundled, so nothing is fetched from a CDN and
+  the strict CSP (`font-src 'self' data:`) still holds: **Chakra Petch** for headings, the brand
+  and buttons; **Inter** for everything a player reads; **JetBrains Mono** for the small caps
+  labels, room codes, counts and keyboard hints - the instrument-panel detail that ties the arcade
+  together. Body copy sits at 13-15px; only the console illustration and the game boards use
+  display sizes below 11px, and only where the layout is a scaled-down picture anyway.
+- **Colour.** One deep navy (`--bg`, `--panel`, `--panel-2`) with two accents used sparingly
+  (`--cyan`, `--violet`), plus a full accent scale - `--blue`, `--pink`, `--green`, `--gold`,
+  `--orange` - that the game categories reuse, so a card in the catalog and the same game in a room
+  are visibly the same product. Text and hairlines come from `--ink`, `--muted`, `--soft`, `--line`
+  and `--line-strong`.
+- **Depth and motion.** Three elevations (`--shadow-1/2/3`), a radius scale (`--r-xs` … `--r-xl`),
+  one easing curve (`--ease`) and two durations (`--dur-1/2`). Hover lifts a card 4px and adds a
+  glow in that card's own accent colour; pressing it settles back by 1px.
+- **Grain.** A 3.5% SVG noise layer on `body::after` stops large flat areas of navy from looking
+  plastic. It is `pointer-events: none`, so it never swallows a click.
+- **Motion is optional.** `prefers-reduced-motion: reduce` turns every animation and transition
+  off, including the floating console on the landing page.
+- **Light theme** is a token swap plus a short `[data-theme='light']` list for the dark-first
+  surfaces; it is not a second stylesheet.
+
+The fonts are imported in `src/main.js` from `@fontsource/*` packages, so Vite hashes them into
+`dist/assets/` with the rest of the bundle instead of loading them at runtime.
 
 ## Tests and CI
 
