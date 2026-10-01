@@ -9,6 +9,12 @@ import {
   state,
   currentGame,
 } from './state.js';
+import { runLiveCheck } from './diagnostics.js';
+import { scheduleCpuMove, sendGameAction, startPractice } from './cpu.js';
+import { applyTheme, toggleTheme } from './ui/theme.js';
+import { setSoundEnabled } from './ui/sound.js';
+import { recordRecentGame, toggleFavorite } from './ui/prefs.js';
+import { copyRoomLink, shareRoomLink } from './ui/links.js';
 import { isGoogleUser } from './ui/players.js';
 import {
   appRoot,
@@ -97,238 +103,12 @@ const emptyUnsubscribe = () => {};
 
 let toastTimer = 0;
 
-function systemPrefersLight() {
-  return Boolean(window.matchMedia?.('(prefers-color-scheme: light)').matches);
-}
-
-function applyTheme(preference = state.themePreference, shouldRender = false) {
-  state.themePreference = saveThemePreference(preference);
-  state.resolvedTheme = resolveTheme(state.themePreference, systemPrefersLight());
-  document.documentElement.dataset.theme = state.resolvedTheme;
-  document.documentElement.style.colorScheme = state.resolvedTheme;
-  const themeMeta = document.querySelector('#meta-theme-color');
-  if (themeMeta) themeMeta.setAttribute('content', state.resolvedTheme === 'light' ? '#f3f7ff' : '#07152d');
-  if (shouldRender) render();
-}
-
-function toggleTheme() {
-  applyTheme(nextToggledTheme(state.resolvedTheme), true);
-  showToast(`${state.resolvedTheme === 'light' ? 'Light' : 'Dark'} theme selected.`);
-}
-
-function setSoundEnabled(enabled) {
-  state.soundEnabled = Boolean(enabled);
-  try { localStorage.setItem(SOUND_STORAGE_KEY, String(state.soundEnabled)); } catch {}
-}
-
-function playUiTone(kind = 'tap') {
-  if (!state.soundEnabled || !window.AudioContext) return;
-  try {
-    const context = new window.AudioContext();
-    const oscillator = context.createOscillator();
-    const gain = context.createGain();
-    oscillator.type = 'sine';
-    oscillator.frequency.value = kind === 'win' ? 660 : kind === 'error' ? 180 : 420;
-    gain.gain.setValueAtTime(0.018, context.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.08);
-    oscillator.connect(gain).connect(context.destination);
-    oscillator.start();
-    oscillator.stop(context.currentTime + 0.09);
-    oscillator.addEventListener('ended', () => void context.close(), { once: true });
-  } catch {
-    // Audio is a progressive enhancement; never block a game move.
-  }
-}
-
-function recordRecentGame(gameId) {
-  state.recentGames = recordRecentGameId(state.recentGames, gameId, new Set(GAMES.map((game) => game.id)), 8, localStorage);
-}
-
-function toggleFavorite(gameId) {
-  state.favorites = toggleFavoriteGameId(state.favorites, gameId, new Set(GAMES.map((game) => game.id)), localStorage);
-  const game = getGame(gameId);
-  showToast(`${game?.title || 'Game'} ${state.favorites.includes(gameId) ? 'added to favorites' : 'removed from favorites'}.`);
-}
-
-function startPractice(gameId) {
-  const game = getGame(gameId);
-  if (!game) return;
-  recordRecentGame(gameId);
-  const players = [
-    { uid: 'local-you', name: 'You' },
-    { uid: 'local-cpu', name: 'CPU rival' },
-  ];
-  const seed = `practice-${gameId}-${Date.now()}`;
-  state.local = { gameId, players, gameState: createInitialGameState(game, players, seed), seed };
-  state.room = null;
-  state.roomId = null;
-  state.page = 'game';
-  state.modal = null;
-  state.selectedBattleTarget = 'local-cpu';
-  state.codeDraft = [0, 0, 0, 0];
-  if (location.hash !== '#/game') location.hash = '#/game';
-  render();
-  if (game.engine === 'race') startCpuRaceLoop();
-  else scheduleCpuMove();
-}
-
-function localMove(uid, action) {
-  if (!state.local) return;
-  try {
-    const game = getGame(state.local.gameId);
-    const next = applyGameAction(game, state.local.gameState, uid, action, state.local.players);
-    state.local.gameState = next;
-    playUiTone(next.phase === 'finished' ? 'win' : 'tap');
-    render();
-    if (game.engine !== 'race') scheduleCpuMove();
-  } catch (error) {
-    showToast(friendlyError(error), 'warning');
-  }
-}
-
-async function sendGameAction(action) {
-  if (state.local) {
-    localMove('local-you', action);
-    return;
-  }
-  try {
-    await doOnlineAction(action);
-    playUiTone('tap');
-  } catch (error) {
-    playUiTone('error');
-    showToast(friendlyError(error), 'warning');
-  }
-}
-
-function scheduleCpuMove() {
-  if (!state.local || state.cpuPending || getGame(state.local.gameId)?.engine === 'race') return;
-  const game = getGame(state.local.gameId);
-  const gameState = state.local.gameState;
-  const cpu = state.local.players[1];
-  if (gameState.phase !== 'playing') return;
-  const shouldMove = ['rps', 'quiz', 'maze'].includes(game.engine)
-    ? !Object.hasOwn(gameState.answers || gameState.picks || {}, cpu.uid) || game.engine === 'maze'
-    : gameState.turnUid === cpu.uid;
-  if (!shouldMove) return;
-  state.cpuPending = true;
-  const delay = game.engine === 'memory' && gameState.opened.length === 1 ? 780 : 620;
-  state.cpuTimer = window.setTimeout(() => {
-    state.cpuPending = false;
-    if (!state.local) return;
-    const current = state.local.gameState;
-    if (current.phase !== 'playing') return;
-    const action = chooseCpuAction(game, current, state.local.players);
-    if (action) localMove(cpu.uid, action);
-  }, delay);
-}
-
-function startCpuRaceLoop() {
-  window.clearTimeout(state.cpuTimer);
-  const loop = () => {
-    if (!state.local || getGame(state.local.gameId)?.engine !== 'race' || state.local.gameState.phase !== 'playing') return;
-    localMove('local-cpu', { type: 'tap' });
-    state.cpuTimer = window.setTimeout(loop, 690 + Math.random() * 500);
-  };
-  state.cpuTimer = window.setTimeout(loop, 850);
-}
-
-function chooseCpuAction(game, gameState, players) {
-  const cpu = players[1];
-  const random = (max) => Math.floor(Math.random() * max);
-  switch (game.engine) {
-    case 'line': {
-      const open = gameState.board.map((cell, index) => cell === null ? index : -1).filter((index) => index >= 0);
-      return open.length ? { index: open[random(open.length)] } : null;
-    }
-    case 'drop': {
-      const open = Array.from({ length: gameState.cols }, (_, index) => index).filter((col) => gameState.board[col] === null);
-      return open.length ? { col: open[random(open.length)] } : null;
-    }
-    case 'memory': {
-      const open = gameState.opened.length >= 2 ? [] : gameState.opened;
-      const hidden = gameState.cards.map((_, index) => index).filter((index) => !gameState.matched.includes(index) && !open.includes(index));
-      if (!hidden.length) return null;
-      if (open.length === 1) {
-        const match = hidden.find((index) => gameState.cards[index] === gameState.cards[open[0]]);
-        if (match !== undefined && Math.random() > 0.18) return { index: match };
-      }
-      return { index: hidden[random(hidden.length)] };
-    }
-    case 'rps': {
-      const choice = gameState.mode === 'rps' ? ['rock', 'paper', 'scissors'][random(3)] : gameState.mode === 'coin' ? ['heads', 'tails'][random(2)] : String(random(6) + 1);
-      return { choice };
-    }
-    case 'quiz': {
-      if (Object.hasOwn(gameState.answers, cpu.uid)) return null;
-      const question = getQuizQuestion(gameState.questionIndex);
-      return { answer: Math.random() > 0.3 ? question.answer : random(question.choices.length) };
-    }
-    case 'maze': {
-      const { x, y } = gameState.positions[cpu.uid];
-      const options = [
-        ['up', x, y - 1], ['left', x - 1, y], ['right', x + 1, y], ['down', x, y + 1],
-      ].filter(([, nextX, nextY]) => nextX >= 0 && nextX < gameState.width && nextY >= 0 && nextY < gameState.height && !gameState.walls.includes(nextY * gameState.width + nextX));
-      options.sort((a, b) => Math.abs(a[1] - gameState.goal.x) + Math.abs(a[2] - gameState.goal.y) - (Math.abs(b[1] - gameState.goal.x) + Math.abs(b[2] - gameState.goal.y)));
-      const move = options[0];
-      return move ? { direction: move[0] } : null;
-    }
-    case 'battle': {
-      if (gameState.turnUid !== cpu.uid) return null;
-      const target = players.find((player) => player.uid !== cpu.uid);
-      if (!target) return null;
-      const used = new Set(gameState.shots[cpu.uid].filter((key) => key.startsWith(`${target.uid}:`)).map((key) => Number(key.split(':')[1])));
-      const available = Array.from({ length: gameState.boardSize ** 2 }, (_, index) => index).filter((index) => !used.has(index));
-      return available.length ? { targetUid: target.uid, index: available[random(available.length)] } : null;
-    }
-    case 'rally':
-      return gameState.turnUid === cpu.uid ? { lane: random(3) } : null;
-    case 'code':
-      return gameState.turnUid === cpu.uid ? { guess: Array.from({ length: gameState.digits }, () => random(6)) } : null;
-    default:
-      return null;
-  }
-}
-
 function routeBackToCatalog() {
   window.clearTimeout(state.cpuTimer);
   state.cpuPending = false;
   state.local = null;
   state.modal = null;
   navigate('catalog');
-}
-
-function formatGameLink(roomId = state.room?.id) {
-  return `${location.origin}${location.pathname}#/room/${roomId}`;
-}
-
-async function copyRoomLink() {
-  if (!state.room?.id) return;
-  try {
-    await navigator.clipboard.writeText(formatGameLink());
-    showToast('Invite link copied. Send it to your crew.');
-  } catch {
-    const field = document.createElement('textarea');
-    field.value = formatGameLink();
-    field.style.position = 'fixed'; field.style.opacity = '0';
-    document.body.append(field); field.select();
-    const copied = document.execCommand('copy'); field.remove();
-    showToast(copied ? 'Invite link copied. Send it to your crew.' : formatGameLink(), copied ? 'success' : 'warning');
-  }
-}
-
-async function shareRoomLink() {
-  if (!state.room?.id) return copyRoomLink();
-  const url = formatGameLink();
-  if (navigator.share) {
-    try {
-      await navigator.share({ title: `${getGame(state.room.gameId)?.title || 'PSD-gaming'} room`, text: 'Join my PSD-gaming room.', url });
-      showToast('Invite shared.');
-      return;
-    } catch (error) {
-      if (error?.name === 'AbortError') return;
-    }
-  }
-  await copyRoomLink();
 }
 
 function modalOpen(modal) {
@@ -339,42 +119,6 @@ function modalOpen(modal) {
 function modalClose() {
   state.modal = null;
   state.authError = '';
-  render();
-}
-
-function withTimeout(promise, ms, message) {
-  let timer = 0;
-  const timeout = new Promise((_, reject) => { timer = window.setTimeout(() => reject(new Error(message)), ms); });
-  return Promise.race([promise, timeout]).finally(() => window.clearTimeout(timer));
-}
-
-/** Explicit, user-started check against the real Firebase project this build is configured for. */
-async function runLiveCheck() {
-  if (!connection().onlineFeatures || state.liveCheck?.running) return;
-  state.liveCheck = { running: true, steps: [] };
-  render();
-  const steps = [];
-  try {
-    await auth.authStateReady();
-    const hadUser = Boolean(auth.currentUser);
-    const user = await withTimeout(ensureOnlineUser(), 15000, 'Signing in took longer than 15 seconds. Check your connection and try again.');
-    steps.push({
-      ok: true,
-      label: 'Firebase Auth is reachable and accepted the API key',
-      detail: hadUser
-        ? 'Already signed in, so no new sign-in was attempted (the Anonymous provider was not re-tested).'
-        : 'Signed in as a guest, so the Anonymous provider is enabled.',
-    });
-    try {
-      await withTimeout(getDoc(doc(db, 'admins', user.uid)), 15000, 'Firestore did not answer within 15 seconds. Check that the Firestore database exists and your connection works.');
-      steps.push({ ok: true, label: 'Firestore is reachable and the rules are published', detail: 'Read your own admins/{uid} document, which firestore.rules allows for any signed-in user.' });
-    } catch (error) {
-      steps.push({ ok: false, label: 'Firestore check failed', detail: friendlyError(error) });
-    }
-  } catch (error) {
-    steps.push({ ok: false, label: 'Firebase Auth check failed', detail: friendlyError(error, { method: 'anonymous' }) });
-  }
-  state.liveCheck = { running: false, steps };
   render();
 }
 
