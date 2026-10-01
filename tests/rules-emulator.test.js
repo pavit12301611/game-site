@@ -56,6 +56,12 @@ function canReach({ host, port }, timeout = 2000) {
 }
 
 const target = emulatorTarget();
+/**
+ * `firebase emulators:exec` (behind `npm run test:rules`, which is what CI runs) exports
+ * FIRESTORE_EMULATOR_HOST. When it is set, "no emulator" is a failure, not a skip: the rules job
+ * must never go green because every test in this file quietly skipped.
+ */
+const EMULATOR_EXPECTED = Boolean(process.env.FIRESTORE_EMULATOR_HOST);
 let emulatorReady = false;
 let testEnv = null;
 let ruts = null;
@@ -63,10 +69,14 @@ let ruts = null;
 const ts = () => serverTimestamp();
 
 before(async () => {
-  if (!(await canReach(target))) return;
+  if (!(await canReach(target))) {
+    if (EMULATOR_EXPECTED) throw new Error(`FIRESTORE_EMULATOR_HOST is set to ${target.host}:${target.port} but nothing answers there: the emulator did not start, so these tests must not be skipped.`);
+    return;
+  }
   try {
     ruts = await import('@firebase/rules-unit-testing');
-  } catch {
+  } catch (error) {
+    if (EMULATOR_EXPECTED) throw error;
     return; // dev dependencies are not installed here: skip instead of failing the suite
   }
   testEnv = await ruts.initializeTestEnvironment({
@@ -549,4 +559,12 @@ test('presence: you take your heartbeat with you when you leave, also when the r
   await seed(async (db) => setDoc(doc(db, 'rooms', 'p-gone', 'presence', BOB), { status: 'here', lastSeenAt: ts() }));
   await ruts.assertSucceeds(deleteDoc(doc(bob, 'rooms', 'p-gone', 'presence', BOB)));
   await ruts.assertFails(setDoc(doc(bob, 'rooms', 'p-gone', 'presence', BOB), heartbeat()), 'but not re-created');
+});
+
+test('under `npm run test:rules` nothing in this file was skipped', (t) => {
+  if (!EMULATOR_EXPECTED) {
+    t.skip('only meaningful under firebase emulators:exec, which sets FIRESTORE_EMULATOR_HOST');
+    return;
+  }
+  assert.equal(emulatorReady, true, 'the emulator answered and the rules were loaded');
 });
