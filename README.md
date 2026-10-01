@@ -93,6 +93,7 @@ Two things to know: the flag is **ignored by a production build** (`vite build`)
 | `src/engines/` | One module per game engine, with the catalog in `src/catalog.js`. |
 | `src/firebase*.js` | Config parsing, validation, initialization, error wording, emulator switch. |
 | `src/styles.css` | The whole design system: tokens first, then one section per area of the app. |
+| `docs/design-reboot.md` | The visual-reboot brief: audit, tokens with measured contrast, component list, per-game image brief and per-engine board spec. `tests/design-brief.test.js` recomputes its numbers. |
 
 Rules for contributing to this layout: views never write to state and never talk to Firebase;
 modules never import `src/app.js` (it is the wiring, so that would be a cycle); and every string
