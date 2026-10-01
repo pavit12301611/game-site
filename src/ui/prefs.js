@@ -7,7 +7,7 @@
  */
 
 import { GAMES, getGame } from '../catalog.js';
-import { FAVORITES_STORAGE_KEY, recordRecentGameId, toggleFavoriteGameId } from '../helpers.js';
+import { recordRecentGameId, toggleFavoriteGameId } from '../helpers.js';
 import { state } from '../state.js';
 import { showToast } from './toast.js';
 

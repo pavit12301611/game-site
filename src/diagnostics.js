@@ -13,7 +13,6 @@ import { friendlyError } from './errors.js';
 import { render } from './render.js';
 import { state } from './state.js';
 import { ensureOnlineUser } from './online/session.js';
-import { navigate } from './router.js';
 
 /**
  * `db` and `auth` are null only when Firebase never started, and the live check never runs in that

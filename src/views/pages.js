@@ -26,7 +26,7 @@ function stageArt(game) {
   return (art.srcset || '').split(' ')[0] || art.src;
 }
 
-export function renderGameCard(game, index = 0, level = 3) {
+export function renderGameCard(game, level = 3) {
   const artwork = getGameArtwork(game);
   const isFavorite = state.favorites.includes(game.id);
   return `<article class="game-card" data-category="${esc(game.category)}">
@@ -38,7 +38,7 @@ export function renderGameCard(game, index = 0, level = 3) {
 
 export function renderGameGrid(games, level = 3) {
   if (!games.length) return `<div class="empty-state"><div class="empty-icon">⌕</div><h3>No games found</h3><p>Try another name or switch the category filter.</p><button class="button button-outline" data-action="clear-filters">Clear filters</button></div>`;
-  return `<div class="game-grid">${games.map((game, index) => renderGameCard(game, index, level)).join('')}</div>`;
+  return `<div class="game-grid">${games.map((game) => renderGameCard(game, level)).join('')}</div>`;
 }
 
 export function gamesForIds(ids) {

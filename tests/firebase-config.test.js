@@ -148,7 +148,12 @@ test('apiKey, authDomain, projectId and appId are all required and must be non-e
 });
 
 test('storageBucket and messagingSenderId are optional', () => {
-  const { storageBucket, messagingSenderId, ...minimal } = VALID;
+  const minimal = {
+    apiKey: VALID.apiKey,
+    authDomain: VALID.authDomain,
+    projectId: VALID.projectId,
+    appId: VALID.appId,
+  };
   assert.equal(parseFirebaseConfig(line(minimal)).status, 'ok');
 });
 
@@ -322,7 +327,9 @@ test('nothing set at all is "missing" and names the variables to add', () => {
 });
 
 test('a partly filled set names exactly the variables that are still missing', () => {
-  const { VITE_FIREBASE_APP_ID, VITE_FIREBASE_AUTH_DOMAIN, ...partial } = FIELD_ENV;
+  const partial = { ...FIELD_ENV };
+  delete partial.VITE_FIREBASE_APP_ID;
+  delete partial.VITE_FIREBASE_AUTH_DOMAIN;
   const result = resolveFirebaseConfig(partial);
   assert.equal(result.status, 'invalid');
   assert.equal(result.code, 'missing-fields');

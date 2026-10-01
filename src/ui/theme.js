@@ -6,7 +6,7 @@
  * the stylesheet do the rest.
  */
 
-import { getStoredThemePreference, nextToggledTheme, resolveTheme, saveThemePreference } from '../helpers.js';
+import { nextToggledTheme, resolveTheme, saveThemePreference } from '../helpers.js';
 import { state } from '../state.js';
 import { showToast } from './toast.js';
 import { render } from '../render.js';

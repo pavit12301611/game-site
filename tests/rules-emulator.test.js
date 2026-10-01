@@ -63,6 +63,7 @@ const target = emulatorTarget();
  */
 const EMULATOR_EXPECTED = Boolean(process.env.FIRESTORE_EMULATOR_HOST);
 let emulatorReady = false;
+let skippedRuleTests = 0;
 let testEnv = null;
 let ruts = null;
 
@@ -90,13 +91,17 @@ beforeEach(async () => {
   if (testEnv) await testEnv.clearFirestore();
 });
 
-after(async () => {
+after(async (t) => {
   if (testEnv) await testEnv.cleanup();
+  if (!emulatorReady && !EMULATOR_EXPECTED && skippedRuleTests) {
+    t.diagnostic(`NOTE: ${skippedRuleTests} Firestore rules tests skipped (no emulator on ${target.host}:${target.port}) — run \`npm run test:rules\` (needs Java) or rely on the firestore-rules CI job.`);
+  }
 });
 
 /** Skips the test with a clear reason when there is no emulator to test against. */
 function ready(t) {
   if (emulatorReady) return true;
+  skippedRuleTests += 1;
   t.skip(`No Firestore emulator on ${target.host}:${target.port} — run "npm run test:rules" (needs Java).`);
   return false;
 }
@@ -312,6 +317,15 @@ test('players may move, but nobody may rewrite the room around them', async (t) 
     status: 'playing',
   }));
   await ruts.assertSucceeds(updateDoc(doc(bob, 'rooms', 'live'), { state: { phase: 'playing', moves: 1 }, updatedAt: ts() }));
+  await ruts.assertFails(updateDoc(doc(bob, 'rooms', 'live'), {
+    status: 'playing',
+    winnerUid: BOB,
+    updatedAt: ts(),
+  }), 'a player cannot set the winner while the match is still playing');
+  await ruts.assertFails(updateDoc(doc(bob, 'rooms', 'live'), {
+    playerNames: { [ALICE]: 'Alicia', [BOB]: 'Bob' },
+    updatedAt: ts(),
+  }), 'a player cannot rename another player during a move');
   await ruts.assertFails(updateDoc(doc(alice, 'rooms', 'live'), { hostUid: BOB, updatedAt: ts() }), 'the host is not handed to another player mid-match');
   await ruts.assertFails(updateDoc(doc(alice, 'rooms', 'live'), { maxPlayers: 3, updatedAt: ts() }));
   await ruts.assertFails(updateDoc(doc(alice, 'rooms', 'live'), { gameId: 'connect-four', updatedAt: ts() }));
@@ -381,6 +395,15 @@ test('a waiting room gives your seat back when you leave, and goes away with the
   // A room you are not in is not yours to delete, even when it is empty.
   await ruts.assertSucceeds(setDoc(doc(alice, 'rooms', 'keep'), waitingRoom(ALICE)));
   await ruts.assertFails(deleteDoc(doc(carol, 'rooms', 'keep')));
+});
+
+test('a missing friend request or game invite reads as not-found for a signed-in player', async (t) => {
+  if (!ready(t)) return;
+  const alice = testEnv.authenticatedContext(ALICE).firestore();
+  const request = await getDoc(doc(alice, 'friendRequests', 'missing'));
+  const invite = await getDoc(doc(alice, 'gameInvites', 'missing'));
+  assert.equal(request.exists(), false);
+  assert.equal(invite.exists(), false);
 });
 
 test('friend requests need a real recipient and an honest sender', async (t) => {
@@ -561,10 +584,6 @@ test('presence: you take your heartbeat with you when you leave, also when the r
   await ruts.assertFails(setDoc(doc(bob, 'rooms', 'p-gone', 'presence', BOB), heartbeat()), 'but not re-created');
 });
 
-test('under `npm run test:rules` nothing in this file was skipped', (t) => {
-  if (!EMULATOR_EXPECTED) {
-    t.skip('only meaningful under firebase emulators:exec, which sets FIRESTORE_EMULATOR_HOST');
-    return;
-  }
-  assert.equal(emulatorReady, true, 'the emulator answered and the rules were loaded');
+test('under `npm run test:rules` nothing in this file was skipped', () => {
+  if (EMULATOR_EXPECTED) assert.equal(emulatorReady, true, 'the emulator answered and the rules were loaded');
 });

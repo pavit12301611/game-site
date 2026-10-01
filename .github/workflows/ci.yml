@@ -24,6 +24,8 @@ jobs:
         run: npm ci
       - name: Unit tests
         run: npm test
+      - name: Lint
+        run: npm run lint
       - name: Type check (tsc --checkJs)
         run: npm run typecheck
       - name: Production build

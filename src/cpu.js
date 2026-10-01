@@ -10,7 +10,7 @@
  * turns. `startCpuRaceLoop` is the one exception - tap races are real-time, so they tick.
  */
 
-import { GAMES, applyGameAction, createInitialGameState, getGame, getQuizQuestion } from './catalog.js';
+import { applyGameAction, createInitialGameState, getGame, getQuizQuestion } from './catalog.js';
 import { friendlyError } from './errors.js';
 import { recordRecentGame } from './ui/prefs.js';
 import { playUiTone } from './ui/sound.js';

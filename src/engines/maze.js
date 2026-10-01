@@ -43,10 +43,9 @@ export function createInitialState(game, players) {
  * @param {GameState} state
  * @param {string} uid
  * @param {Action} action
- * @param {Player[]} players
  * @returns {GameState}
  */
-export function applyAction(game, state, uid, action, players) {
+export function applyAction(game, state, uid, action) {
   assertPlaying(state);
   const delta = DIRECTIONS[action.direction];
   if (!delta) throw new Error('Choose a direction to move.');

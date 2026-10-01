@@ -116,7 +116,11 @@ function handleSettingsSubmit(form) {
   const formData = new FormData(form);
   const displayName = String(formData.get('displayName') || '').trim().slice(0, 20);
   state.displayName = displayName;
-  try { localStorage.setItem(DISPLAY_NAME_STORAGE_KEY, displayName); } catch {}
+  try {
+    localStorage.setItem(DISPLAY_NAME_STORAGE_KEY, displayName);
+  } catch {
+    // Storage is optional; a blocked localStorage must not prevent settings from applying.
+  }
   setSoundEnabled(formData.get('soundEnabled') === 'on');
   applyTheme(String(formData.get('theme') || 'system'), false);
   state.modal = null;
@@ -170,7 +174,7 @@ function handleClick(event) {
   const actionButton = event.target.closest('[data-action]');
   if (!actionButton) return;
   const action = actionButton.dataset.action;
-  const { gameId, page, category, index, col, uid, direction, choice, answer, lane, targetUid, requestId, inviteId, roomId } = actionButton.dataset;
+  const { gameId, page, category, index, col, uid, direction, choice, answer, lane, requestId, inviteId, roomId } = actionButton.dataset;
   if (action === 'reload') { location.reload(); return; }
   if (action === 'leave-room') { void leaveCurrentRoom(); return; }
   if (action === 'modal-backdrop' && event.target === actionButton) { modalClose(); return; }
