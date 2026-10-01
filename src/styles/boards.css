@@ -4,7 +4,7 @@
  * Player identity is colour + shape + name, and every board is sized by min(100%, 78vh) so it fills a phone
  * and a desktop without scrolling. Nothing here moves on its own except what `prefers-reduced-motion` removes.
  */
-.board-instruction { display: flex; align-items: center; justify-content: center; gap: var(--sp-2); min-height: 48px; padding: 0 var(--sp-4); color: var(--ink-muted); font-size: var(--fs-2); text-align: center; }
+.board-instruction { display: flex; align-items: center; justify-content: center; gap: var(--sp-2); min-height: 64px; padding: 0 var(--sp-4); color: var(--ink-muted); font-size: var(--fs-2); text-align: center; }
 .board-instruction > span { color: var(--primary); }
 .board-fallback { padding: var(--sp-6); border: 2px dashed var(--control-edge); border-radius: var(--r-3); color: var(--ink-muted); text-align: center; }
 .line-game-wrap, .drop-game-wrap, .memory-game-wrap, .maze-board-wrap, .battle-board-wrap, .code-board-wrap, .race-board, .duel-board, .quiz-board, .rally-board { display: grid; gap: var(--sp-4); justify-items: center; }
@@ -25,7 +25,9 @@
 /* ---------- line (3x3, 9x9): a glass grid, glowing pink / yellow / cyan marks ---------- */
 .line-board {
   display: grid;
-  grid-template-columns: repeat(var(--board-size), 1fr);
+  grid-template-columns: repeat(var(--board-size), minmax(0, 1fr));
+  grid-template-rows: repeat(var(--board-size), minmax(0, 1fr));
+  container-type: inline-size;
   width: min(100%, 78vh, 620px);
   aspect-ratio: 1;
   padding: clamp(6px, 2vw, 14px);
@@ -41,7 +43,9 @@
   box-shadow: inset 0 0 0 1px rgb(46 230 255 / 0.4);
   color: var(--board-ink);
   font-family: var(--font-display);
-  font-size: clamp(22px, calc(60vw / var(--board-size)), calc(380px / var(--board-size) * 1.6));
+  /* Sized from the board, not the viewport, so a mark can never make its row taller than the others. */
+  font-size: calc((100cqw - 28px) / var(--board-size) * 0.62);
+  overflow: hidden;
   font-weight: 700;
   line-height: 1;
   transition: background var(--dur-1), box-shadow var(--dur-1);
@@ -57,7 +61,7 @@
 .drop-board {
   --hole: 78%;
   display: grid;
-  grid-template-columns: repeat(var(--drop-cols), 1fr);
+  grid-template-columns: repeat(var(--drop-cols), minmax(0, 1fr));
   width: min(100%, 78vh, 560px);
   padding: clamp(6px, 2vw, 14px);
   border: 3px solid var(--bn-pink);
@@ -75,7 +79,7 @@
 }
 .drop-controls button:not(:disabled):hover { background: rgb(255 255 255 / 0.2); text-shadow: 0 0 10px #fff; }
 .drop-controls button:disabled { color: rgb(255 255 255 / 0.6); }
-.drop-cell { position: relative; aspect-ratio: 1; display: grid; place-items: center; }
+.drop-cell { position: relative; overflow: hidden; aspect-ratio: 1; display: grid; place-items: center; }
 .drop-cell::after {
   content: ''; position: absolute; inset: 0; pointer-events: none;
   background: radial-gradient(circle at 50% 50%, transparent 0 calc(var(--hole) / 2), var(--board-frame) calc(var(--hole) / 2 + 1%));
@@ -94,9 +98,10 @@
 .memory-score.is-me { border-color: var(--primary); box-shadow: var(--glow-yellow); }
 .memory-score b, .quiz-scores b, .maze-score-row b { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .memory-turn-hint, .maze-score-row > small { color: var(--ink-muted); font-weight: 600; }
-.memory-board { display: grid; grid-template-columns: repeat(var(--memory-cols), 1fr); gap: clamp(6px, 2vw, 14px); width: min(100%, 78vh, 560px); padding: clamp(8px, 2vw, 16px); border: 3px solid var(--bn-violet); border-radius: var(--r-3); box-shadow: 0 0 28px rgb(183 155 255 / 0.35), var(--shadow-2); }
+.memory-turn-hint { flex-basis: 100%; text-align: center; }
+.memory-board { display: grid; grid-template-columns: repeat(var(--memory-cols), minmax(0, 1fr)); gap: clamp(6px, 2vw, 14px); width: min(100%, 78vh, 560px); padding: clamp(8px, 2vw, 16px); border: 3px solid var(--bn-violet); border-radius: var(--r-3); box-shadow: 0 0 28px rgb(183 155 255 / 0.35), var(--shadow-2); }
 .memory-card {
-  aspect-ratio: 3 / 4; min-width: 0; padding: 0;
+  aspect-ratio: 3 / 4; min-width: 0; padding: 0; overflow: hidden;
   display: grid; place-items: center;
   border: 2px solid var(--bn-violet); border-radius: 8px;
   background:
@@ -158,9 +163,12 @@
 .duel-score strong { font-family: var(--font-mono); font-size: var(--fs-6); }
 .duel-score small { grid-column: 1 / -1; font-size: var(--fs-1); }
 .duel-score .player-dot { box-shadow: 0 0 0 2px #0b0720, 0 0 0 3px var(--board-ink); }
-.last-round-result { width: 100%; padding: var(--sp-3) var(--sp-4); border-radius: var(--r-2); background: rgb(11 7 32 / 0.7); font-weight: 600; text-align: center; }
+.last-round-result { display: grid; align-content: center; min-height: 112px; width: 100%; padding: var(--sp-3) var(--sp-4); border-radius: var(--r-2); background: rgb(11 7 32 / 0.7); font-weight: 600; text-align: center; }
 .last-round-result small { display: block; font-weight: 400; font-size: var(--fs-2); }
-.choice-label { font-size: var(--fs-3); font-weight: 600; text-align: center; }
+.last-round-result.is-idle { color: var(--ink-subtle); }
+@media (max-width: 559px) { .last-round-result { min-height: 144px; } }
+.choice-label { min-height: 3.2em; font-size: var(--fs-3); font-weight: 600; text-align: center; }
+@media (min-width: 560px) { .choice-label { min-height: 1.6em; } }
 .choice-grid { display: grid; gap: var(--sp-3); grid-template-columns: repeat(3, minmax(0, 1fr)); width: 100%; }
 .choice-grid-small { grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); }
 .choice-button {
@@ -177,7 +185,8 @@
 .choice-button:not(:disabled):hover { background: #fff; transform: translateY(-2px); box-shadow: 0 7px 0 var(--bn-pink); }
 .choice-button:active:not(:disabled) { transform: translateY(4px); box-shadow: 0 1px 0 var(--bn-pink); }
 .choice-button.is-chosen { border-color: #fff; outline: 4px solid var(--bn-yellow); }
-.choice-button.is-chosen::after { content: '✓ Locked in'; font-size: var(--fs-1); font-weight: 700; }
+.choice-button::after { content: ''; display: block; height: 20px; line-height: 20px; font-size: var(--fs-1); font-weight: 700; }
+.choice-button.is-chosen::after { content: '✓ Locked in'; }
 .choice-button:disabled:not(.is-chosen) { background: #cfc7e8; color: #2a2150; box-shadow: 0 5px 0 #6c5fa8; }
 
 /* ---------- quiz: a question card with neon answer keys ---------- */
@@ -191,26 +200,27 @@
 .quiz-track i.is-filled { background: var(--neon-pink); box-shadow: 0 0 8px rgb(var(--neon-pink-rgb) / 0.7); }
 .quiz-question { display: grid; gap: var(--sp-4); width: 100%; padding: var(--sp-5); border: 3px solid var(--neon-cyan); border-radius: var(--r-3); background: var(--surface-1); box-shadow: var(--glow-cyan); }
 .question-mark { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: var(--primary); color: var(--on-primary); font-family: var(--font-display); font-weight: 700; box-shadow: var(--shadow-piece); }
-.quiz-question h2 { font-size: var(--fs-5); line-height: 1.3; }
+.quiz-question h2 { display: grid; align-items: center; min-height: 3.9em; font-size: var(--fs-5); line-height: 1.3; }
 .quiz-options { display: grid; gap: var(--sp-3); }
-.quiz-option { display: flex; align-items: center; gap: var(--sp-3); min-height: 56px; padding: var(--sp-2) var(--sp-4); border: 2px solid var(--control-edge); border-radius: var(--r-2); background: var(--surface-2); color: var(--ink); font-size: var(--fs-3); text-align: left; box-shadow: 0 4px 0 var(--line); transition: transform var(--dur-1), box-shadow var(--dur-1), border-color var(--dur-1); }
+.quiz-option { position: relative; display: flex; align-items: center; gap: var(--sp-3); min-height: 64px; padding: var(--sp-2) 44px var(--sp-2) var(--sp-4); border: 2px solid var(--control-edge); border-radius: var(--r-2); background: var(--surface-2); color: var(--ink); font-size: var(--fs-3); text-align: left; box-shadow: 0 4px 0 var(--line); transition: transform var(--dur-1), box-shadow var(--dur-1), border-color var(--dur-1); }
 .quiz-option > i { display: grid; place-items: center; flex: none; width: 36px; height: 36px; border: 2px solid var(--neon-cyan); border-radius: var(--r-1); background: var(--surface-3); font-family: var(--font-mono); font-style: normal; font-weight: 700; }
-.quiz-option > span { flex: 1; }
-.quiz-option > .icon { color: var(--ok); }
+.quiz-option > span { flex: 1; min-width: 0; }
+.quiz-option > .icon { position: absolute; right: var(--sp-3); top: 50%; transform: translateY(-50%); color: var(--ok); }
 .quiz-option:not(:disabled):hover { border-color: var(--primary); transform: translateY(-2px); box-shadow: 0 6px 0 var(--line); }
 .quiz-option:not(:disabled):active { transform: translateY(3px); box-shadow: 0 1px 0 var(--line); }
 .quiz-option:disabled { cursor: default; box-shadow: none; }
 .quiz-option.is-correct { border-color: var(--ok); box-shadow: 0 0 0 2px var(--ok); }
 .quiz-option.is-correct > i { background: var(--ok); border-color: var(--ok); color: var(--bg); }
 .quiz-option.is-wrong { border-color: var(--bad); border-style: dashed; }
-.quiz-option.is-wrong::after { content: '✕ Your answer'; color: var(--bad); font-size: var(--fs-1); font-weight: 700; }
-.quiz-bottom { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-3); width: 100%; }
+/* A badge on the border: it takes no room, so marking an answer never makes the option taller. */
+.quiz-option.is-wrong::after { content: '✕ Your answer'; position: absolute; right: var(--sp-3); top: -12px; padding: 0 var(--sp-2); border-radius: var(--r-1); background: var(--surface-1); color: var(--bad); font-size: var(--fs-1); font-weight: 700; line-height: 20px; }
+.quiz-bottom { min-height: 72px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-3); width: 100%; }
 .answer-reveal { color: var(--ink); font-weight: 600; }
 .answered-count { color: var(--ink-muted); font-size: var(--fs-2); }
 
 /* ---------- maze: neon walls on a dark floor ---------- */
 .maze-board { display: grid; grid-template-columns: repeat(var(--maze-cols), minmax(0, 1fr)); width: min(100%, 78vh, 560px); gap: 2px; padding: 8px; border: 3px solid var(--bn-lime); border-radius: var(--r-2); box-shadow: 0 0 28px rgb(134 255 92 / 0.35), var(--shadow-2); }
-.maze-cell { position: relative; aspect-ratio: 1; display: grid; place-items: center; border-radius: 2px; background: #130c3a; color: var(--warn); font-size: clamp(14px, 4vw, 26px); }
+.maze-cell { position: relative; overflow: hidden; aspect-ratio: 1; display: grid; place-items: center; border-radius: 2px; background: #130c3a; color: var(--warn); font-size: clamp(14px, 4vw, 26px); }
 .maze-cell.is-wall { background: #2c1d8f; box-shadow: inset 0 0 0 2px var(--bn-cyan), 0 0 8px rgb(46 230 255 / 0.55); }
 .maze-cell.is-goal { background: #3b2a00; box-shadow: inset 0 0 0 2px var(--bn-yellow), 0 0 12px rgb(255 210 63 / 0.7); }
 .maze-token { display: grid; place-items: center; width: 80%; height: 80%; border-radius: 50%; background: var(--bp1); color: #140a2e; font-size: 13px; box-shadow: var(--shadow-piece), 0 0 0 2px #fff; }
@@ -226,15 +236,15 @@
 .battle-targets { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: var(--sp-2); color: var(--ink-muted); font-size: var(--fs-2); }
 .target-chip { display: inline-flex; align-items: center; gap: var(--sp-2); min-height: var(--target); padding: 0 var(--sp-4); border: 2px solid var(--control-edge); border-radius: var(--r-pill); background: transparent; color: var(--ink); font-weight: 600; }
 .target-chip.is-active { background: var(--primary); border-color: var(--primary); color: var(--on-primary); box-shadow: var(--glow-yellow); }
-.battle-map { display: grid; grid-template-columns: repeat(var(--battle-cols), 1fr); gap: 2px; width: min(100%, 78vh, 560px); padding: clamp(3px, 1.5vw, 8px); border: 3px solid var(--radar-ink); border-radius: var(--r-3); background: radial-gradient(circle at 50% 50%, #0b3a3f, var(--radar) 75%); box-shadow: 0 0 28px rgb(93 255 160 / 0.35), var(--shadow-2), inset 0 0 40px rgb(93 255 160 / 0.15); }
-.battle-cell { aspect-ratio: 1; min-width: 0; padding: 0; border: 1px solid rgb(93 255 160 / 0.4); border-radius: 2px; background: transparent; color: #ff9bb0; font-size: clamp(18px, 5vw, 30px); line-height: 1; }
+.battle-map { display: grid; grid-template-columns: repeat(var(--battle-cols), minmax(0, 1fr)); gap: 2px; width: min(100%, 78vh, 560px); padding: clamp(3px, 1.5vw, 8px); border: 3px solid var(--radar-ink); border-radius: var(--r-3); background: radial-gradient(circle at 50% 50%, #0b3a3f, var(--radar) 75%); box-shadow: 0 0 28px rgb(93 255 160 / 0.35), var(--shadow-2), inset 0 0 40px rgb(93 255 160 / 0.15); }
+.battle-cell { aspect-ratio: 1; min-width: 0; overflow: hidden; padding: 0; border: 1px solid rgb(93 255 160 / 0.4); border-radius: 2px; background: transparent; color: #ff9bb0; font-size: clamp(18px, 5vw, 30px); line-height: 1; }
 .battle-cell:not(:disabled):hover { background: rgb(93 255 160 / 0.22); box-shadow: inset 0 0 0 2px var(--radar-ink); }
 .battle-cell:disabled { cursor: default; opacity: 1; }
 .battle-cell.is-hit { background: rgb(255 61 110 / 0.5); border-color: #ff9bb0; box-shadow: 0 0 10px rgb(255 61 110 / 0.7); }
 .battle-cell.is-miss { color: var(--radar-ink); }
 .battle-legend { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: var(--sp-2) var(--sp-4); color: var(--ink-muted); font-size: var(--fs-2); }
 .battle-legend > span { display: inline-flex; align-items: center; gap: var(--sp-2); }
-.battle-legend b { color: var(--ink); }
+.battle-legend b { flex-basis: 100%; min-height: 2.9em; color: var(--ink); text-align: center; }
 .legend-hit, .legend-miss { width: 16px; height: 16px; border-radius: 2px; border: 2px solid #ff6b8e; background: rgb(255 61 110 / 0.6); }
 .legend-miss { border-color: var(--radar-ink); background: transparent; border-radius: 50%; }
 
@@ -260,7 +270,8 @@
 /* ---------- code: glowing dials and peg rows ---------- */
 .code-board-wrap { width: min(100%, 640px); }
 .code-header { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--sp-2) var(--sp-4); width: 100%; color: var(--ink); font-weight: 600; font-size: var(--fs-2); }
-.code-status { color: var(--ink-muted); text-align: center; }
+.code-status { min-height: 3.2em; color: var(--ink-muted); text-align: center; }
+@media (min-width: 560px) { .code-status { min-height: 1.6em; } }
 .code-draft { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--sp-3); }
 .code-draft > button:not(.code-submit) { display: grid; place-items: center; width: 68px; height: 84px; border: 3px solid var(--bn-yellow); border-radius: var(--r-3); background: linear-gradient(160deg, #3a2796, #1c1160); color: var(--bn-yellow); text-shadow: 0 0 12px var(--bn-yellow); box-shadow: 0 5px 0 #0b0720, 0 0 18px rgb(255 210 63 / 0.35); font-family: var(--font-mono); font-size: 34px; font-weight: 700; }
 .code-draft > button:not(.code-submit) small { font-size: var(--fs-1); color: var(--board-ink); text-shadow: none; }
@@ -270,14 +281,17 @@
 .exact-dot, .near-dot { display: inline-block; width: 16px; height: 16px; border-radius: 50%; }
 .exact-dot { background: var(--ok); }
 .near-dot { border: 3px solid var(--warn); }
-.guess-history { display: grid; gap: var(--sp-2); width: 100%; }
-.guess-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-4); padding: var(--sp-3) var(--sp-4); border: 2px solid var(--line); border-radius: var(--r-2); background: var(--surface-2); }
-.guess-player { flex: 1 1 100px; font-size: var(--fs-2); font-weight: 600; }
+/* A fixed window: new guesses scroll inside it instead of stretching the board. */
+.guess-history { display: grid; align-content: start; gap: var(--sp-2); width: 100%; height: 232px; overflow-y: auto; overscroll-behavior: contain; }
+.guess-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-3); padding: var(--sp-2) var(--sp-3); border: 2px solid var(--line); border-radius: var(--r-2); background: var(--surface-2); }
+.guess-player { flex: 1 1 72px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-2); font-weight: 600; }
 .guess-digits { display: flex; gap: var(--sp-1); }
-.guess-digits i { display: grid; place-items: center; width: 40px; height: 40px; border-radius: var(--r-1); background: var(--surface-3); font-family: var(--font-mono); font-size: var(--fs-4); font-style: normal; font-weight: 700; }
+.guess-digits i { display: grid; place-items: center; width: 32px; height: 32px; border-radius: var(--r-1); background: var(--surface-3); font-family: var(--font-mono); font-size: var(--fs-4); font-style: normal; font-weight: 700; }
 .guess-hints { display: flex; align-items: baseline; gap: var(--sp-1); font-size: var(--fs-2); }
 .guess-hints small { color: var(--ink-muted); margin-right: var(--sp-2); }
 .guess-empty { padding: var(--sp-4); color: var(--ink-muted); text-align: center; }
+.code-reveal-slot { min-height: 84px; width: 100%; }
+@media (min-width: 560px) { .code-reveal-slot { min-height: 56px; } }
 .code-reveal { padding: var(--sp-3) var(--sp-5); border: 2px solid var(--neon-yellow); border-radius: var(--r-2); font-weight: 600; }
 .code-reveal b { font-family: var(--font-mono); letter-spacing: 0.2em; }
 
