@@ -158,6 +158,23 @@ test('rooms: unlistable except for admins, and a missing room reads as "not foun
   assert.equal(list?.condition, 'isAdmin()', 'only admins may list rooms');
 });
 
+test('friend requests and game invites return missing gets as not-found without broadening list access', () => {
+  for (const name of ['friendRequests', 'gameInvites']) {
+    const statements = allowStatements(matchBlock(name));
+    const get = statements.find(({ methods }) => methods.length === 1 && methods[0] === 'get');
+    assert.ok(get, `${name} needs a dedicated get rule`);
+    assert.match(get.condition, /resource == null/, `${name}: a missing invite should read as not-found`);
+    assert.match(get.condition, /resource\.data\.fromUid == request\.auth\.uid/);
+    assert.match(get.condition, /resource\.data\.toUid == request\.auth\.uid/);
+    const list = statements.find(({ methods }) => methods.length === 1 && methods[0] === 'list');
+    assert.equal(
+      list?.condition,
+      'signedIn() && (resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid)',
+      `${name}: list access stays restricted to participants`,
+    );
+  }
+});
+
 test('friendships: members read their own, admins may read all (the admin dashboard counts them)', () => {
   const read = allowStatements(matchBlock('friendships')).find(({ methods }) => methods.includes('list'));
   assert.ok(read, 'friendships needs a list rule');

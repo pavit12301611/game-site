@@ -82,11 +82,7 @@ export async function handleGoogleSignIn({ forceExistingAccount = false } = {}) 
       return;
     }
     if (['auth/popup-blocked', 'auth/operation-not-supported-in-this-environment', 'auth/web-storage-unsupported'].includes(/** @type {any} */ (error)?.code)) {
-      try {
-        await redirectGoogleSignIn({ linkGuest: shouldLink });
-      } catch (redirectError) {
-        throw redirectError;
-      }
+      await redirectGoogleSignIn({ linkGuest: shouldLink });
       return;
     }
     throw error;

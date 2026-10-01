@@ -15,6 +15,7 @@
 import { collection, doc, getDoc, getDocs, limit, onSnapshot, query, serverTimestamp, setDoc, updateDoc, where, writeBatch } from 'firebase/firestore';
 import { db, firebaseReady } from './firebase.js';
 import { friendlyError } from './errors.js';
+import { unavailableSocialDocument } from './social-errors.js';
 import { render } from './render.js';
 import { setHash } from './router.js';
 import { state } from './state.js';
@@ -109,32 +110,42 @@ export async function sendFriendRequest(uid, name) {
 export async function respondToFriend(requestId, accepted) {
   if (!state.user || !state.profile) throw new Error('Sign in to manage friend requests.');
   const requestRef = doc(store, 'friendRequests', requestId);
-  const snapshot = await getDoc(requestRef);
-  if (!snapshot.exists()) throw new Error('That friend request is no longer available.');
-  const request = snapshot.data();
-  if (request.toUid !== state.user.uid || request.status !== 'pending') throw new Error('This request can no longer be changed.');
-  if (!accepted) {
-    await updateDoc(requestRef, { status: 'declined', respondedAt: serverTimestamp() });
-    showToast('Friend request declined.');
-    return;
+  try {
+    const snapshot = await getDoc(requestRef);
+    if (!snapshot.exists()) throw new Error('That friend request is no longer available.');
+    const request = snapshot.data();
+    if (request.toUid !== state.user.uid || request.status !== 'pending') throw new Error('This request can no longer be changed.');
+    if (!accepted) {
+      await updateDoc(requestRef, { status: 'declined', respondedAt: serverTimestamp() });
+      showToast('Friend request declined.');
+      return;
+    }
+    const memberUids = [request.fromUid, request.toUid].sort();
+    const friendRef = doc(store, 'friendships', memberUids.join('_'));
+    const batch = writeBatch(store);
+    batch.update(requestRef, { status: 'accepted', respondedAt: serverTimestamp() });
+    batch.set(friendRef, {
+      memberUids,
+      memberNames: { [request.fromUid]: request.fromName, [request.toUid]: request.toName || state.profile.username },
+      requestId,
+      createdAt: serverTimestamp(),
+    });
+    await batch.commit();
+    showToast(`You and @${request.fromName} are now friends.`);
+  } catch (error) {
+    throw unavailableSocialDocument(error, 'That friend request is no longer available.');
   }
-  const memberUids = [request.fromUid, request.toUid].sort();
-  const friendRef = doc(store, 'friendships', memberUids.join('_'));
-  const batch = writeBatch(store);
-  batch.update(requestRef, { status: 'accepted', respondedAt: serverTimestamp() });
-  batch.set(friendRef, {
-    memberUids,
-    memberNames: { [request.fromUid]: request.fromName, [request.toUid]: request.toName || state.profile.username },
-    requestId,
-    createdAt: serverTimestamp(),
-  });
-  await batch.commit();
-  showToast(`You and @${request.fromName} are now friends.`);
 }
 
 export async function joinGameInvite(inviteId, roomId) {
   const inviteRef = doc(store, 'gameInvites', inviteId);
-  await updateDoc(inviteRef, { status: 'accepted', respondedAt: serverTimestamp() });
-  state.modal = null;
-  setHash(`room/${roomId}`);
+  try {
+    const snapshot = await getDoc(inviteRef);
+    if (!snapshot.exists() || snapshot.data().status !== 'pending') throw new Error('This game invite is no longer valid.');
+    await updateDoc(inviteRef, { status: 'accepted', respondedAt: serverTimestamp() });
+    state.modal = null;
+    setHash(`room/${roomId}`);
+  } catch (error) {
+    throw unavailableSocialDocument(error, 'This game invite is no longer valid.');
+  }
 }

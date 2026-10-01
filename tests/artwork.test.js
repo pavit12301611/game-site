@@ -114,11 +114,14 @@ test('index.html carries the social tags and the icon links', () => {
   assert.match(html, /og:image:height" content="630"/);
 });
 
-test('the hero preload in index.html matches the hero image the landing page draws', () => {
+test('the external hero preload matches the image the landing page draws', () => {
   const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
-  assert.ok(html.includes(`hero.href = '${HERO_ARTWORK.src}'`), 'the preload fetches the same file');
-  assert.ok(html.includes(`'${HERO_ARTWORK.srcset}'`), 'with the same srcset');
-  assert.ok(html.includes("setAttribute('imagesizes', '100vw')"), 'and the same sizes as artImage() uses for the hero');
+  const preload = readFileSync(new URL('../public/theme-preload.js', import.meta.url), 'utf8');
+  assert.match(html, /<script src="\/theme-preload\.js"><\/script>/, 'the pre-paint script is an external file');
+  assert.ok(preload.includes(`hero.href = '${HERO_ARTWORK.src}'`), 'the preload fetches the same file');
+  assert.ok(preload.includes(`'${HERO_ARTWORK.srcset}'`), 'with the same srcset');
+  assert.ok(preload.includes("setAttribute('imagesizes', '100vw')"), 'and the same sizes as artImage() uses for the hero');
+  assert.doesNotMatch(html, /<script\b(?![^>]*\bsrc=)[^>]*>[\s\S]*?<\/script>/i, 'index.html has no inline script body');
 });
 
 test('social image URLs are absolute on the production domain', () => {

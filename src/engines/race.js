@@ -24,10 +24,9 @@ export function createInitialState(game, players) {
  * @param {GameState} state
  * @param {string} uid
  * @param {Action} action
- * @param {Player[]} players
  * @returns {GameState}
  */
-export function applyAction(game, state, uid, action, players) {
+export function applyAction(game, state, uid, action) {
   assertPlaying(state);
   if (action.type !== 'tap') throw new Error('Tap the boost button to score.');
   const scoreMap = { ...state.scores, [uid]: (state.scores[uid] ?? 0) + 1 };

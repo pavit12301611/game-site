@@ -8,7 +8,11 @@ import { state } from '../state.js';
 
 export function setSoundEnabled(enabled) {
   state.soundEnabled = Boolean(enabled);
-  try { localStorage.setItem(SOUND_STORAGE_KEY, String(state.soundEnabled)); } catch {}
+  try {
+    localStorage.setItem(SOUND_STORAGE_KEY, String(state.soundEnabled));
+  } catch {
+    // Sound is optional; a blocked localStorage must not keep the setting from taking effect.
+  }
 }
 
 /** Notes (Hz) per tone: one for a tap, a rising arpeggio for a win, a falling pair for a loss. */

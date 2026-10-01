@@ -14,7 +14,6 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 
 let dom;
-let app;
 let appRoot;
 /** Everything written to console.error while src/app.js loaded and painted for the first time. */
 const startupErrors = [];
@@ -47,7 +46,7 @@ before(async () => {
   const originalError = console.error;
   console.error = (...args) => { startupErrors.push(args); originalError.apply(console, args); };
   try {
-    app = await import('../src/app.js');
+    await import('../src/app.js');
   } finally {
     console.error = originalError;
   }

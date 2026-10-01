@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { GAMES, applyGameAction, createInitialGameState } from '../../src/catalog.js';
-import { ENGINES, applyGameAction as applyEngineAction, createInitialGameState as createInitialEngineState, engineIds, getEngine } from '../../src/engines/index.js';
+import { ENGINES, createInitialGameState as createInitialEngineState, engineIds, getEngine } from '../../src/engines/index.js';
 
 const two = [{ uid: 'p1', name: 'One' }, { uid: 'p2', name: 'Two' }];
 

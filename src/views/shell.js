@@ -40,7 +40,6 @@ export function renderSidebar() {
 }
 
 export function renderTopbar() {
-  const conn = connection();
   const name = state.profile?.username || (state.user?.isAnonymous ? 'Guest player' : 'Welcome, player');
   const unread = state.requests.length + state.invites.length;
   const themeLabel = state.resolvedTheme === 'light' ? 'Switch to dark theme' : 'Switch to light theme';

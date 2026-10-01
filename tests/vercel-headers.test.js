@@ -7,8 +7,7 @@ import { readFileSync } from 'node:fs';
  *
  * A Content-Security-Policy typo does not fail the build, it breaks the deployed site: Google
  * sign-in stops opening, or Firestore goes silent. These checks keep the origins the Firebase SDK
- * needs in place, and keep the two directives the app genuinely relies on ('unsafe-inline' for the
- * theme bootstrap script, inline style attributes and the image onerror fallbacks).
+ * needs in place and allow inline styles only where the runtime style attributes need them.
  */
 const config = JSON.parse(readFileSync(new URL('../vercel.json', import.meta.url), 'utf8'));
 
@@ -75,10 +74,10 @@ test('the CSP allows the frames and scripts Google sign-in loads', () => {
   assert.match(directive('img-src'), /googleusercontent\.com/, 'Google profile photos');
 });
 
-test('the inline script and inline styles the app renders are still permitted on purpose', () => {
-  assert.match(directive('script-src'), /'unsafe-inline'/, 'index.html bootstraps the theme inline and cards use onerror fallbacks');
+test('the script-src rejects inline scripts while runtime style attributes stay allowed', () => {
+  assert.equal(directive('script-src'), "'self' https://apis.google.com https://www.gstatic.com");
+  assert.doesNotMatch(directive('script-src'), /'unsafe-inline'/);
   assert.match(directive('style-src'), /'unsafe-inline'/, 'cards set custom properties with style attributes');
-  assert.match(directive('script-src'), /'self'/);
 });
 
 test('the CSP closes the doors it does not need', () => {

@@ -179,13 +179,14 @@ The fonts are imported in `src/main.js`, so Vite hashes them into `dist/assets/`
 ## Tests and CI
 
 ```bash
-npm test            # unit tests: no network, no Firebase credentials, no Java
+npm test            # unit tests: no network or Firebase credentials; emulator tests skip without Java
+npm run lint        # ESLint 9, flat config, eslint:recommended
 npm run typecheck   # tsc --checkJs over every module under src/ (JSDoc types)
 npm run test:rules  # firestore.rules against the Firestore emulator (needs Java)
 npm run audit       # npm audit --omit=dev --audit-level=high: only what ships to the browser
 ```
 
-- `.github/workflows/ci.yml` runs `npm ci`, `npm test`, `npm run typecheck` and `npm run build` on every push and pull request, a `firestore-rules` job that installs Java and runs the emulator rules tests, and an informational `npm audit` job.
+- `.github/workflows/ci.yml` runs `npm ci`, `npm test`, `npm run lint`, `npm run typecheck` and `npm run build` on every push and pull request, a `firestore-rules` job that installs Java and runs the emulator rules tests, and an informational `npm audit` job.
 - `npm run audit` checks **what ships to the browser** (`--omit=dev`): the app has one runtime dependency, `firebase`. Advisories in the build and emulator tooling never reach a player, are not part of the deployed bundle, and are tracked by Dependabot instead, which opens grouped weekly pull requests - forcing them to block a release would only train everyone to ignore the job. The one production advisory found so far (`@firebase/firestore` pinning an old `@grpc/grpc-js`) is fixed with an npm `overrides` entry rather than by downgrading Firebase.
 - Dependabot (`.github/dependabot.yml`) opens one grouped pull request for patch and minor updates every week. Major upgrades, such as `firebase` 12 or `vite` 8, arrive alone so they can be reviewed and tested on their own.
 - `tests/app-render.test.js` boots the real UI in jsdom with no Firebase configured and walks the local-practice flow. Its first test is the start-up contract: `.app-shell`, the sidebar brand and the hero are in `#app`, the recovery screen is not, and nothing was written to `console.error` while the app loaded.
@@ -391,12 +392,12 @@ A new Google account needs its own `admins/{googleUid}` document if it should be
 sign-in popup). Hashed files under `/assets/` are cached for a year. `tests/vercel-headers.test.js`
 guards them, so a future edit cannot quietly drop the Firebase origins.
 
-Two deliberate `'unsafe-inline'` entries, and why:
+One deliberate `'unsafe-inline'` entry, and why:
 
-- `script-src 'unsafe-inline'` — `index.html` applies the saved theme in a tiny inline bootstrap
-  script before the bundle loads, and the game cards use `onerror` fallbacks for their artwork.
 - `style-src 'unsafe-inline'` — cards and progress bars set CSS custom properties through `style`
-  attributes, which no nonce can cover for DOM built at runtime.
+  attributes, which no nonce can cover for DOM built at runtime. The theme pre-paint and hero preload
+  now live in the same-origin external `public/theme-preload.js`, so `script-src` does not need
+  `'unsafe-inline'`.
 
 The CSP allows `https://*.googleapis.com`, `https://*.firebaseapp.com`, `https://*.firebaseio.com`
 (plus `wss://`) and `https://apis.google.com`, which is what Firebase Auth and Firestore need.
@@ -445,3 +446,8 @@ Developer console: a missing or invalid config is always logged (`console.error`
 - Live Google, popup/redirect, guest-linking, Firestore-permission, and room synchronization flows still need a smoke test in your deployed Firebase project. `npm test` covers helpers, catalog integrity, the pure game engines (including a state-by-state baseline of all 40 games), the rendered UI in jsdom (shell, catalog, search, practice match, dialogs, theme), the config parser/validator, the status logic, the emulator switch, the wording of Firebase errors (using the real SDK error classes), Firebase initialization with the real SDK (no network), the build-time check, and structural checks of `firestore.rules` (balanced syntax, a rule for every collection the app uses, nothing open to signed-out users, admin flags not client-writable). None of that needs Firebase credentials or an emulator, and none of it talks to a real Firebase project.
 
 The rules themselves are executed by `npm run test:rules`, which runs `firestore.rules` against the Firestore emulator (Java required) and covers profiles, usernames, rooms, joins, moves, presence heartbeats, friend requests, friendships and invites. CI runs it on every pull request; locally it is skipped with a clear message when no emulator is reachable. Under `firebase emulators:exec` (which sets `FIRESTORE_EMULATOR_HOST`) an unreachable emulator fails the suite instead, so the CI job can never pass because everything skipped. The setup dialog's **Run check** is the quickest way to smoke-test a real deployment.
+
+## Known limits
+
+- Game outcomes are still client-reported in these casual rooms; moving authoritative outcome checks to trusted Cloud Functions is deferred until ranked or prize play is needed.
+- Hash/nonce migration for runtime inline styles is deferred; dynamic style attributes still require `style-src 'unsafe-inline'`.

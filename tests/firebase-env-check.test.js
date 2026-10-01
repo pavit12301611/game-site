@@ -185,7 +185,8 @@ test('separate VITE_FIREBASE_* variables are acknowledged, and a partial set is 
   assert.doesNotMatch(text(ok), /test-api-key-123/);
   assert.doesNotMatch(text(ok), /Firebase-looking/);
 
-  const { VITE_FIREBASE_APP_ID, ...partial } = vars;
+  const partial = { ...vars };
+  delete partial.VITE_FIREBASE_APP_ID;
   const bad = checkFirebaseBuildEnv({ ...partial, VERCEL: '1', VERCEL_ENV: 'production' });
   assert.equal(bad.level, 'warn');
   assert.match(text(bad), /invalid for this Vercel production: Missing required Firebase variable\(s\): VITE_FIREBASE_APP_ID/);

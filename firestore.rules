@@ -63,7 +63,10 @@ service cloud.firestore {
     }
 
     match /friendRequests/{requestId} {
-      allow get, list: if signedIn()
+      // Missing links should look like "not found", while existing documents and list queries stay private to their players.
+      allow get: if signedIn()
+        && (resource == null || resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid);
+      allow list: if signedIn()
         && (resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid);
       allow create: if signedIn()
         && request.resource.data.keys().hasOnly(['fromUid', 'toUid', 'fromName', 'toName', 'status', 'createdAt'])
@@ -105,7 +108,10 @@ service cloud.firestore {
     }
 
     match /gameInvites/{inviteId} {
-      allow get, list: if signedIn()
+      // A deleted invite reads as "not found"; existing invites and list queries stay private to their players.
+      allow get: if signedIn()
+        && (resource == null || resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid);
+      allow list: if signedIn()
         && (resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid);
       allow create: if signedIn()
         && request.resource.data.keys().hasOnly(['fromUid', 'toUid', 'fromName', 'toName', 'friendshipId', 'roomId', 'gameId', 'status', 'createdAt'])
@@ -194,8 +200,33 @@ service cloud.firestore {
           && request.resource.data.status in ['waiting', 'playing', 'finished']
           && request.resource.data.updatedAt == request.time
           && (
-            // A normal move: the status does not change.
-            request.resource.data.status == resource.data.status
+            !request.resource.data.diff(resource.data).affectedKeys().hasAny(['playerNames'])
+            || (
+              request.resource.data.playerNames is map
+              && request.resource.data.playerNames.size() == request.resource.data.playerUids.size()
+              && request.resource.data.playerNames.keys().hasAll(request.resource.data.playerUids)
+              && request.resource.data.playerNames.diff(resource.data.playerNames).affectedKeys().hasOnly([request.auth.uid])
+            )
+          )
+          && (
+            !request.resource.data.diff(resource.data).affectedKeys().hasAny(['winnerUid'])
+            || (
+              resource.data.status == 'playing'
+              && request.resource.data.status == 'finished'
+              && request.resource.data.state.phase == 'finished'
+            )
+            || (
+              resource.data.status == 'finished'
+              && request.resource.data.status == 'playing'
+              && request.resource.data.state.phase == 'playing'
+              && request.resource.data.get('winnerUid', null) == null
+            )
+          )
+          && (
+            // A normal move: the status stays the same and the game stays playable.
+            (request.resource.data.status == resource.data.status
+              && request.resource.data.state.phase == 'playing'
+              && request.resource.data.get('winnerUid', null) == resource.data.get('winnerUid', null))
             // The host starts the match, once at least one friend has joined.
             || (
               resource.data.status == 'waiting'
