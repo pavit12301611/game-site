@@ -10,6 +10,8 @@
 
 import { renderShell } from './views/shell.js';
 import { renderFatal } from './views/fatal.js';
+import { state } from './state.js';
+import { captureFocus, restoreFocus, syncLiveRegion, manageDialogFocus, focusPageStart } from './a11y.js';
 
 /** The root element the app renders into (`#app` in index.html). */
 export const appRoot = document.querySelector('#app');
@@ -20,12 +22,24 @@ export const appRoot = document.querySelector('#app');
  * If drawing throws, the page is replaced by the recovery screen instead of going blank, and the
  * real error still goes to the console where it can be read.
  */
+let paintedPage = null;
+
 export function render() {
   if (!appRoot) return;
+  const before = captureFocus(appRoot);
   try {
     appRoot.innerHTML = renderShell();
   } catch (error) {
     console.error('[PSD-gaming] The page could not be drawn:', error);
     appRoot.innerHTML = renderFatal(error);
+    return;
   }
+  // A repaint must not cost the keyboard user their place: a new page starts at its heading, anything else
+  // gets focus back on the same control. An open dialog takes focus (and gives it back when it closes).
+  const pageChanged = paintedPage !== null && paintedPage !== state.page;
+  paintedPage = state.page;
+  if (pageChanged) focusPageStart(appRoot);
+  else restoreFocus(appRoot, before);
+  manageDialogFocus(appRoot, before, pageChanged);
+  syncLiveRegion(appRoot);
 }
