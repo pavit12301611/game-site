@@ -120,3 +120,11 @@ test('the hero preload in index.html matches the hero image the landing page dra
   assert.ok(html.includes(`'${HERO_ARTWORK.srcset}'`), 'with the same srcset');
   assert.ok(html.includes("setAttribute('imagesizes', '100vw')"), 'and the same sizes as artImage() uses for the hero');
 });
+
+test('social image URLs are absolute on the production domain', () => {
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  assert.match(html, /property="og:image" content="https:\/\/psd-gaming\.vercel\.app\/images\/og-image\.jpg"/);
+  assert.match(html, /name="twitter:image" content="https:\/\/psd-gaming\.vercel\.app\/images\/og-image\.jpg"/);
+  assert.match(html, /property="og:url" content="https:\/\/psd-gaming\.vercel\.app\/"/);
+  assert.match(html, /rel="canonical" href="https:\/\/psd-gaming\.vercel\.app\/"/);
+});
