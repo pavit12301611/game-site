@@ -302,11 +302,18 @@ test('players may move, but nobody may rewrite the room around them', async (t) 
     status: 'playing',
   }));
   await ruts.assertSucceeds(updateDoc(doc(bob, 'rooms', 'live'), { state: { phase: 'playing', moves: 1 }, updatedAt: ts() }));
-  await ruts.assertFails(updateDoc(doc(alice, 'rooms', 'live'), { hostUid: ALICE, updatedAt: ts() }), 'the host is not rewritten mid-match');
+  await ruts.assertFails(updateDoc(doc(alice, 'rooms', 'live'), { hostUid: BOB, updatedAt: ts() }), 'the host is not handed to another player mid-match');
   await ruts.assertFails(updateDoc(doc(alice, 'rooms', 'live'), { maxPlayers: 3, updatedAt: ts() }));
   await ruts.assertFails(updateDoc(doc(alice, 'rooms', 'live'), { gameId: 'connect-four', updatedAt: ts() }));
   await ruts.assertFails(updateDoc(doc(alice, 'rooms', 'live'), { playerUids: [ALICE], updatedAt: ts() }), 'nobody is dropped mid-match');
-  await ruts.assertSucceeds(updateDoc(doc(alice, 'rooms', 'live'), { status: 'finished', winnerUid: BOB, updatedAt: ts() }), 'a match may end');
+  await ruts.assertFails(updateDoc(doc(alice, 'rooms', 'live'), { status: 'finished', winnerUid: BOB, updatedAt: ts() }), 'a match cannot be closed while the game is still running');
+  await ruts.assertSucceeds(updateDoc(doc(alice, 'rooms', 'live'), {
+    state: { phase: 'finished', moves: 2 },
+    status: 'finished',
+    winnerUid: BOB,
+    updatedAt: ts(),
+  }), 'a finished game closes the room');
+  await ruts.assertFails(updateDoc(doc(bob, 'rooms', 'live'), { status: 'playing', updatedAt: ts() }), 'a finished room is not reopened');
 });
 
 test('updatedAt must be the server clock, never a client one', async (t) => {

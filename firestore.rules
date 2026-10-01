@@ -178,12 +178,21 @@ service cloud.firestore {
           && request.resource.data.status in ['waiting', 'playing', 'finished']
           && request.resource.data.updatedAt == request.time
           && (
+            // A normal move: the status does not change.
             request.resource.data.status == resource.data.status
+            // The host starts the match, once at least one friend has joined.
             || (
               resource.data.status == 'waiting'
               && request.resource.data.status == 'playing'
               && request.auth.uid == resource.data.hostUid
               && resource.data.playerUids.size() >= 2
+            )
+            // Any player may close the match - but only when the game state written in the same
+            // update says the match is over, so nobody can end a game that is still running.
+            || (
+              resource.data.status == 'playing'
+              && request.resource.data.status == 'finished'
+              && request.resource.data.state.phase == 'finished'
             )
           )
         )
