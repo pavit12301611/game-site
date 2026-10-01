@@ -72,6 +72,7 @@ export async function openRoomFromLink(roomId) {
       if (uids.includes(user.uid)) return;
       if (room.status !== 'waiting') throw new Error('This match has already started. Ask the host for a new room.');
       if (uids.length >= room.maxPlayers) throw new Error('This room is full. Ask the host for another invite.');
+      if (room.status === 'finished') throw new Error('This match is over. Ask the host for a fresh invite link.');
       const name = playerDisplayName(user);
       const nextUids = [...uids, user.uid];
       const nextNames = { ...(room.playerNames || {}), [user.uid]: name };
@@ -140,6 +141,41 @@ export async function createOnlineRoom(gameId, maxPlayers = 2, friend = null, ch
   state.roomError = '';
   if (location.hash !== `#/room/${roomRef.id}`) location.hash = `#/room/${roomRef.id}`;
   subscribeToRoom(roomRef.id);
+}
+
+/**
+ * Give your seat back.
+ *
+ * Only while the room is still waiting: once a match has started the seats are part of the match,
+ * and leaving means walking away from the game, not un-joining it. If you were the last person in
+ * the room, the empty room is deleted instead of being left behind as litter.
+ */
+export async function leaveWaitingRoom() {
+  const room = state.room;
+  const user = state.user;
+  if (!room || !user || room.status !== 'waiting') return;
+  const roomRef = doc(store, 'rooms', room.id);
+  await runTransaction(store, async (transaction) => {
+    const snapshot = await transaction.get(roomRef);
+    if (!snapshot.exists()) return;
+    const current = snapshot.data();
+    if (current.status !== 'waiting') return;
+    const uids = (current.playerUids || []).filter((uid) => uid !== user.uid);
+    if (uids.length === (current.playerUids || []).length) return; // you were not in it
+    if (!uids.length) {
+      transaction.delete(roomRef);
+      return;
+    }
+    const playerNames = { ...(current.playerNames || {}) };
+    delete playerNames[user.uid];
+    const players = uids.map((uid) => ({ uid, name: playerNames[uid] || 'Player' }));
+    transaction.update(roomRef, {
+      playerUids: uids,
+      playerNames,
+      state: createInitialGameState(current.gameId, players, room.id),
+      updatedAt: serverTimestamp(),
+    });
+  });
 }
 
 export async function startRoom() {

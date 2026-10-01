@@ -338,6 +338,41 @@ test('only the host may delete a waiting room', async (t) => {
   await ruts.assertSucceeds(deleteDoc(doc(alice, 'rooms', 'doomed')));
 });
 
+test('a waiting room gives your seat back when you leave, and goes away with the last player', async (t) => {
+  if (!ready(t)) return;
+  const alice = testEnv.authenticatedContext(ALICE).firestore();
+  const bob = testEnv.authenticatedContext(BOB).firestore();
+  const carol = testEnv.authenticatedContext(CAROL).firestore();
+  await ruts.assertSucceeds(setDoc(doc(alice, 'rooms', 'leave'), waitingRoom(ALICE)));
+  await ruts.assertSucceeds(updateDoc(doc(bob, 'rooms', 'leave'), {
+    playerUids: [ALICE, BOB],
+    playerNames: { [ALICE]: 'Alice', [BOB]: 'Bob' },
+    state: { phase: 'playing', moves: 0 },
+    updatedAt: ts(),
+  }));
+  // You may only take yourself out: not the host, and not by swapping in somebody else.
+  await ruts.assertFails(updateDoc(doc(bob, 'rooms', 'leave'), {
+    playerUids: [BOB],
+    playerNames: { [BOB]: 'Bob' },
+    updatedAt: ts(),
+  }), 'nobody else is removed from a room');
+  await ruts.assertFails(updateDoc(doc(bob, 'rooms', 'leave'), {
+    playerUids: [ALICE, CAROL],
+    playerNames: { [ALICE]: 'Alice', [CAROL]: 'Carol' },
+    updatedAt: ts(),
+  }), 'a seat is not handed to a different player');
+  // Leaving releases the seat, so the link works for the next person again.
+  await ruts.assertSucceeds(updateDoc(doc(bob, 'rooms', 'leave'), {
+    playerUids: [ALICE],
+    playerNames: { [ALICE]: 'Alice' },
+    updatedAt: ts(),
+  }));
+  await ruts.assertSucceeds(deleteDoc(doc(alice, 'rooms', 'leave')), 'the last player takes the empty room with them');
+  // A room you are not in is not yours to delete, even when it is empty.
+  await ruts.assertSucceeds(setDoc(doc(alice, 'rooms', 'keep'), waitingRoom(ALICE)));
+  await ruts.assertFails(deleteDoc(doc(carol, 'rooms', 'keep')));
+});
+
 test('friend requests need a real recipient and an honest sender', async (t) => {
   if (!ready(t)) return;
   const alice = testEnv.authenticatedContext(ALICE).firestore();

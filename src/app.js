@@ -41,6 +41,7 @@ import { loadAdminData } from './online/admin.js';
 import {
   createOnlineRoom,
   doOnlineAction,
+  leaveWaitingRoom,
   openRoomFromLink,
   startRoom,
 } from './online/rooms.js';
@@ -190,6 +191,7 @@ function handleClick(event) {
   const action = actionButton.dataset.action;
   const { gameId, page, category, index, col, uid, direction, choice, answer, lane, targetUid, requestId, inviteId, roomId } = actionButton.dataset;
   if (action === 'reload') { location.reload(); return; }
+  if (action === 'leave-room') { void leaveCurrentRoom(); return; }
   if (action === 'modal-backdrop' && event.target === actionButton) { modalClose(); return; }
   if (action === 'navigate') { navigate(page); return; }
   if (action === 'toggle-theme') { toggleTheme(); return; }
@@ -285,6 +287,16 @@ async function resetCurrentGame() {
   }
 }
 
+/** Leave the lobby: give the seat back while the room is waiting, then go back to the shelf. */
+async function leaveCurrentRoom() {
+  try {
+    await leaveWaitingRoom();
+  } catch (error) {
+    showToast(friendlyError(error), 'warning');
+  }
+  navigate('catalog');
+}
+
 function handleSubmit(event) {
   const form = event.target.closest('form[data-form]');
   if (!form) return;
@@ -350,7 +362,14 @@ function attachAppEvents() {
 
 attachAppEvents();
 applyTheme(state.themePreference);
-window.addEventListener('online', () => { state.online = true; render(); });
+window.addEventListener('online', () => {
+  state.online = true;
+  render();
+  // A room listener that failed while the connection was gone does not recover on its own, so the
+  // invite is replayed as soon as the browser is back. Joining is idempotent: if you are already in
+  // the room, openRoomFromLink just re-attaches the listener.
+  if (state.roomId && (state.roomError || !state.room)) void openRoomFromLink(state.roomId);
+});
 window.addEventListener('offline', () => { state.online = false; render(); });
 const themeMedia = window.matchMedia?.('(prefers-color-scheme: light)');
 themeMedia?.addEventListener?.('change', () => {

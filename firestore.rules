@@ -169,6 +169,22 @@ service cloud.firestore {
         )
         ||
         (
+          // Leave a room that has not started yet. Your seat is released, so the invite link works
+          // for the next person - without this, one guest who closed the tab would block the room
+          // forever. You may only remove yourself, and nobody else's uid may change.
+          resource.data.status == 'waiting'
+          && request.resource.data.status == 'waiting'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['playerUids', 'playerNames', 'state', 'updatedAt'])
+          && request.resource.data.playerUids.size() == resource.data.playerUids.size() - 1
+          && resource.data.playerUids.hasAll(request.resource.data.playerUids)
+          && resource.data.playerUids.hasAny([request.auth.uid])
+          && !request.resource.data.playerUids.hasAny([request.auth.uid])
+          && request.resource.data.playerNames.size() == request.resource.data.playerUids.size()
+          && request.resource.data.playerNames.keys().hasAll(request.resource.data.playerUids)
+          && request.resource.data.updatedAt == request.time
+        )
+        ||
+        (
           isRoomMember(resource.data)
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['state', 'status', 'updatedAt', 'playerNames', 'winnerUid'])
           && request.resource.data.playerUids == resource.data.playerUids
@@ -205,7 +221,10 @@ service cloud.firestore {
         )
       );
       allow delete: if signedIn()
-        && (isAdmin() || (resource.data.hostUid == request.auth.uid && resource.data.status == 'waiting'));
+        && (isAdmin()
+          || (resource.data.hostUid == request.auth.uid && resource.data.status == 'waiting')
+          // A waiting room nobody is left in is litter: whoever is still in it may clear it away.
+          || (resource.data.status == 'waiting' && resource.data.playerUids.hasOnly([request.auth.uid])));
     }
   }
 }
