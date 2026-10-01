@@ -13,8 +13,17 @@ import {
   isGoogleUser,
   playerDisplayName,
 } from './ui/players.js';
-import { appRoot, render } from './render.js';
-import { setToast, showToast } from './ui/toast.js';
+import {
+  appRoot,
+  render,
+} from './render.js';
+import {
+  friendlyError,
+  reportAuthError,
+} from './errors.js';
+import { ensureOnlineUser } from './online/session.js';
+import { loadAdminData } from './online/admin.js';
+import { showToast } from './ui/toast.js';
 import {
   connection,
   setupError,
@@ -29,17 +38,13 @@ import {
   db,
   firebaseReady,
 } from './firebase.js';
-import {
-  describeFirebaseError,
-  withErrorContext,
-} from './firebase-errors.js';
+
 import {
   createUserWithEmailAndPassword,
   getRedirectResult,
   linkWithPopup,
   linkWithRedirect,
   onAuthStateChanged,
-  signInAnonymously,
   signInWithEmailAndPassword,
   signInWithPopup,
   signInWithRedirect,
@@ -63,7 +68,6 @@ import {
   getDocs,
   limit,
   onSnapshot,
-  orderBy,
   query,
   runTransaction,
   serverTimestamp,
@@ -72,7 +76,6 @@ import {
   where,
   writeBatch,
 } from 'firebase/firestore';
-
 
 /** A no-op unsubscribe, so the `stop*` variables are always safe to call. */
 const emptyUnsubscribe = () => {};
@@ -197,24 +200,6 @@ function navigate(page) {
   if (page === 'admin') void loadAdminData();
 }
 
-function friendlyError(error, context = {}) {
-  return describeFirebaseError(error, { online: navigator.onLine !== false, hostname: location.hostname, ...context });
-}
-async function ensureOnlineUser() {
-  if (!firebaseReady) throw setupError();
-  await auth.authStateReady();
-  if (auth.currentUser) {
-    state.user = auth.currentUser;
-    return auth.currentUser;
-  }
-  try {
-    const result = await signInAnonymously(auth);
-    state.user = result.user;
-    return result.user;
-  } catch (error) {
-    throw withErrorContext(error, { method: 'anonymous' });
-  }
-}
 async function finishGoogleAuthentication(user, successMessage = 'Google sign-in confirmed.') {
   state.user = user;
   state.authError = '';
@@ -692,39 +677,6 @@ function modalOpen(modal) {
 function modalClose() {
   state.modal = null;
   state.authError = '';
-  render();
-}
-
-/** Sign-in errors stay visible inside the sign-in dialog; anywhere else they are a toast. */
-function reportAuthError(error, context = {}) {
-  const message = friendlyError(error, context);
-  if (state.modal?.type === 'auth') {
-    state.authError = message;
-    render();
-  } else {
-    showToast(message, 'warning');
-  }
-}
-
-async function loadAdminData() {
-  if (!firebaseReady || !state.isAdmin || !state.user) return;
-  state.adminLoading = true;
-  render();
-  try {
-    const [roomsSnap, profilesSnap, friendsSnap] = await Promise.all([
-      getDocs(query(collection(db, 'rooms'), orderBy('createdAt', 'desc'), limit(50))),
-      getDocs(query(collection(db, 'profiles'), limit(200))),
-      getDocs(query(collection(db, 'friendships'), limit(200))),
-    ]);
-    state.adminData = {
-      rooms: roomsSnap.docs.map((item) => ({ id: item.id, ...item.data() })),
-      profiles: profilesSnap.size,
-      friendships: friendsSnap.size,
-    };
-  } catch (error) {
-    state.adminData = { error: friendlyError(error), rooms: [], profiles: 0, friendships: 0 };
-  }
-  state.adminLoading = false;
   render();
 }
 
