@@ -1,8 +1,8 @@
 # Image credits
 
 Every image in `public/images/` is listed here, one line per file. Nothing is hot-linked (the CSP
-forbids it) and nothing is taken from a third party: the photographs are **generated**
-photorealistic renders made with the Arena.ai Agent Mode image tool for this project, from text prompts
+forbids it) and nothing is taken from a third party: the pictures are **generated**
+renders (the 40 game photos are photorealistic; the hero, covers, social image, backdrop and trophy are neon arcade illustrations) made with the Arena.ai Agent Mode image tool for this project, from text prompts
 that name only generic objects (no brands, logos, packaging, posters, film stills, celebrities or
 recognisable characters; no faces). Generated images carry no third-party copyright claim; the owner
 may use them in this product. Replacing one with a real photo: keep the file name, fix its line here.
@@ -91,15 +91,17 @@ may use them in this product. Replacing one with a real photo: keep the file nam
 | games/sea-battle-640.webp | Grey plastic peg board with toy ships and red and white pegs, no box art (640 px variant) | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
 | games/star-runner.webp | Wooden ball-maze labyrinth toy with a star hole | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
 | games/star-runner-640.webp | Wooden ball-maze labyrinth toy with a star hole (640 px variant) | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
-| hero.webp | Landing hero: five generated game photos laid out as prints (Connect Four, Gomoku, memory cards, die, padlock) | generated (composite) | composite of generated images, no third-party material | Arena.ai Agent Mode image tool + scripts/build-composites.sh |
-| hero-800.webp | Landing hero (800 px variant) | generated (composite) | composite of generated images, no third-party material | Arena.ai Agent Mode image tool + scripts/build-composites.sh |
-| categories/arcade.webp | Arcade cover: pixel-tap, pong-rally, maze-runner and laser-duel photos | generated (composite) | composite of generated images, no third-party material | Arena.ai Agent Mode image tool + scripts/build-composites.sh |
-| categories/arcade-640.webp | Arcade cover: pixel-tap, pong-rally, maze-runner and laser-duel photos (640 px variant) | generated (composite) | composite of generated images, no third-party material | Arena.ai Agent Mode image tool + scripts/build-composites.sh |
-| categories/party.webp | Party cover: dice-duel, button-masher, air-hockey and retro-trivia photos | generated (composite) | composite of generated images, no third-party material | Arena.ai Agent Mode image tool + scripts/build-composites.sh |
-| categories/party-640.webp | Party cover: dice-duel, button-masher, air-hockey and retro-trivia photos (640 px variant) | generated (composite) | composite of generated images, no third-party material | Arena.ai Agent Mode image tool + scripts/build-composites.sh |
-| categories/strategy.webp | Strategy cover: connect-four, neon-gomoku, sea-battle and pixel-fleet photos | generated (composite) | composite of generated images, no third-party material | Arena.ai Agent Mode image tool + scripts/build-composites.sh |
-| categories/strategy-640.webp | Strategy cover: connect-four, neon-gomoku, sea-battle and pixel-fleet photos (640 px variant) | generated (composite) | composite of generated images, no third-party material | Arena.ai Agent Mode image tool + scripts/build-composites.sh |
-| categories/puzzle.webp | Puzzle cover: memory-match, codebreaker, brain-busters and mastermind photos | generated (composite) | composite of generated images, no third-party material | Arena.ai Agent Mode image tool + scripts/build-composites.sh |
-| categories/puzzle-640.webp | Puzzle cover: memory-match, codebreaker, brain-busters and mastermind photos (640 px variant) | generated (composite) | composite of generated images, no third-party material | Arena.ai Agent Mode image tool + scripts/build-composites.sh |
-| og-image.jpg | Social preview 1200x630: four generated game photos plus the PSD-gaming wordmark | generated (composite) | composite of generated images, no third-party material | Arena.ai Agent Mode image tool + scripts/build-composites.sh |
-| ../favicon.svg, ../favicon-48.png, ../apple-touch-icon.png | The app's helmet mark on amber (hand-drawn vector, rasterised with ImageMagick) | generated (drawn) | original artwork, no third-party material | scripts/build-composites.sh |
+| hero.webp | Landing hero: neon arcade cabinets and a glowing button deck at night (illustrated render, no brands) | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| hero-800.webp | Landing hero (800 px variant) | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| categories/arcade.webp | Arcade cover: neon cabinet with joystick and glowing buttons | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| categories/arcade-640.webp | Arcade cover: neon cabinet with joystick and glowing buttons (640 px variant) | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| categories/party.webp | Party cover: lit dance-floor tiles with confetti and dice | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| categories/party-640.webp | Party cover: lit dance-floor tiles with confetti and dice (640 px variant) | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| categories/strategy.webp | Strategy cover: neon glass board with glowing pieces | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| categories/strategy-640.webp | Strategy cover: neon glass board with glowing pieces (640 px variant) | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| categories/puzzle.webp | Puzzle cover: glowing block puzzle wall | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| categories/puzzle-640.webp | Puzzle cover: glowing block puzzle wall (640 px variant) | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| og-image.jpg | Social preview 1200x630: arcade art with the PSD-gaming wordmark | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| backdrop.webp | Page backdrop: neon arcade carpet pattern, washed to the theme with an overlay | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| trophy.webp | Winner trophy: golden cup with neon glow | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
+| ../favicon.svg, ../favicon-48.png, ../apple-touch-icon.png | The app's helmet mark on a neon-yellow tile (hand-drawn vector, rasterised with ImageMagick) | generated (drawn) | original artwork, no third-party material | scripts/build-arcade-art.sh |
