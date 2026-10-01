@@ -10,6 +10,7 @@
 import test, { before } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
+import { GAMES, applyGameAction, createInitialGameState } from '../src/catalog.js';
 
 let roomUpdateForMove;
 
@@ -47,6 +48,33 @@ test('a drawn match closes the room with no winner', () => {
   const update = roomUpdateForMove({ phase: 'finished', winnerUid: null, result: 'draw' });
   assert.equal(update.status, 'finished');
   assert.equal(update.winnerUid, null);
+});
+
+test('the last empty Tic-Tac-Toe square writes the draw as a finished room update', () => {
+  const players = [{ uid: 'uid-alice', name: 'Alice' }, { uid: 'uid-bob', name: 'Bob' }];
+  const game = GAMES.find((entry) => entry.id === 'pixel-tac-toe');
+  let state = createInitialGameState(game, players, 'last-square-draw');
+  for (const index of [0, 2, 1, 3, 5, 4, 6, 7, 8]) {
+    state = applyGameAction(game, state, state.turnUid, { index }, players);
+  }
+
+  assert.equal(state.phase, 'finished');
+  assert.equal(state.result, 'draw');
+  const update = roomUpdateForMove(state);
+  assert.equal(update.status, 'finished');
+  assert.equal(update.state.phase, 'finished');
+  assert.equal(update.winnerUid, null);
+});
+
+test('all catalog games use the same finished room-update contract', () => {
+  const players = [{ uid: 'uid-alice', name: 'Alice' }, { uid: 'uid-bob', name: 'Bob' }];
+  for (const game of GAMES) {
+    const state = { ...createInitialGameState(game, players, `finished:${game.id}`), phase: 'finished', winnerUid: null };
+    const update = roomUpdateForMove(state);
+    assert.equal(update.status, 'finished', game.id);
+    assert.equal(update.state.phase, 'finished', game.id);
+    assert.equal(update.winnerUid, null, game.id);
+  }
 });
 
 test('it never invents a match it was not told about', () => {

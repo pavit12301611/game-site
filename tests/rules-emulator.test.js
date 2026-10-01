@@ -345,6 +345,38 @@ test('players may move, but nobody may rewrite the room around them', async (t) 
   }), 'a finished match can be played again');
 });
 
+test('the final Tic-Tac-Toe square may finish a drawn room with no winner', async (t) => {
+  if (!ready(t)) return;
+  const alice = testEnv.authenticatedContext(ALICE).firestore();
+  await seed(async (db) => setDoc(doc(db, 'rooms', 'draw'), {
+    ...waitingRoom(ALICE),
+    playerUids: [ALICE, BOB],
+    playerNames: { [ALICE]: 'Alice', [BOB]: 'Bob' },
+    status: 'playing',
+    state: {
+      phase: 'playing',
+      board: [ALICE, ALICE, BOB, BOB, BOB, ALICE, ALICE, BOB, null],
+      size: 3,
+      connect: 3,
+      moves: 8,
+    },
+  }));
+  await ruts.assertSucceeds(updateDoc(doc(alice, 'rooms', 'draw'), {
+    state: {
+      phase: 'finished',
+      board: [ALICE, ALICE, BOB, BOB, BOB, ALICE, ALICE, BOB, ALICE],
+      size: 3,
+      connect: 3,
+      moves: 9,
+      winnerUid: null,
+      result: 'draw',
+    },
+    status: 'finished',
+    winnerUid: null,
+    updatedAt: ts(),
+  }));
+});
+
 test('updatedAt must be the server clock, never a client one', async (t) => {
   if (!ready(t)) return;
   const alice = testEnv.authenticatedContext(ALICE).firestore();
