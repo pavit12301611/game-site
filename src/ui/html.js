@@ -36,3 +36,14 @@ export function icon(name, className = '') {
 export function esc(value = '') {
   return String(value).replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
 }
+
+/**
+ * The PSD logo lock-up, as inline SVG so it needs no network request and inherits the current
+ * colour. Lives here (not with the shell views) because both the sidebar/topbar and the modals
+ * show it, and a shared view module would make those two import each other.
+ *
+ * @returns {string}
+ */
+export function renderBrand() {
+  return `<span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 40 40"><path d="M8 15 14 7h12l6 8-2 17H10z" fill="white"/><path d="M9 16h22l-2 8H11z" fill="#071c38"/><path d="M17 28h6" stroke="#57d9ff" stroke-width="2" stroke-linecap="round"/></svg></span>`;
+}

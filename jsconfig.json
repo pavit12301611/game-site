@@ -20,6 +20,7 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src/**/*.js", "scripts/**/*.js"],
+  "include": ["src/**/*.js",
+    "src/**/*.d.ts", "scripts/**/*.js"],
   "exclude": ["node_modules", "dist", "src/app.js", "src/main.js"]
 }
