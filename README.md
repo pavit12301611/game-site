@@ -85,6 +85,8 @@ Two things to know: the flag is **ignored by a production build** (`vite build`)
 | `src/diagnostics.js` | The setup dialog's "Run check" button. |
 | `src/online/session.js` | `ensureOnlineUser()`: guests are anonymous accounts, so a link never forces a sign-up. |
 | `src/online/rooms.js` | Create a room, join by link, start the match, make a move (all transactional). |
+| `src/online/presence.js` | "Who is still in this room": your heartbeat in `rooms/{roomId}/presence/{uid}`, everyone else's read back (see below). |
+| `src/presence-status.js` | The pure half of presence: the here / away / left verdicts and the heartbeat loop, unit-tested with fake timers. |
 | `src/online/admin.js` | The admin dashboard's reads. |
 | `src/views/` | Pure "state in, HTML out": `shell`, `pages`, `modals`, `boards`, `fatal`. |
 | `src/ui/` | Small pieces: `html` (icons, escaping), `players`, `toast`, `theme`, `sound`, `prefs`, `links`. |
@@ -106,6 +108,25 @@ is drawn anyway. The collaborators are passed in from `src/app.js`, which is wha
 `tests/boot.test.js` run the Firebase branch in Node. The production outage that motivated this was
 a `ReferenceError` in that branch: two functions called in `src/app.js` without an import, which
 stopped the first paint on Vercel only - every local run has `firebaseReady === false`.
+
+### Presence: who is still in the room
+
+An online room shows, next to every player, whether they are still there. Each member writes a tiny heartbeat document, `rooms/{roomId}/presence/{uid}` = `{ status: 'here' | 'left', lastSeenAt: <server time> }`, every 25 seconds while their tab is visible, and every member listens to the room's heartbeats. Guests have no profile document, and the question is about *this* room, so presence lives with the room and not with the profile.
+
+| You see | Meaning |
+| --- | --- |
+| **IN THE ROOM** (lobby) / the usual line (match rail) | A heartbeat in the last 60 seconds - or no heartbeat document at all. A missing document is shown exactly like "here": presence is advisory, and a client from before this feature must never read as an accusation. |
+| **AWAY · 2 MIN** / *Away for 2 min* | The last heartbeat is older than 60 seconds: the tab is hidden, closed, or offline. Guests waiting for an away host are told so, with the option to leave. |
+| **LEFT THE ROOM** / *Left the room* | The player used **Leave game** or navigated away on purpose. Closing the tab does *not* write "left" - it becomes "away" a minute later - so glancing at a message on a phone never brands anyone as having walked out. |
+
+Design notes, so nobody undoes them by accident:
+
+- The room re-renders only when a *verdict* changes, never on a heartbeat itself: a repaint every few seconds would reset the **How to play** panel and the scroll position mid-game. A timer re-checks the verdicts every 10 seconds, which is how a quiet player turns from "here" into "away" without any new data arriving.
+- Heartbeats are compared with the *server* clock (`lastSeenAt` must be `request.time`, see `firestore.rules`), and each client measures its own clock offset from its own acknowledged heartbeat. A laptop whose clock is a minute slow does not see everyone as away.
+- A hidden tab stops beating on purpose and beats the moment it is visible again, so coming back is noticed within a second.
+- Leaving a waiting room deletes your heartbeat in the same transaction that gives the seat back (or deletes the room), so a deleted room leaves no documents behind. Nobody can write anyone else's heartbeat, and only the room's members can read them.
+- **Cost:** a visible member writes about 144 heartbeats per hour, and each write costs one rules `get` of the room document on top. On the free Spark plan (20 000 writes a day) that is roughly 140 player-hours of open rooms per day, far above what casual rooms use, but keep it in mind before shortening `HEARTBEAT_MS`.
+- If the deployed rules predate presence, the first heartbeat is denied: the app logs one `console.warn` with the fix (publish the latest `firestore.rules`) and turns presence off for that room. Rooms and moves keep working as before.
 
 ### Design system (`src/styles.css`)
 
@@ -152,6 +173,7 @@ npm run audit       # npm audit --omit=dev --audit-level=high: only what ships t
 - `tests/app-render.test.js` boots the real UI in jsdom with no Firebase configured and walks the local-practice flow. Its first test is the start-up contract: `.app-shell`, the sidebar brand and the hero are in `#app`, the recovery screen is not, and nothing was written to `console.error` while the app loaded.
 - `tests/unresolved-identifiers.test.js` runs `tsc` from `src/main.js` (via `tests/tsconfig.entry-point.json`), following every import like the bundler does, and fails on any name or export that does not exist (TS2304/2552/2305/2724). Rollup treats an unknown identifier as a global and builds happily; this test is what turns a missing import into a red CI run. It also checks that `jsconfig.json` never excludes a `src/` file again.
 - `tests/boot.test.js` runs the start-up sequence with stand-ins for Firebase and asserts that the page is painted exactly once in every failure mode.
+- `tests/presence-status.test.js` drives the presence verdicts and the heartbeat loop with fake timers (away after 60 s, hidden tabs pause, a failing beat is only a missed beat); `tests/presence-render.test.js` renders the lobby, the host-wait line and the match rail in jsdom with faked heartbeat documents and checks what each verdict looks like, including that a missing document reads exactly as before. The presence rules are executed by `tests/rules-emulator.test.js` (CI) and guarded structurally by `tests/firestore-rules.test.js`.
 - `tests/production-boot.test.js` is the one test that runs with `firebaseReady === true`: it builds the real bundle into a temporary directory with fake but well-formed `VITE_FIREBASE_*` values, loads it in jsdom with the network refused, and asserts that the shell is painted, that the sidebar says online rooms are ready (so the Firebase branch really ran), and that nothing was fetched, logged to `console.error` or left as an unhandled rejection. Against the pre-fix `src/app.js` it reports the two `ReferenceError`s the Vercel console showed. It adds a few seconds to `npm test`; that is the price of testing what actually ships.
 - The game rules are locked by `tests/fixtures/engine-baseline.json`, which fingerprints every state of all 40 games and replays them on every run. If you change a rule on purpose, regenerate it with `node tests/fixtures/generate-engine-baseline.mjs` and say so in the pull request.
 
@@ -266,12 +288,12 @@ Google sign-in (popup or redirect) only works on hosts Firebase knows about. On 
 2. Open the **Rules** tab.
 3. Replace the starter rules with the complete contents of this repository’s [`firestore.rules`](./firestore.rules) file, then click **Publish**.
 
-The rules keep room documents unlistable, limit rooms to their invite link, require Firebase Auth for writes, constrain joining to waiting rooms with open seats, protect friend requests, and make admin flags console-managed only. A link to a room that does not exist reads as "not found" (so players see *invite link is invalid or has expired* rather than a permission error), and admins can additionally list rooms and read `friendships` (the admin dashboard shows both counts). They intentionally do **not** make game outcomes cheat-proof: these are casual peer rooms, not ranked or prize games. For a competitive leaderboard, move authoritative game actions into Cloud Functions / a trusted server. Google accounts use the same authenticated UID checks and existing atomic `usernames`/`profiles` claim rules; no Firestore rule change is required for Google sign-in.
+The rules keep room documents unlistable, limit rooms to their invite link, require Firebase Auth for writes, constrain joining to waiting rooms with open seats, let each member write only their own presence heartbeat under the room (and only members read them), protect friend requests, and make admin flags console-managed only. A link to a room that does not exist reads as "not found" (so players see *invite link is invalid or has expired* rather than a permission error), and admins can additionally list rooms and read `friendships` (the admin dashboard shows both counts). They intentionally do **not** make game outcomes cheat-proof: these are casual peer rooms, not ranked or prize games. For a competitive leaderboard, move authoritative game actions into Cloud Functions / a trusted server. Google accounts use the same authenticated UID checks and existing atomic `usernames`/`profiles` claim rules; no Firestore rule change is required for Google sign-in.
 
 After you click **Publish**, check the rules against the real app once. It takes about two minutes and exercises every rule the game uses:
 
 1. **Setup guide → Run check** passes (guest sign-in and a Firestore read).
-2. Browser A: create a room as a guest and copy the invite link. Browser B (or a private window): open the link. Both players appear in the lobby.
+2. Browser A: create a room as a guest and copy the invite link. Browser B (or a private window): open the link. Both players appear in the lobby, each marked **IN THE ROOM**. Switch browser B to another tab for a bit over a minute: browser A shows that player as **AWAY**, and the moment B comes back, as **IN THE ROOM** again. (If the browser console warns that *Presence is off*, the published rules are older than the `firestore.rules` in this repository - publish it again.)
 3. Browser A starts the match and either player makes a move. The move shows up in the other browser.
 4. Sign in with a username on two accounts, send a friend request, accept it, and check that the friend appears. Add `admins / <uid> / admin: true` for one account and open **Admin studio**: rooms, players and friend connections should all load.
 
@@ -378,6 +400,7 @@ redeploy). Headers only apply to Vercel deployments, never to `npm run dev`.
 | "Email/Password sign-in is not enabled…" or "Google sign-in is not enabled…" | That provider is off. | Enable it in Authentication → Sign-in method (Google also needs a support email). |
 | "This site (…) is not an authorized domain for Firebase sign-in…" | The host is not under Authorized domains (`auth/unauthorized-domain`). | Add exactly that host (see [Authorized domains](#authorized-domains)). |
 | "Firebase denied this action (permission-denied)…" | The rules are not published, the signed-in identity is missing (Anonymous is off), or the rule genuinely forbids the action. | Publish [`firestore.rules`](./firestore.rules) (step 3) and enable Anonymous. |
+| Console: "Presence is off: the deployed Firestore rules do not allow rooms/{roomId}/presence yet." | The published rules are older than this repository's `firestore.rules`. Rooms still work; only the here / away / left labels are missing. | Publish [`firestore.rules`](./firestore.rules) again (step 3). |
 | "Cloud Firestore is not enabled for this Firebase project…" | The Firestore API or database has not been created. | Firebase Console → Firestore Database → Create database (step 3). |
 | "Firebase rejected the API key in VITE_FIREBASE_API_KEY…" | A mistyped key, or an API key restricted to other sites (`auth/invalid-api-key`). | Copy the Web app config again; in Google Cloud Console → APIs & Services → Credentials check the key's website restrictions include your host. |
 | "Could not reach Firebase…" or "You appear to be offline…" | The network, a VPN, or an ad/privacy blocker is cutting off Firebase (`auth/network-request-failed`). | Reconnect, or allow `*.googleapis.com`, `*.firebaseapp.com`, and `apis.google.com`. |
@@ -403,4 +426,4 @@ Developer console: a missing or invalid config is always logged (`console.error`
 - Anonymous Firebase accounts can be cleaned up periodically from Firebase Console if you want to limit unused guest accounts. Linking a guest to Google is the preferred way to preserve a guest’s UID and identity.
 - Live Google, popup/redirect, guest-linking, Firestore-permission, and room synchronization flows still need a smoke test in your deployed Firebase project. `npm test` covers helpers, catalog integrity, the pure game engines (including a state-by-state baseline of all 40 games), the rendered UI in jsdom (shell, catalog, search, practice match, dialogs, theme), the config parser/validator, the status logic, the emulator switch, the wording of Firebase errors (using the real SDK error classes), Firebase initialization with the real SDK (no network), the build-time check, and structural checks of `firestore.rules` (balanced syntax, a rule for every collection the app uses, nothing open to signed-out users, admin flags not client-writable). None of that needs Firebase credentials or an emulator, and none of it talks to a real Firebase project.
 
-The rules themselves are executed by `npm run test:rules`, which runs `firestore.rules` against the Firestore emulator (Java required) and covers profiles, usernames, rooms, joins, moves, friend requests, friendships and invites. CI runs it on every pull request; locally it is skipped with a clear message when no emulator is reachable. The setup dialog's **Run check** is the quickest way to smoke-test a real deployment.
+The rules themselves are executed by `npm run test:rules`, which runs `firestore.rules` against the Firestore emulator (Java required) and covers profiles, usernames, rooms, joins, moves, presence heartbeats, friend requests, friendships and invites. CI runs it on every pull request; locally it is skipped with a clear message when no emulator is reachable. The setup dialog's **Run check** is the quickest way to smoke-test a real deployment.
