@@ -1,13 +1,15 @@
 import { initializeApp } from 'firebase/app';
-import { GoogleAuthProvider, getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { GoogleAuthProvider, connectAuthEmulator, getAuth } from 'firebase/auth';
+import { connectFirestoreEmulator, getFirestore } from 'firebase/firestore';
 import {
   FIREBASE_CONFIG_ENV_NAME,
   resolveFirebaseConfig,
   summarizeFirebaseConfig,
 } from './firebase-config.js';
+import { describeEmulatorConfig, resolveEmulatorConfig } from './emulator.js';
 
-const silentLogger = { error() {}, warn() {} };
+/** @type {Console} */
+const silentLogger = /** @type {any} */ ({ error() {}, warn() {} });
 
 /**
  * Validates the Firebase config and starts Firebase only when it is valid.
@@ -27,11 +29,14 @@ const silentLogger = { error() {}, warn() {} };
  * (VITE_FIREBASE_API_KEY, VITE_FIREBASE_AUTH_DOMAIN, … or the legacy VITE_FIREBASE_CONFIG).
  */
 export function initializeFirebase(source, { dev = false, logger = console } = {}) {
-  const env = source !== null && typeof source === 'object' ? source : { [FIREBASE_CONFIG_ENV_NAME]: source };
+  const env = source !== null && typeof source === 'object' ? /** @type {Record<string, string | undefined>} */ (source) : { [FIREBASE_CONFIG_ENV_NAME]: source };
   const parsed = resolveFirebaseConfig(env, { dev });
   const configName = parsed.source === 'env-vars' ? 'the VITE_FIREBASE_* variables' : FIREBASE_CONFIG_ENV_NAME;
+  /** @type {import('firebase/app').FirebaseApp | null} */
   let app = null;
+  /** @type {import('firebase/auth').Auth | null} */
   let auth = null;
+  /** @type {import('firebase/firestore').Firestore | null} */
   let db = null;
   let setup = {
     status: parsed.status,
@@ -43,14 +48,14 @@ export function initializeFirebase(source, { dev = false, logger = console } = {
 
   if (parsed.status === 'ok') {
     try {
-      const nextApp = initializeApp(parsed.config);
+      const nextApp = initializeApp(/** @type {import('firebase/app').FirebaseOptions} */ (parsed.config));
       const nextAuth = getAuth(nextApp);
       const nextDb = getFirestore(nextApp);
       app = nextApp;
       auth = nextAuth;
       db = nextDb;
     } catch (error) {
-      const reason = error?.code || error?.name || 'unknown error';
+      const reason = /** @type {any} */ (error)?.code || /** @type {any} */ (error)?.name || 'unknown error';
       setup = {
         status: 'invalid',
         code: 'init-failed',
@@ -75,12 +80,24 @@ export function initializeFirebase(source, { dev = false, logger = console } = {
   return { app, auth, db, ready, setup: Object.freeze({ ...setup }) };
 }
 
-const viteEnv = import.meta.env;
+const viteEnv = /** @type {any} */ (import.meta).env;
+const isDevBuild = Boolean(viteEnv?.DEV);
 const services = initializeFirebase(viteEnv ?? {}, {
-  dev: Boolean(viteEnv?.DEV),
+  dev: isDevBuild,
   // Outside Vite (for example when unit tests import this file) there is no env to complain about.
   logger: viteEnv ? console : silentLogger,
 });
+
+/**
+ * Local development can run against the Firebase Emulator Suite (npm run dev:emu).
+ * The flag is read there, in one place, and is ignored in a production build.
+ */
+const emulator = resolveEmulatorConfig(viteEnv ?? {}, { dev: isDevBuild });
+if (services.ready && emulator.enabled) {
+  connectFirestoreEmulator(/** @type {import('firebase/firestore').Firestore} */ (services.db), emulator.host, emulator.firestorePort);
+  connectAuthEmulator(/** @type {import('firebase/auth').Auth} */ (services.auth), emulator.authUrl, { disableWarnings: true });
+  console.info(`[PSD-gaming] ${describeEmulatorConfig(emulator)}`);
+}
 
 export function createGoogleProvider() {
   const provider = new GoogleAuthProvider();
@@ -94,3 +111,5 @@ export const firebaseSetup = services.setup;
 /** Human-readable setup problem, or '' when Firebase is ready. Kept for older imports. */
 export const firebaseError = services.ready ? '' : services.setup.message;
 export const firebaseReady = services.ready;
+/** Where this build is talking to: the real project, or the local emulator suite. */
+export const firebaseEmulator = Object.freeze({ ...emulator });

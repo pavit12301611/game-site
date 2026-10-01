@@ -46,6 +46,114 @@ VITE_FIREBASE_APP_ID=YOUR_FIREBASE_APP_ID
 
 To see both states: run `npm run dev` **without** `.env.local` and you get **Local practice mode** with an explanation banner and a console error. Add the file, restart, and the status becomes **Online rooms ready**.
 
+### Run against the Firebase emulators (optional)
+
+The Emulator Suite runs Firestore and Auth on your own machine, so rooms, profiles and friends can be exercised without touching the real project. It needs **Java 11+** (the emulator is a JVM app).
+
+```bash
+npm run emulators   # Firestore on 127.0.0.1:8080, Auth on 9099
+npm run dev:emu     # starts the emulators, runs `npm run dev` against them, shuts them down after
+```
+
+Point the app at them by adding these lines to `.env.local` (all but the first are optional):
+
+```dotenv
+VITE_USE_FIREBASE_EMULATOR=1
+VITE_FIREBASE_EMULATOR_HOST=127.0.0.1
+VITE_FIRESTORE_EMULATOR_PORT=8080
+VITE_FIREBASE_AUTH_EMULATOR_PORT=9099
+```
+
+Two things to know: the flag is **ignored by a production build** (`vite build`), so a deployment can never end up talking to `localhost`; and Firebase still needs a valid-looking `VITE_FIREBASE_*` config to start at all, because the emulator is only a different address for the same SDK.
+
+## Project layout
+
+`src/main.js` is only the entry point (stylesheet + app). Everything else is a module:
+
+| Module | What it owns |
+| --- | --- |
+| `src/app.js` | Event handlers and start-up. ~360 lines; used to be the whole app. |
+| `src/state.js` | The one mutable `state` object and the derived getters (`currentGame`, `currentPlayers`, …). |
+| `src/render.js` | `render()`: repaint `#app` from state, with a recovery screen if drawing ever throws. |
+| `src/router.js` | The hash router (`#/home`, `#/room/<id>`, …) and what landing on a page means. |
+| `src/errors.js` | Turns a Firebase error into a sentence a player can act on. |
+| `src/connection.js` | The single connection verdict (Firebase setup + browser online) every view shows. |
+| `src/accounts.js` | Guests, email/password, Google, the atomic username claim, the admin flag. |
+| `src/social.js` | Friend search, requests, the live friend/invite listeners. |
+| `src/cpu.js` | Local practice and the CPU opponent, using the same engines as online play. |
+| `src/diagnostics.js` | The setup dialog's "Run check" button. |
+| `src/online/session.js` | `ensureOnlineUser()`: guests are anonymous accounts, so a link never forces a sign-up. |
+| `src/online/rooms.js` | Create a room, join by link, start the match, make a move (all transactional). |
+| `src/online/admin.js` | The admin dashboard's reads. |
+| `src/views/` | Pure "state in, HTML out": `shell`, `pages`, `modals`, `boards`, `fatal`. |
+| `src/ui/` | Small pieces: `html` (icons, escaping), `players`, `toast`, `theme`, `sound`, `prefs`, `links`. |
+| `src/engines/` | One module per game engine, with the catalog in `src/catalog.js`. |
+| `src/firebase*.js` | Config parsing, validation, initialization, error wording, emulator switch. |
+| `src/styles.css` | The whole design system: tokens first, then one section per area of the app. |
+
+Rules for contributing to this layout: views never write to state and never talk to Firebase;
+modules never import `src/app.js` (it is the wiring, so that would be a cycle); and every string
+that came from another player goes through `esc()`.
+
+### Design system (`src/styles.css`)
+
+One stylesheet, in two halves: a token layer at the top, then one section per area of the app
+(base/typography, shell, surfaces, buttons, landing, catalog, friends, admin, room/play, boards,
+modals, light theme).
+
+- **Type.** Three faces, all installed with npm and bundled, so nothing is fetched from a CDN and
+  the strict CSP (`font-src 'self' data:`) still holds: **Chakra Petch** for headings, the brand
+  and buttons; **Inter** for everything a player reads; **JetBrains Mono** for the small caps
+  labels, room codes, counts and keyboard hints - the instrument-panel detail that ties the arcade
+  together. Body copy sits at 13-15px; only the console illustration and the game boards use
+  display sizes below 11px, and only where the layout is a scaled-down picture anyway.
+- **Colour.** One deep navy (`--bg`, `--panel`, `--panel-2`) with two accents used sparingly
+  (`--cyan`, `--violet`), plus a full accent scale - `--blue`, `--pink`, `--green`, `--gold`,
+  `--orange` - that the game categories reuse, so a card in the catalog and the same game in a room
+  are visibly the same product. Text and hairlines come from `--ink`, `--muted`, `--soft`, `--line`
+  and `--line-strong`.
+- **Depth and motion.** Three elevations (`--shadow-1/2/3`), a radius scale (`--r-xs` … `--r-xl`),
+  one easing curve (`--ease`) and two durations (`--dur-1/2`). Hover lifts a card 4px and adds a
+  glow in that card's own accent colour; pressing it settles back by 1px.
+- **Grain.** A 3.5% SVG noise layer on `body::after` stops large flat areas of navy from looking
+  plastic. It is `pointer-events: none`, so it never swallows a click.
+- **Motion is optional.** `prefers-reduced-motion: reduce` turns every animation and transition
+  off, including the floating console on the landing page.
+- **Light theme** is a token swap plus a short `[data-theme='light']` list for the dark-first
+  surfaces; it is not a second stylesheet.
+
+The fonts are imported in `src/main.js` from `@fontsource/*` packages, so Vite hashes them into
+`dist/assets/` with the rest of the bundle instead of loading them at runtime.
+
+## Tests and CI
+
+```bash
+npm test            # unit tests: no network, no Firebase credentials, no Java
+npm run typecheck   # tsc --checkJs over every pure module (JSDoc types)
+npm run test:rules  # firestore.rules against the Firestore emulator (needs Java)
+npm run audit       # npm audit --omit=dev --audit-level=high: only what ships to the browser
+```
+
+- `.github/workflows/ci.yml` runs `npm ci`, `npm test`, `npm run typecheck` and `npm run build` on every push and pull request, a `firestore-rules` job that installs Java and runs the emulator rules tests, and an informational `npm audit` job.
+- `npm run audit` checks **what ships to the browser** (`--omit=dev`): the app has one runtime dependency, `firebase`. Advisories in the build and emulator tooling never reach a player, are not part of the deployed bundle, and are tracked by Dependabot instead, which opens grouped weekly pull requests - forcing them to block a release would only train everyone to ignore the job. The one production advisory found so far (`@firebase/firestore` pinning an old `@grpc/grpc-js`) is fixed with an npm `overrides` entry rather than by downgrading Firebase.
+- Dependabot (`.github/dependabot.yml`) opens one grouped pull request for patch and minor updates every week. Major upgrades, such as `firebase` 12 or `vite` 8, arrive alone so they can be reviewed and tested on their own.
+- `tests/app-render.test.js` boots the real UI in jsdom with no Firebase configured and walks the local-practice flow. It is the safety net for splitting `src/app.js` into modules.
+- The game rules are locked by `tests/fixtures/engine-baseline.json`, which fingerprints every state of all 40 games and replays them on every run. If you change a rule on purpose, regenerate it with `node tests/fixtures/generate-engine-baseline.mjs` and say so in the pull request.
+
+### Type checking is JSDoc, not a rewrite
+
+`jsconfig.json` runs `tsc --checkJs` over every module except the entry point and the wiring layer
+(`src/main.js` and `src/app.js`), with the shared shapes named once in `src/types.js`. Everything the
+split of `src/app.js` produced is typechecked: `state`, `render`, `errors`, `router`, `accounts`,
+`social`, `cpu`, `diagnostics`, `connection`, `online/` (session, rooms, admin) and `ui/` (html,
+players, toast, theme, sound, prefs, links), plus the engines, catalog, helpers, config and
+`firebase.js`. `noImplicitAny` is off and gets switched on per module once the annotations are in
+place.
+
+`src/app.js` (about 360 lines, down from 1622) is what is left of the old single file: the event
+handlers and start-up. Every feature it used to hold now lives in a module of its own - see
+[Project layout](#project-layout).
+
 ## Connection status: what the labels mean
 
 The sidebar, top bar, home hero, friends page, and dialogs all show the same status. It is computed from two real facts: did Firebase start from a valid config, and does the browser report that it is online? Nothing is hard-coded.
@@ -219,6 +327,28 @@ A new Google account needs its own `admins/{googleUid}` document if it should be
 - Use a second browser profile or an incognito window to test another player. To test a three-player room, select **3 players** and join from two separate browser profiles.
 - The app supports browser-native share when available and always provides a copyable room link.
 
+## Security headers (Vercel)
+
+`vercel.json` sets the response headers for every deployment: a Content-Security-Policy, HSTS,
+`X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, `X-Frame-Options` and
+`Cross-Origin-Opener-Policy: same-origin-allow-popups` (plain `same-origin` would break the Google
+sign-in popup). Hashed files under `/assets/` are cached for a year. `tests/vercel-headers.test.js`
+guards them, so a future edit cannot quietly drop the Firebase origins.
+
+Two deliberate `'unsafe-inline'` entries, and why:
+
+- `script-src 'unsafe-inline'` — `index.html` applies the saved theme in a tiny inline bootstrap
+  script before the bundle loads, and the game cards use `onerror` fallbacks for their artwork.
+- `style-src 'unsafe-inline'` — cards and progress bars set CSS custom properties through `style`
+  attributes, which no nonce can cover for DOM built at runtime.
+
+The CSP allows `https://*.googleapis.com`, `https://*.firebaseapp.com`, `https://*.firebaseio.com`
+(plus `wss://`) and `https://apis.google.com`, which is what Firebase Auth and Firestore need.
+
+If a deployment ever loses Google sign-in or goes quiet on Firestore, open the browser console: a CSP
+violation names the exact directive and origin, and the fix is one word in `vercel.json` (then
+redeploy). Headers only apply to Vercel deployments, never to `npm run dev`.
+
 ## Troubleshooting
 
 | What you see | Likely cause | Fix |
@@ -242,7 +372,7 @@ Developer console: a missing or invalid config is always logged (`console.error`
 ## What is included
 
 - **40 games:** Pixel Tic-Tac-Toe, Neon Gomoku, Connect Four, Five in a Row, Memory Match, Neon Pairs, Emoji Flip, Arcade Pairs, Pixel Tap Sprint, Button Masher, Turbo Charge, Reaction Rush, Spacebar Showdown, Bug Blaster, Rock Paper Scissors, Laser Duel, Coin Flip Clash, Dice Duel, Retro Trivia, Emoji Decode, Arcade Facts, Pixel Pop Quiz, Movie Mayhem, Word Scramble, Number Chase, Brain Busters, 8-Bit Riddles, Retro Rewind, Maze Runner, Neon Labyrinth, Byte Escape, Star Runner, Sea Battle, Pixel Fleet, Alien Skirmish, Pong Rally, Paddle Wars, Air Hockey, Codebreaker, and Mastermind.
-- **Ten lightweight shared engines:** line boards, drop boards, memory pairs, tap races, simultaneous duels, quiz rounds, maze races, hidden-grid battles, volley scoring, and codebreaking. Each catalog entry can be opened, practiced locally, or used to create an online room.
+- **Ten lightweight shared engines:** line boards, drop boards, memory pairs, tap races, simultaneous duels, quiz rounds, maze races, hidden-grid battles, volley scoring, and codebreaking. Each engine is one module in `src/engines/` with its own unit tests; `src/catalog.js` holds the catalog, artwork and how-to-play copy. Each catalog entry can be opened, practiced locally, or used to create an online room.
 - **Firebase:** Auth (Anonymous + Email/Password + Google) and Cloud Firestore. Multiplayer moves use Firestore transactions so concurrent turns do not silently overwrite one another. Google popup/redirect handling, guest linking, first-login username setup, and friendly provider/network errors are included.
 - **Setup diagnostics:** one honest connection status everywhere (**Online rooms ready**, **Offline · local play**, **Local practice mode**), a precise setup banner for a missing or invalid `VITE_FIREBASE_*` config, a build-time check that prints the same verdict in the Vercel build log (and refuses secrets), Firebase errors worded as instructions, and an in-app **Run check** for a deployed project.
 - **Local personalization:** Favorites, recently played games, theme preference, subtle sound preference, and guest display name live in localStorage; no extra Firebase collection is required.
@@ -255,4 +385,6 @@ Developer console: a missing or invalid config is always logged (`console.error`
 - The browser must allow JavaScript. Online features require a network connection and a configured Firebase project.
 - A room invite is a private-by-ID link, not a password-protected secret. Anyone holding it may join while it is waiting and has capacity. Do not put sensitive data in rooms.
 - Anonymous Firebase accounts can be cleaned up periodically from Firebase Console if you want to limit unused guest accounts. Linking a guest to Google is the preferred way to preserve a guest’s UID and identity.
-- Live Google, popup/redirect, guest-linking, Firestore-permission, and room synchronization flows still need a smoke test in your deployed Firebase project. `npm test` covers helpers, catalog integrity, the pure game engines, the config parser/validator, the status logic, the wording of Firebase errors (using the real SDK error classes), Firebase initialization with the real SDK (no network), the build-time check, and structural checks of `firestore.rules` (balanced syntax, a rule for every collection the app uses, nothing open to signed-out users, admin flags not client-writable; these do **not** evaluate the rules, that needs the Firebase emulator). None of that needs Firebase credentials or an emulator, and none of it talks to a real Firebase project. The setup dialog's **Run check** is the quickest way to smoke-test a real deployment.
+- Live Google, popup/redirect, guest-linking, Firestore-permission, and room synchronization flows still need a smoke test in your deployed Firebase project. `npm test` covers helpers, catalog integrity, the pure game engines (including a state-by-state baseline of all 40 games), the rendered UI in jsdom (shell, catalog, search, practice match, dialogs, theme), the config parser/validator, the status logic, the emulator switch, the wording of Firebase errors (using the real SDK error classes), Firebase initialization with the real SDK (no network), the build-time check, and structural checks of `firestore.rules` (balanced syntax, a rule for every collection the app uses, nothing open to signed-out users, admin flags not client-writable). None of that needs Firebase credentials or an emulator, and none of it talks to a real Firebase project.
+
+The rules themselves are executed by `npm run test:rules`, which runs `firestore.rules` against the Firestore emulator (Java required) and covers profiles, usernames, rooms, joins, moves, friend requests, friendships and invites. CI runs it on every pull request; locally it is skipped with a clear message when no emulator is reachable. The setup dialog's **Run check** is the quickest way to smoke-test a real deployment.

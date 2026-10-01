@@ -1,0 +1,26 @@
+{
+  "//": [
+    "tsc --checkJs type checking for the plain-JavaScript source (npm run typecheck).",
+    "Phase 1 scope: every pure module is checked - engines, catalog, helpers, config, errors,",
+    "emulator and firebase.js. src/app.js (and its entry point src/main.js, which imports the",
+    "stylesheet) is excluded on purpose: it is the 1600-line file that item 91 splits into modules,",
+    "and it gets typed as those modules land.",
+    "noImplicitAny stays off until then; every public function is annotated with JSDoc."
+  ],
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": true,
+    "noImplicitAny": false,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src/**/*.js",
+    "src/**/*.d.ts", "scripts/**/*.js"],
+  "exclude": ["node_modules", "dist", "src/app.js", "src/main.js"]
+}

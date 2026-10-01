@@ -16,14 +16,16 @@
  */
 import { loadEnv } from 'vite';
 import { FIREBASE_CONFIG_ENV_NAME, FIREBASE_ENV_NAMES, resolveFirebaseConfig, summarizeFirebaseConfig } from '../src/firebase-config.js';
+import { EMULATOR_ENV_NAMES } from '../src/emulator.js';
 
 const TRUTHY = new Set(['1', 'true', 'yes', 'on']);
 const PREFIX = '[psd-gaming]';
 
 /** Names (never values) of other variables that look like a misnamed attempt, e.g. FIREBASE_API_KEY without VITE_. */
 function findLookalikeNames(env) {
+  const known = new Set([...FIREBASE_ENV_NAMES, ...EMULATOR_ENV_NAMES]);
   return Object.keys(env)
-    .filter((name) => /firebase/i.test(name) && !FIREBASE_ENV_NAMES.includes(name))
+    .filter((name) => /firebase/i.test(name) && !known.has(name))
     .sort();
 }
 

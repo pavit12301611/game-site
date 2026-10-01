@@ -122,6 +122,7 @@ function invalidHint(dev) {
  *   hint: string,
  *   config: Record<string, unknown> | null,
  *   missingFields: string[],
+ *   source?: 'json',
  * }}
  *   `config` is only set when `status === 'ok'`. `message` is always safe to show or log.
  */
@@ -129,10 +130,33 @@ export function parseFirebaseConfig(rawValue, options = {}) {
   return { ...parseJsonConfig(rawValue, options), source: 'json' };
 }
 
+/**
+ * @param {unknown} rawValue
+ * @param {{ dev?: boolean }} [options]
+ * @returns {{
+ *   status: 'ok' | 'missing' | 'invalid',
+ *   code: string,
+ *   message: string,
+ *   hint: string,
+ *   config: Record<string, unknown> | null,
+ *   missingFields: string[],
+ * }}
+ */
 function parseJsonConfig(rawValue, { dev = false } = {}) {
+  /**
+   * @param {string} code
+   * @param {string} message
+   * @returns {{ status: 'missing', code: string, message: string, hint: string, config: null, missingFields: string[] }}
+   */
   const missing = (code, message) => ({
     status: 'missing', code, message, hint: missingHint(dev), config: null, missingFields: [...REQUIRED_FIREBASE_FIELDS],
   });
+  /**
+   * @param {string} code
+   * @param {string} message
+   * @param {Record<string, unknown>} [extra]
+   * @returns {{ status: 'invalid', code: string, message: string, hint: string, config: Record<string, unknown> | null, missingFields: string[] }}
+   */
   const invalid = (code, message, extra = {}) => ({
     status: 'invalid', code, message, hint: invalidHint(dev), config: null, missingFields: [], ...extra,
   });
@@ -190,8 +214,27 @@ function parseJsonConfig(rawValue, { dev = false } = {}) {
  * Validates a parsed config object. Shared by the one-line JSON path and the per-field
  * variable path; `source` only changes which variable names the messages point at.
  */
+/**
+ * @param {Record<string, unknown>} parsed
+ * @param {{ dev: boolean, source: string }} options
+ * @returns {{
+ *   status: 'ok' | 'missing' | 'invalid',
+ *   code: string,
+ *   message: string,
+ *   hint: string,
+ *   config: Record<string, unknown> | null,
+ *   missingFields: string[],
+ *   source?: string,
+ * }}
+ */
 function validateConfigObject(parsed, { dev, source }) {
   const fromVars = source === 'env-vars';
+  /**
+   * @param {string} code
+   * @param {string} message
+   * @param {Record<string, unknown>} [extra]
+   * @returns {{ status: 'invalid', code: string, message: string, hint: string, config: null, missingFields: string[], source: string }}
+   */
   const invalid = (code, message, extra = {}) => ({
     status: 'invalid', code, message, hint: invalidHint(dev), config: null, missingFields: [], source, ...extra,
   });
@@ -209,14 +252,14 @@ function validateConfigObject(parsed, { dev, source }) {
   }
 
   const config = { ...parsed };
-  for (const field of REQUIRED_FIREBASE_FIELDS) config[field] = parsed[field].trim();
+  for (const field of REQUIRED_FIREBASE_FIELDS) config[field] = /** @type {string} */ (parsed[field]).trim();
 
-  const placeholders = REQUIRED_FIREBASE_FIELDS.filter((field) => isPlaceholder(config[field]));
+  const placeholders = REQUIRED_FIREBASE_FIELDS.filter((field) => isPlaceholder(/** @type {string} */ (config[field])));
   if (placeholders.length) {
     const where = fromVars ? placeholders.map(nameOf).join(', ') : placeholders.join(', ');
     return invalid('placeholder-values', `${fromVars ? 'Firebase variables' : ENV} still contain${fromVars ? '' : 's'} placeholder text in: ${where}. Replace it with the real values from Firebase Console → Project settings → Your apps.`);
   }
-  if (!AUTH_DOMAIN_PATTERN.test(config.authDomain)) {
+  if (!AUTH_DOMAIN_PATTERN.test(/** @type {string} */ (config.authDomain))) {
     return invalid('bad-auth-domain', `${fromVars ? FIREBASE_ENV_VARS.authDomain : `${ENV} authDomain`} must be a bare host name such as your-project.firebaseapp.com, with no https:// and no path.`);
   }
 
@@ -296,6 +339,12 @@ function isJson(text) {
   }
 }
 
+/**
+ * @param {string[]} labels
+ * @param {boolean} dev
+ * @param {string} [subject]
+ * @returns {{ status: 'invalid', code: string, message: string, hint: string, config: null, missingFields: never[] }}
+ */
 function secretResult(labels, dev, subject = `${ENV} contains`) {
   return {
     status: 'invalid',
