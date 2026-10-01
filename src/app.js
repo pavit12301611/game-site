@@ -10,7 +10,13 @@ import {
   currentGame,
 } from './state.js';
 import { runLiveCheck } from './diagnostics.js';
-import { scheduleCpuMove, sendGameAction, startPractice } from './cpu.js';
+import { scheduleCpuMove, sendGameAction, startCpuRaceLoop, startPractice } from './cpu.js';
+import {
+  handleGoogleSignIn,
+  processGoogleRedirect,
+  refreshAccount,
+  registerProfile,
+} from './accounts.js';
 import { applyTheme, toggleTheme } from './ui/theme.js';
 import { setSoundEnabled } from './ui/sound.js';
 import { recordRecentGame, toggleFavorite } from './ui/prefs.js';
@@ -27,6 +33,7 @@ import {
 import { ensureOnlineUser } from './online/session.js';
 import {
   navigate,
+  parseHash,
   routeFromHash,
   setHash,
 } from './router.js';
