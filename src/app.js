@@ -9,6 +9,7 @@ import {
   state,
   currentGame,
 } from './state.js';
+import { boot } from './boot.js';
 import { runLiveCheck } from './diagnostics.js';
 import { scheduleCpuMove, sendGameAction, startCpuRaceLoop, startPractice } from './cpu.js';
 import {
@@ -382,9 +383,19 @@ const themeMedia = window.matchMedia?.('(prefers-color-scheme: light)');
 themeMedia?.addEventListener?.('change', () => {
   if (state.themePreference === 'system') applyTheme('system', true);
 });
-if (firebaseReady) {
-  onAuthStateChanged(auth, (user) => { void refreshAccount(user); });
-  void processGoogleRedirect().finally(() => routeFromHash());
-} else {
+try {
+  // The collaborators are resolved here, before the mode check, so a name that is not imported
+  // fails in local practice mode (and in the jsdom tests) too - not only on a deployment.
+  void boot({
+    firebaseReady,
+    routeFromHash,
+    watchAuth: (onUser) => onAuthStateChanged(/** @type {import('firebase/auth').Auth} */ (auth), onUser),
+    refreshAccount,
+    processGoogleRedirect,
+    reportAuthError,
+  });
+} catch (error) {
+  // A start-up bug must never leave the page blank: draw the shell and keep the error readable.
+  console.error('[PSD-gaming] Start-up failed; drawing the page anyway:', error);
   routeFromHash();
 }
