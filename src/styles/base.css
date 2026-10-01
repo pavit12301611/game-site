@@ -1,0 +1,116 @@
+/* Reset, document defaults, typography and the few utilities every page uses. */
+*,
+*::before,
+*::after { box-sizing: border-box; }
+
+html {
+  -webkit-text-size-adjust: 100%;
+  scroll-padding-top: 88px;
+  background: var(--bg);
+}
+
+/* The arcade-carpet backdrop sits behind everything, washed to the theme so text contrast never depends on it. */
+body::before {
+  content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background: linear-gradient(var(--page-wash), var(--page-wash)), url('/images/backdrop.webp') center / cover no-repeat;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--ink);
+  font: 400 var(--fs-3) / 1.55 var(--font-body);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+}
+
+h1, h2, h3, h4, p, ul, ol, dl, dd, figure { margin: 0; }
+ul, ol { padding: 0; list-style: none; }
+img, svg { display: block; max-width: 100%; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; }
+a { color: var(--primary); }
+code, kbd { font-family: var(--font-mono); }
+[hidden] { display: none !important; }
+
+h1, h2, h3 { font-family: var(--font-display); font-weight: 700; letter-spacing: 0; color: var(--ink); text-wrap: balance; }
+h1, h2 { text-transform: uppercase; letter-spacing: 0.02em; }
+h1 { font-size: var(--fs-7); line-height: 1.1; }
+h2 { font-size: var(--fs-6); line-height: 1.2; }
+h3 { font-size: var(--fs-4); line-height: 1.3; font-weight: 600; }
+h1 > span, h2 > span { color: var(--primary); }
+p { max-width: 68ch; text-wrap: pretty; }
+small { font-size: var(--fs-1); }
+
+/* Small arcade labels: mono caps in the cabinet-cyan, 13 px minimum. */
+.eyebrow {
+  color: var(--neon-cyan);
+  font-family: var(--font-mono);
+  font-size: var(--fs-1);
+  line-height: 18px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+kbd {
+  display: inline-block;
+  min-width: 28px;
+  padding: 1px 8px;
+  border: 1px solid var(--control-edge);
+  border-bottom-width: 3px;
+  border-radius: var(--r-1);
+  background: var(--surface-2);
+  color: var(--ink);
+  font-size: var(--fs-1);
+  line-height: 20px;
+  text-align: center;
+}
+
+.sr-only {
+  position: absolute !important;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Focus is never removed. A dark inner line keeps the ring visible on photos. */
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgb(var(--photo-scrim) / 0.55);
+}
+:focus:not(:focus-visible) { outline: none; }
+
+.skip-link {
+  position: fixed;
+  top: 8px; left: 8px;
+  z-index: 100;
+  transform: translateY(-200%);
+}
+.skip-link:focus-visible { transform: none; }
+
+::selection { background: var(--primary); color: var(--on-primary); }
+
+.game-count b, .nav-count, .quiz-progress b, .race-lane strong, .duel-score strong, .rally-score strong, .match-player strong { font-variant-numeric: tabular-nums; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Programmatic focus targets (the dialog box and the page heading after navigation) are not controls: no ring. */
+[role="dialog"]:focus, #page-content:focus, #page-content h1:focus { outline: none; }
+
+/* Headings that receive focus from the router are not controls; the page title is announced instead of ringed. */
+h1[tabindex='-1']:focus, #page-content[tabindex='-1']:focus { outline: none; box-shadow: none; }

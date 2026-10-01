@@ -3,9 +3,25 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#07152d" id="meta-theme-color" />
+    <meta name="theme-color" content="#14110f" id="meta-theme-color" />
     <meta name="description" content="PSD-gaming — a pocket-sized retro arcade for friends, wherever they are." />
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='11' fill='%23065ed2'/%3E%3Cpath d='M10 15 15 8h10l5 7-2 16H12z' fill='white'/%3E%3Cpath d='M11 16h18l-2 8H13z' fill='%23081c38'/%3E%3C/svg%3E" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="48x48" href="/favicon-48.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="canonical" href="https://psd-gaming.vercel.app/" />
+    <meta property="og:url" content="https://psd-gaming.vercel.app/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="PSD-gaming" />
+    <meta property="og:title" content="PSD-gaming — Play together, anywhere" />
+    <meta property="og:description" content="Forty bite-size retro games for 2–3 friends. Share a link and play in the browser." />
+    <meta property="og:image" content="https://psd-gaming.vercel.app/images/og-image.jpg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Game photos laid out like prints: Connect Four, Gomoku, a die and a padlock." />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="PSD-gaming — Play together, anywhere" />
+    <meta name="twitter:description" content="Forty bite-size retro games for 2–3 friends. Share a link and play in the browser." />
+    <meta name="twitter:image" content="https://psd-gaming.vercel.app/images/og-image.jpg" />
     <title>PSD-gaming — Play together, anywhere</title>
     <script>
       (function () {
@@ -13,10 +29,21 @@
           var pref = localStorage.getItem('psd-theme-preference');
           var sysLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
           var theme = pref === 'light' || pref === 'dark' ? pref : sysLight ? 'light' : 'dark';
+          // The landing hero is the largest paint, but it is an <img> that JavaScript draws, so the browser would only find it
+          // after the app has run. On the landing route, start fetching it now (keep in sync with HERO_ARTWORK in src/catalog.js).
+          var h = location.hash;
+          if (!h || h === '#' || h === '#/' || h === '#/home') {
+            var hero = document.createElement('link');
+            hero.rel = 'preload'; hero.as = 'image'; hero.href = '/images/hero.webp';
+            hero.setAttribute('imagesrcset', '/images/hero-800.webp 800w, /images/hero.webp 1600w');
+            hero.setAttribute('imagesizes', '100vw');
+            hero.setAttribute('fetchpriority', 'high');
+            document.head.appendChild(hero);
+          }
           document.documentElement.dataset.theme = theme;
           document.documentElement.style.colorScheme = theme;
           var meta = document.getElementById('meta-theme-color');
-          if (meta) meta.setAttribute('content', theme === 'light' ? '#f3f7ff' : '#07152d');
+          if (meta) meta.setAttribute('content', theme === 'light' ? '#f6f1e8' : '#14110f');
         } catch (e) {}
       })();
     </script>

@@ -45,5 +45,18 @@ export function esc(value = '') {
  * @returns {string}
  */
 export function renderBrand() {
-  return `<span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 40 40"><path d="M8 15 14 7h12l6 8-2 17H10z" fill="white"/><path d="M9 16h22l-2 8H11z" fill="#071c38"/><path d="M17 28h6" stroke="#57d9ff" stroke-width="2" stroke-linecap="round"/></svg></span>`;
+  return `<span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 40 40"><path class="b1" d="M8 15 14 7h12l6 8-2 17H10z"/><path class="b2" d="M9 16h22l-2 8H11z"/><path class="b3" d="M17 28h6" fill="none" stroke-width="2" stroke-linecap="round"/></svg></span>`;
+}
+
+/**
+ * One responsive picture. Every image in the app goes through here so each one carries its real
+ * width/height (no layout shift), lazy loading and async decoding; only the hero opts out.
+ * @param {{ src: string, srcset?: string, width: number, height: number, focal?: string, alt?: string }} art
+ * @param {{ className: string, sizes?: string, hero?: boolean }} options
+ */
+export function artImage(art, { className, sizes = '100vw', hero = false }) {
+  const attrs = hero ? 'fetchpriority="high"' : 'loading="lazy" decoding="async"';
+  const srcset = art.srcset ? ` srcset="${art.srcset}" sizes="${sizes}"` : '';
+  const focal = art.focal && art.focal !== 'center center' ? ` style="object-position:${art.focal}"` : '';
+  return `<img class="${className}" src="${art.src}"${srcset} alt="${esc(art.alt || '')}" width="${art.width}" height="${art.height}" ${attrs}${focal}>`;
 }

@@ -105,7 +105,7 @@ test('the catalog lists all 40 games and filters by search text', () => {
   assert.ok(search, 'the global search box exists');
   search.value = 'maze';
   search.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
-  const titles = all('.game-card-copy h3').map((node) => node.textContent);
+  const titles = all('.game-card-title').map((node) => node.textContent);
   assert.ok(titles.length > 0 && titles.length < 40, 'search narrows the shelf');
   assert.ok(titles.every((title) => /maze|labyrinth|escape|runner/i.test(title)), 'only maze games remain');
 
@@ -139,7 +139,7 @@ test('a practice match renders its board and accepts a move', () => {
   const card = all('[data-action="open-game"]').find((node) => node.dataset.gameId === 'pixel-tac-toe');
   click(card);
   click(button('practice-game'));
-  assert.match($('#page-content').textContent, /LOCAL PRACTICE/, 'the practice badge is shown');
+  assert.match($('#page-content').textContent, /Local practice/, 'the practice badge is shown');
   const cells = all('[data-action="line-move"]');
   assert.equal(cells.length, 9, 'a 3x3 board is rendered');
   assert.equal(cells.filter((cell) => cell.disabled).length, 0, 'it is your turn, so every cell is live');
@@ -162,6 +162,23 @@ test('Escape closes a dialog, and the backdrop click only closes from the backdr
   assert.ok($('.modal-backdrop'), 'a dialog is open');
   dom.window.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   assert.equal($('.modal-backdrop'), null, 'Escape closed it');
+});
+
+test('starting a second practice game while the CPU is still thinking does not crash the first timer', async () => {
+  const errors = [];
+  const onError = (event) => { errors.push(event.message); event.preventDefault(); };
+  dom.window.addEventListener('error', onError);
+  const open = (id) => {
+    setHash('#/catalog');
+    click(all('[data-action="open-game"]').find((node) => node.dataset.gameId === id));
+    click(button('practice-game'));
+  };
+  open('maze-runner'); // schedules a CPU move 620 ms out
+  open('sea-battle'); // a different engine: the old timer must not act on this state
+  await new Promise((resolve) => setTimeout(resolve, 900));
+  dom.window.removeEventListener('error', onError);
+  assert.deepEqual(errors, [], 'no uncaught error from the stale CPU timer');
+  assert.ok(all('[data-action="battle-fire"]').length > 0, 'the second game is on screen');
 });
 
 test('leaving a practice match returns to the catalog', () => {
@@ -211,4 +228,38 @@ test('rendering never throws for any page', () => {
     assert.doesNotThrow(() => setHash(`#/${page}`), `#/${page} renders`);
     assert.ok($('#page-content').textContent.trim().length > 0, `#/${page} has content`);
   }
+});
+
+test('landing and catalog images: sized, lazy except the hero, and every game card shows its own file', () => {
+  setHash('#/home');
+  const hero = all('img.hero-artwork');
+  assert.equal(hero.length, 1, 'one hero image');
+  assert.equal(hero[0].getAttribute('fetchpriority'), 'high');
+  assert.equal(all('img[fetchpriority="high"]').length, 1, 'only the hero is high priority');
+  for (const img of all('img')) {
+    assert.ok(img.getAttribute('width') && img.getAttribute('height'), `${img.getAttribute('src')} has width and height`);
+    if (!img.classList.contains('hero-artwork')) {
+      assert.equal(img.getAttribute('loading'), 'lazy', `${img.getAttribute('src')} is lazy`);
+      assert.equal(img.getAttribute('decoding'), 'async');
+    }
+  }
+  assert.equal(all('.category-card').length, 4, 'four category covers on the landing page');
+
+  setHash('#/catalog');
+  const clear = button('clear-filters');
+  if (clear) click(clear);
+  click(all('[data-action="filter-category"]').find((node) => node.dataset.category === 'All games'));
+  const sources = all('.game-card img').map((img) => img.getAttribute('src'));
+  assert.equal(sources.length, 40);
+  assert.equal(new Set(sources).size, 40, 'no two cards share a picture');
+});
+
+test('a category cover on the landing page opens the catalog filtered to that category', () => {
+  setHash('#/home');
+  click(all('.category-card').find((node) => node.dataset.category === 'Strategy'));
+  assert.equal(dom.window.location.hash, '#/catalog');
+  assert.ok($('#catalog-grid'), 'the catalog is showing');
+  assert.ok(all('.filter-pill.is-active').some((node) => node.dataset.category === 'Strategy'), 'the Strategy filter is active');
+  assert.ok(all('.game-card').length > 0 && all('.game-card').length < 40);
+  click(all('[data-action="filter-category"]').find((node) => node.dataset.category === 'All games'));
 });

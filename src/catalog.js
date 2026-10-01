@@ -110,57 +110,123 @@ export function getMemoryCardIcon(index) {
   return memoryCardIcon(index);
 }
 
-export const GAME_COVERS = {
-  Arcade: '/images/cover-arcade.jpg',
-  Strategy: '/images/cover-strategy.jpg',
-  Puzzle: '/images/cover-puzzle.jpg',
-  Party: '/images/cover-party.jpg',
-  Multiplayer: '/images/cover-multiplayer.jpg',
-  Hero: '/images/hero-arcade.jpg',
+/** The landing hero: a composite of the generated game photos (see scripts/build-composites.sh). */
+export const HERO_ARTWORK = Object.freeze({
+  src: '/images/hero.webp',
+  srcset: '/images/hero-800.webp 800w, /images/hero.webp 1600w',
+  width: 1600,
+  height: 900,
+  alt: '',
+  focal: '62% 50%',
+  credit: 'Generated image (composite of generated game photos)',
+});
+
+/** One cover per category, also composites of generated photos. Keys match CATEGORIES (minus "All games"). */
+export const CATEGORY_ARTWORK = Object.freeze(
+  Object.fromEntries(
+    ['Arcade', 'Party', 'Strategy', 'Puzzle'].map((name) => {
+      const slug = name.toLowerCase();
+      return [name, Object.freeze({
+        src: `/images/categories/${slug}.webp`,
+        srcset: `/images/categories/${slug}-640.webp 640w, /images/categories/${slug}.webp 1280w`,
+        width: 1280,
+        height: 800,
+        alt: '',
+        focal: 'center center',
+        credit: 'Generated image (composite of generated game photos)',
+      })];
+    }),
+  ),
+);
+
+/** Engine names shown on cards and in the lobby. */
+export const ENGINE_LABELS = {
+  line: 'Grid tactics',
+  drop: 'Drop board',
+  memory: 'Memory matrix',
+  race: 'Speed sprint',
+  rps: 'Quick duel',
+  quiz: 'Brain round',
+  maze: 'Labyrinth dash',
+  battle: 'Fleet radar',
+  rally: 'Court volley',
+  code: 'Cipher logic',
 };
 
-const ENGINE_LABELS = {
-  line: 'GRID TACTICS',
-  drop: 'DROP BOARD',
-  memory: 'MEMORY MATRIX',
-  race: 'SPEED SPRINT',
-  rps: 'QUICK DUEL',
-  quiz: 'BRAIN ROUND',
-  maze: 'LABYRINTH DASH',
-  battle: 'FLEET RADAR',
-  rally: 'COURT VOLLEY',
-  code: 'CIPHER LOGIC',
+/**
+ * Games that have a photo of their own: `public/images/games/<id>.webp` (1280x800) and
+ * `<id>-640.webp`, generated for this project (see public/images/CREDITS.md). The value is the
+ * photo's subject, used as its alt text where the picture is not purely decorative.
+ * @type {Record<string, string>}
+ */
+export const GAME_PHOTOS = {
+  'air-hockey': "Air-hockey table with a red puck and striker, a hand on the striker, no face",
+  'alien-skirmish': "Retro toy spaceship beside a small green radar scope",
+  'arcade-facts': "Arcade joystick and round buttons on a dark wooden control panel, no logo",
+  'arcade-pairs': "Pairs of brass arcade tokens in a wooden grid tray",
+  'brain-busters': "Interlocking wooden brain-teaser puzzle on a table",
+  'bug-blaster': "Retro tin toy ray gun on a workbench",
+  'button-masher': "Oversized red push button with a finger above it",
+  'byte-escape': "Green circuit board whose traces read as a maze, macro",
+  'codebreaker': "Brass combination padlock with number dials, no brand",
+  'coin-flip-clash': "Plain blank gold coin spinning mid-air",
+  'connect-four': "Upright blue four-in-a-row frame with red and yellow discs, no logo",
+  'dice-duel': "Two ivory dice tumbling on green felt",
+  'eight-bit-riddles': "Generic retro handheld console with abstract blocky pixels on its screen, no logo",
+  'emoji-decode': "Colourful generic smiley stickers on a wooden table",
+  'emoji-flip': "Cream cards with hand-drawn generic smiley faces",
+  'five-in-row': "Large wooden drop-frame with red and yellow discs, side light",
+  'laser-duel': "Red and green laser beams crossing in fog",
+  'mastermind': "Coloured code pegs with black and white feedback pegs on a plain wooden board",
+  'maze-runner': "Aerial view of a green hedge maze in a garden",
+  'memory-match': "Face-down navy cards on a table, two turned up",
+  'movie-mayhem': "Blank clapperboard and a bowl of popcorn, no writing, no poster",
+  'neon-gomoku': "Go board with black and white stones, close crop",
+  'neon-labyrinth': "Narrow maze corridor lit by orange and cyan neon strips",
+  'neon-pairs': "Memory cards with glowing geometric backs on dark glass",
+  'number-chase': "Wooden number tiles and a small chalkboard with chalk numerals",
+  'paddle-wars': "Two table-tennis paddles facing each other with a white ball",
+  'pixel-fleet': "Small toy wooden boats on a blue grid cloth",
+  'pixel-pop-quiz': "Four coloured plastic quiz buzzers on a wooden table, no logo",
+  'pixel-tac-toe': "Wooden tic-tac-toe board with turned X and O pieces",
+  'pixel-tap': "Big blue arcade push button on a metal panel",
+  'pong-rally': "Table-tennis paddles and orange ball on a blue table with a net",
+  'reaction-rush': "Vintage stopwatch mid-run held in a hand",
+  'retro-rewind': "Audio cassette and blank video tape with plain labels, no branding",
+  'retro-trivia': "Vintage wood-cased television in a cosy room, no brand",
+  'rock-paper-scissors': "Three hands showing rock, paper and scissors",
+  'sea-battle': "Grey plastic peg board with toy ships and red and white pegs, no box art",
+  'spacebar-showdown': "Macro of a mechanical keyboard spacebar with blank keycaps",
+  'star-runner': "Wooden ball-maze labyrinth toy with a star hole",
+  'turbo-charge': "Boost gauge on a car dashboard, needle high, no numbers",
+  'word-scramble': "Wooden letter tiles scattered on a table, no brand, no board",
 };
 
-const FOCAL_POSITIONS = [
-  'center 40%',
-  '35% 50%',
-  '65% 45%',
-  '50% 62%',
-  '42% 35%',
-  '58% 58%',
-];
+/**
+ * One dedicated picture per game: `{ src, srcset, width, height, alt, focal, credit }`, built from the subject text in
+ * GAME_PHOTOS. The files live in public/images/games/<id>.webp (1280x800) and <id>-640.webp.
+ */
+export const GAME_ARTWORK = Object.freeze(
+  Object.fromEntries(
+    Object.entries(GAME_PHOTOS).map(([id, alt]) => [id, Object.freeze({
+      src: `/images/games/${id}.webp`,
+      srcset: `/images/games/${id}-640.webp 640w, /images/games/${id}.webp 1280w`,
+      width: 1280,
+      height: 800,
+      alt,
+      focal: 'center center',
+      credit: 'Generated image',
+    })]),
+  ),
+);
 
-/** Cover image, focal point and engine badge for a game card. */
+/** Picture, srcset and engine badge for a game card, lobby banner or game dialog. */
 export function getGameArtwork(gameOrId) {
   const game = typeof gameOrId === 'string' ? getGame(gameOrId) : gameOrId;
-  if (!game) {
-    return {
-      src: GAME_COVERS.Arcade,
-      focal: 'center center',
-      engineLabel: 'ARCADE',
-    };
-  }
-  const index = Math.max(0, GAMES.findIndex((entry) => entry.id === game.id));
-  let src = GAME_COVERS[game.category] || GAME_COVERS.Arcade;
-  if (game.engine === 'rally' || (game.engine === 'battle' && game.category === 'Arcade')) {
-    src = index % 2 === 0 ? GAME_COVERS.Multiplayer : src;
-  }
-  return {
-    src,
-    focal: FOCAL_POSITIONS[index % FOCAL_POSITIONS.length],
-    engineLabel: ENGINE_LABELS[game.engine] || 'ARCADE MODE',
-  };
+  if (!game) return { ...CATEGORY_ARTWORK.Arcade, engineLabel: 'Arcade' };
+  const engineLabel = ENGINE_LABELS[game.engine] || 'Arcade mode';
+  const own = Object.hasOwn(GAME_ARTWORK, game.id) ? GAME_ARTWORK[game.id] : null;
+  return { ...(own || CATEGORY_ARTWORK[game.category] || CATEGORY_ARTWORK.Arcade), engineLabel };
 }
 
 /** How-to-play copy shown in the game stage and the game modal. */

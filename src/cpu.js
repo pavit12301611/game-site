@@ -28,6 +28,9 @@ export function startPractice(gameId) {
     { uid: 'local-cpu', name: 'CPU rival' },
   ];
   const seed = `practice-${gameId}-${Date.now()}`;
+  // A CPU move still pending from the previous practice game must not fire into this one.
+  window.clearTimeout(state.cpuTimer);
+  state.cpuPending = false;
   state.local = { gameId, players, gameState: createInitialGameState(game, players, seed), seed };
   state.room = null;
   state.roomId = null;
@@ -48,7 +51,7 @@ export function localMove(uid, action) {
     if (!game) return;
     const next = applyGameAction(game, state.local.gameState, uid, action, state.local.players);
     state.local.gameState = next;
-    playUiTone(next.phase === 'finished' ? 'win' : 'tap');
+    playUiTone('tap'); // the result dialog plays the win or lose jingle
     render();
     if (game.engine !== 'race') scheduleCpuMove();
   } catch (error) {
@@ -82,9 +85,11 @@ export function scheduleCpuMove() {
   if (!shouldMove) return;
   state.cpuPending = true;
   const delay = game.engine === 'memory' && gameState.opened.length === 1 ? 780 : 620;
+  const matchSeed = state.local.seed;
   state.cpuTimer = window.setTimeout(() => {
     state.cpuPending = false;
-    if (!state.local) return;
+    // The player may have left, or started a different practice game, while the CPU was "thinking".
+    if (!state.local || state.local.seed !== matchSeed) return;
     const current = state.local.gameState;
     if (current.phase !== 'playing') return;
     const action = chooseCpuAction(game, current, state.local.players);

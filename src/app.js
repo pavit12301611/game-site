@@ -59,6 +59,7 @@ import {
   firebaseReady,
 } from './firebase.js';
 
+import { handleBoardArrows, trapDialogTab } from './a11y.js';
 import {
   createUserWithEmailAndPassword,
   onAuthStateChanged,
@@ -175,10 +176,11 @@ function handleClick(event) {
   if (action === 'modal-backdrop' && event.target === actionButton) { modalClose(); return; }
   if (action === 'navigate') { navigate(page); return; }
   if (action === 'toggle-theme') { toggleTheme(); return; }
+  if (action === 'skip-to-content') { const main = /** @type {HTMLElement | null} */ (document.querySelector('#page-content')); if (main) { main.setAttribute('tabindex', '-1'); main.focus(); } return; }
   if (action === 'open-settings') { modalOpen({ type: 'settings' }); return; }
   if (action === 'toggle-favorite') { toggleFavorite(gameId); return; }
   if (action === 'open-game') { recordRecentGame(gameId); modalOpen({ type: 'game', gameId }); return; }
-  if (action === 'filter-category') { state.category = category; render(); return; }
+  if (action === 'filter-category') { state.category = category; if (state.page !== 'catalog') { navigate('catalog'); return; } render(); return; }
   if (action === 'clear-filters') { state.query = ''; state.category = 'All games'; render(); return; }
   if (action === 'quick-play') { const game = GAMES[Math.floor(Math.random() * GAMES.length)]; recordRecentGame(game.id); modalOpen({ type: 'game', gameId: game.id }); return; }
   if (action === 'quick-room') { openRoomModal(GAMES[0].id); return; }
@@ -242,6 +244,7 @@ function handleClick(event) {
 }
 
 async function resetCurrentGame() {
+  if (state.modal?.type === 'result') state.modal = null;
   try {
     if (state.local) {
       const game = getGame(state.local.gameId);
@@ -308,7 +311,7 @@ function handleInput(event) {
       if (location.hash !== '#/catalog') location.hash = '#/catalog';
     }
     const grid = document.querySelector('#catalog-grid');
-    if (grid) grid.innerHTML = renderGameGrid(filteredGames());
+    if (grid) grid.innerHTML = renderGameGrid(filteredGames(), 2);
     const count = document.querySelector('.game-count b');
     if (count) count.textContent = String(filteredGames().length);
   }
@@ -323,6 +326,21 @@ function handleKeydown(event) {
     return;
   }
   if (event.key === 'Escape' && state.modal) { modalClose(); return; }
+  if (state.modal && trapDialogTab(event)) return;
+  if (!state.modal && !event.altKey && !event.ctrlKey && !event.metaKey && handleBoardArrows(event)) { event.preventDefault(); return; }
+  if (state.page === 'game' && !state.modal && !event.altKey && !event.ctrlKey && !event.metaKey && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName ?? '')) {
+    // Number and letter keys answer a quiz (1-4 or A-D) or pick a rally lane (1-3); they press the same buttons a tap would.
+    const engine = currentGame()?.engine;
+    const digit = /^[1-4]$/.test(event.key) ? Number(event.key) - 1 : 'abcd'.indexOf(event.key.toLowerCase());
+    if (engine === 'quiz' && event.key.length === 1 && digit >= 0) {
+      const option = /** @type {HTMLButtonElement | undefined} */ ([...document.querySelectorAll('.quiz-option')][digit]);
+      if (option && !option.disabled) { event.preventDefault(); option.click(); return; }
+    }
+    if (engine === 'rally' && /^[1-3]$/.test(event.key)) {
+      const lane = /** @type {HTMLButtonElement | null} */ (document.querySelector(`[data-action="rally-hit"][data-lane="${Number(event.key) - 1}"]`));
+      if (lane && !lane.disabled) { event.preventDefault(); lane.click(); return; }
+    }
+  }
   if (state.page === 'game' && currentGame()?.engine === 'maze' && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) {
     event.preventDefault();
     const direction = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' }[event.key];
