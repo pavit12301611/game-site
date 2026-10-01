@@ -94,10 +94,18 @@ test('braces, parentheses and brackets are balanced, so the Firebase Console wil
 
 test('every Firestore collection the app touches has a rule', () => {
   const used = new Set();
-  for (const file of readdirSync(`${root}src`).filter((name) => name.endsWith('.js'))) {
-    const text = readFileSync(`${root}src/${file}`, 'utf8');
-    for (const match of text.matchAll(/\b(?:collection|doc)\(\s*db\s*,\s*'([A-Za-z0-9_]+)'/g)) used.add(match[1]);
-  }
+  // Walk every .js file under src/: the app is no longer one file, and each module that talks to
+  // Firestore names its collections the same way (the handle is `db`, or a cast local to a module).
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isDirectory()) walk(`${dir}/${entry.name}`);
+      else if (entry.name.endsWith('.js')) {
+        const text = readFileSync(`${dir}/${entry.name}`, 'utf8');
+        for (const match of text.matchAll(/\b(?:collection|doc)\(\s*[A-Za-z_$][\w$]*\s*,\s*'([A-Za-z0-9_]+)'/g)) used.add(match[1]);
+      }
+    }
+  };
+  walk(`${root}src`);
   // A floor so the scan cannot silently match nothing if the call style ever changes.
   for (const known of ['admins', 'profiles', 'usernames', 'friendRequests', 'friendships', 'gameInvites', 'rooms']) {
     assert.ok(used.has(known), `expected src/ to use the "${known}" collection`);

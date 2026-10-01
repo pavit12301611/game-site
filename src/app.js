@@ -9,10 +9,7 @@ import {
   state,
   currentGame,
 } from './state.js';
-import {
-  isGoogleUser,
-  playerDisplayName,
-} from './ui/players.js';
+import { isGoogleUser } from './ui/players.js';
 import {
   appRoot,
   render,
@@ -22,13 +19,24 @@ import {
   reportAuthError,
 } from './errors.js';
 import { ensureOnlineUser } from './online/session.js';
+import {
+  navigate,
+  routeFromHash,
+  setHash,
+} from './router.js';
+import {
+  joinGameInvite,
+  requestFriendSearch,
+  respondToFriend,
+  sendFriendRequest,
+  subscribeSocial,
+} from './social.js';
 import { loadAdminData } from './online/admin.js';
 import {
   createOnlineRoom,
   doOnlineAction,
   openRoomFromLink,
   startRoom,
-  stopActiveRoom,
 } from './online/rooms.js';
 import { showToast } from './ui/toast.js';
 import {
@@ -87,9 +95,6 @@ import {
 /** A no-op unsubscribe, so the `stop*` variables are always safe to call. */
 const emptyUnsubscribe = () => {};
 
-let stopRequests = emptyUnsubscribe;
-let stopFriends = emptyUnsubscribe;
-let stopInvites = emptyUnsubscribe;
 let toastTimer = 0;
 
 function systemPrefersLight() {
@@ -143,57 +148,6 @@ function toggleFavorite(gameId) {
   state.favorites = toggleFavoriteGameId(state.favorites, gameId, new Set(GAMES.map((game) => game.id)), localStorage);
   const game = getGame(gameId);
   showToast(`${game?.title || 'Game'} ${state.favorites.includes(gameId) ? 'added to favorites' : 'removed from favorites'}.`);
-}
-
-function parseHash() {
-  const path = location.hash.replace(/^#\/?/, '') || 'home';
-  const [page, id] = path.split('/');
-  return { page, id };
-}
-
-function setHash(path) {
-  const nextHash = `#/${path}`;
-  if (location.hash === nextHash) routeFromHash();
-  else location.hash = nextHash;
-}
-
-function routeFromHash() {
-  const { page, id } = parseHash();
-  const validPages = ['home', 'catalog', 'friends', 'admin', 'room', 'game'];
-  const nextPage = validPages.includes(page) ? page : 'home';
-  if (nextPage === 'room' && id) {
-    state.page = 'room';
-    state.local = null;
-    render();
-    if (firebaseReady) void openRoomFromLink(id);
-    return;
-  }
-  stopActiveRoom();
-  if (nextPage !== 'game') state.local = null;
-  state.page = nextPage;
-  render();
-  if (state.focusSearchAfterRoute) {
-    state.focusSearchAfterRoute = false;
-    requestAnimationFrame(() => {
-      const search = document.querySelector('#global-search');
-      search?.focus();
-      search?.setSelectionRange(search.value.length, search.value.length);
-    });
-  }
-  if (nextPage === 'admin' && state.isAdmin) void loadAdminData();
-}
-
-function navigate(page) {
-  if (page === 'admin' && !state.isAdmin) {
-    showToast('The admin area is only available to approved accounts.', 'warning');
-    return;
-  }
-  if (page !== 'room') stopActiveRoom();
-  if (page !== 'game') state.local = null;
-  state.page = page;
-  if (location.hash !== `#/${page}`) location.hash = `#/${page}`;
-  render();
-  if (page === 'admin') void loadAdminData();
 }
 
 async function finishGoogleAuthentication(user, successMessage = 'Google sign-in confirmed.') {
@@ -336,31 +290,6 @@ async function refreshAccount(user) {
   if (state.page === 'admin' && !state.isAdmin) navigate('home');
   const route = parseHash();
   if (route.page === 'room' && route.id && user) void openRoomFromLink(route.id);
-}
-
-function subscribeSocial(user) {
-  if (!firebaseReady || !user || user.isAnonymous) return;
-  stopRequests(); stopFriends(); stopInvites();
-  stopRequests = onSnapshot(query(collection(db, 'friendRequests'), where('toUid', '==', user.uid)), (snapshot) => {
-    state.requests = snapshot.docs.map((item) => ({ id: item.id, ...item.data() })).filter((item) => item.status === 'pending');
-    render();
-  }, (error) => reportSocialError('Friend request listener', error));
-  stopFriends = onSnapshot(query(collection(db, 'friendships'), where('memberUids', 'array-contains', user.uid)), (snapshot) => {
-    state.friends = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
-    render();
-  }, (error) => reportSocialError('Friend list listener', error));
-  stopInvites = onSnapshot(query(collection(db, 'gameInvites'), where('toUid', '==', user.uid)), (snapshot) => {
-    state.invites = snapshot.docs.map((item) => ({ id: item.id, ...item.data() })).filter((item) => item.status === 'pending');
-    render();
-  }, (error) => reportSocialError('Game invite listener', error));
-}
-
-function reportSocialError(source, error) {
-  console.warn(`[PSD-gaming] ${source}:`, error?.message);
-  const message = `Friends and invites could not be loaded. ${friendlyError(error)}`;
-  if (state.socialError === message) return;
-  state.socialError = message;
-  render();
 }
 
 function startPractice(gameId) {
@@ -589,72 +518,6 @@ async function runLiveCheck() {
   }
   state.liveCheck = { running: false, steps };
   render();
-}
-
-function requestFriendSearch(form) {
-  if (!state.user || state.user.isAnonymous || !state.profile) throw new Error('Create an account with a username before adding friends.');
-  const username = String(new FormData(form).get('username') || '').trim().toLowerCase();
-  if (!/^[a-z0-9_]{3,18}$/.test(username)) throw new Error('Enter a valid 3–18 character username.');
-  state.friendSearchTerm = username;
-  state.friendResults = [];
-  render();
-  void (async () => {
-    try {
-      const results = await getDocs(query(collection(db, 'profiles'), where('usernameLower', '==', username), limit(5)));
-      state.friendResults = results.docs.map((item) => item.data()).filter((profile) => profile.uid !== state.user.uid && !state.friends.some((friend) => (friend.memberUids || []).includes(profile.uid)));
-      render();
-      if (!state.friendResults.length) showToast('No available player found with that username.', 'warning');
-    } catch (error) {
-      showToast(friendlyError(error), 'warning');
-    }
-  })();
-}
-
-async function sendFriendRequest(uid, name) {
-  if (!state.user || state.user.isAnonymous || !state.profile) throw new Error('Sign in with a username to add friends.');
-  await setDoc(doc(collection(db, 'friendRequests')), {
-    fromUid: state.user.uid,
-    toUid: uid,
-    fromName: state.profile.username,
-    toName: name,
-    status: 'pending',
-    createdAt: serverTimestamp(),
-  });
-  state.friendResults = [];
-  showToast(`Friend request sent to @${name}.`);
-}
-
-async function respondToFriend(requestId, accepted) {
-  if (!state.user || !state.profile) throw new Error('Sign in to manage friend requests.');
-  const requestRef = doc(db, 'friendRequests', requestId);
-  const snapshot = await getDoc(requestRef);
-  if (!snapshot.exists()) throw new Error('That friend request is no longer available.');
-  const request = snapshot.data();
-  if (request.toUid !== state.user.uid || request.status !== 'pending') throw new Error('This request can no longer be changed.');
-  if (!accepted) {
-    await updateDoc(requestRef, { status: 'declined', respondedAt: serverTimestamp() });
-    showToast('Friend request declined.');
-    return;
-  }
-  const memberUids = [request.fromUid, request.toUid].sort();
-  const friendRef = doc(db, 'friendships', memberUids.join('_'));
-  const batch = writeBatch(db);
-  batch.update(requestRef, { status: 'accepted', respondedAt: serverTimestamp() });
-  batch.set(friendRef, {
-    memberUids,
-    memberNames: { [request.fromUid]: request.fromName, [request.toUid]: request.toName || state.profile.username },
-    requestId,
-    createdAt: serverTimestamp(),
-  });
-  await batch.commit();
-  showToast(`You and @${request.fromName} are now friends.`);
-}
-
-async function joinGameInvite(inviteId, roomId) {
-  const inviteRef = doc(db, 'gameInvites', inviteId);
-  await updateDoc(inviteRef, { status: 'accepted', respondedAt: serverTimestamp() });
-  state.modal = null;
-  setHash(`room/${roomId}`);
 }
 
 async function handleUsernameSetupSubmit(form) {
