@@ -2,8 +2,19 @@
  * line engine — place a mark on a square grid and connect N in a row.
  * Games: Pixel Tic-Tac-Toe (3x3, connect 3), Neon Gomoku (9x9, connect 5).
  */
+
+/** @typedef {import('../types.js').Game} Game */
+/** @typedef {import('../types.js').Player} Player */
+/** @typedef {import('../types.js').GameState} GameState */
+/** @typedef {import('../types.js').Action} Action */
+
 import { advanceTurn, assertPlaying, assertTurn, newBase, resolveLineWinner } from './shared.js';
 
+/**
+ * @param {Game} game
+ * @param {Player[]} players
+ * @returns {GameState}
+ */
 export function createInitialState(game, players) {
   const size = game.options.size;
   return {
@@ -14,6 +25,14 @@ export function createInitialState(game, players) {
   };
 }
 
+/**
+ * @param {Game} game
+ * @param {GameState} state
+ * @param {string} uid
+ * @param {Action} action
+ * @param {Player[]} players
+ * @returns {GameState}
+ */
 export function applyAction(game, state, uid, action, players) {
   assertPlaying(state);
   assertTurn(state, uid);

@@ -69,7 +69,7 @@ export function describeFirebaseError(error, context = {}) {
   const tagged = error && typeof error === 'object' ? errorContexts.get(error) : null;
   const { online = true, hostname = '', method = '' } = { ...tagged, ...context };
   const code = getFirebaseErrorCode(error);
-  const rawMessage = typeof error?.message === 'string' ? error.message : '';
+  const rawMessage = typeof /** @type {any} */ (error)?.message === 'string' ? /** @type {any} */ (error).message : '';
 
   if (!online && ['unavailable', 'deadline-exceeded', 'auth/network-request-failed'].includes(code)) {
     return OFFLINE_MESSAGE;
@@ -106,7 +106,7 @@ export function describeFirebaseError(error, context = {}) {
 
   // A Firebase error with no dedicated wording: say so plainly instead of showing the SDK's
   // "Firebase: Error (auth/xyz)." text. App-level Errors keep their own (already friendly) message.
-  if (error?.name === 'FirebaseError' && code) {
+  if (/** @type {any} */ (error)?.name === 'FirebaseError' && code) {
     return `Firebase returned an error (${code}). Try again; the browser console has more detail.`;
   }
   return rawMessage || 'Something went wrong. Please try again.';

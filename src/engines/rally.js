@@ -2,12 +2,31 @@
  * rally engine — alternating volleys: pick a lane, score a point, first to the target wins.
  * Games: Pong Rally, Paddle Wars, Air Hockey.
  */
+
+/** @typedef {import('../types.js').Game} Game */
+/** @typedef {import('../types.js').Player} Player */
+/** @typedef {import('../types.js').GameState} GameState */
+/** @typedef {import('../types.js').Action} Action */
+
 import { advanceTurn, assertPlaying, assertTurn, createRaceState } from './shared.js';
 
+/**
+ * @param {Game} game
+ * @param {Player[]} players
+ * @returns {GameState}
+ */
 export function createInitialState(game, players) {
   return createRaceState(game, players);
 }
 
+/**
+ * @param {Game} game
+ * @param {GameState} state
+ * @param {string} uid
+ * @param {Action} action
+ * @param {Player[]} players
+ * @returns {GameState}
+ */
 export function applyAction(game, state, uid, action, players) {
   assertPlaying(state);
   assertTurn(state, uid);

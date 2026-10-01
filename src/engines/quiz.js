@@ -6,6 +6,12 @@
  * The questions live here (next to the engine that reads them) so the catalog stays a list of
  * games. Moving them to Firestore is backlog item 77; `getQuizQuestion` is the seam to replace.
  */
+
+/** @typedef {import('../types.js').Game} Game */
+/** @typedef {import('../types.js').Player} Player */
+/** @typedef {import('../types.js').GameState} GameState */
+/** @typedef {import('../types.js').Action} Action */
+
 import { assertPlaying, finishByScore, newBase, scoresFor } from './shared.js';
 
 export const QUIZ_QUESTIONS = [
@@ -26,6 +32,11 @@ export function getQuizQuestion(index) {
   return QUIZ_QUESTIONS[index % QUIZ_QUESTIONS.length];
 }
 
+/**
+ * @param {Game} game
+ * @param {Player[]} players
+ * @returns {GameState}
+ */
 export function createInitialState(game, players) {
   const ids = players.map((player) => player.uid);
   return {
@@ -39,6 +50,14 @@ export function createInitialState(game, players) {
   };
 }
 
+/**
+ * @param {Game} game
+ * @param {GameState} state
+ * @param {string} uid
+ * @param {Action} action
+ * @param {Player[]} players
+ * @returns {GameState}
+ */
 export function applyAction(game, state, uid, action, players) {
   assertPlaying(state);
   const ids = players.map((player) => player.uid);

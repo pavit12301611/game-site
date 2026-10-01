@@ -2,6 +2,12 @@
  * rps engine — everyone locks in a hidden choice, the round resolves when the last one lands.
  * Games: Rock Paper Scissors, Laser Duel (mode rps), Coin Flip Clash (mode coin), Dice Duel (mode dice).
  */
+
+/** @typedef {import('../types.js').Game} Game */
+/** @typedef {import('../types.js').Player} Player */
+/** @typedef {import('../types.js').GameState} GameState */
+/** @typedef {import('../types.js').Action} Action */
+
 import { assertPlaying, finishByScore, hashNumber, newBase, scoresFor } from './shared.js';
 
 /** @param {string} mode @returns {string[]} the legal choices for this game. */
@@ -11,6 +17,11 @@ export function choicesForMode(mode) {
   return ['1', '2', '3', '4', '5', '6'];
 }
 
+/**
+ * @param {Game} game
+ * @param {Player[]} players
+ * @returns {GameState}
+ */
 export function createInitialState(game, players) {
   const ids = players.map((player) => player.uid);
   return {
@@ -25,6 +36,14 @@ export function createInitialState(game, players) {
   };
 }
 
+/**
+ * @param {Game} game
+ * @param {GameState} state
+ * @param {string} uid
+ * @param {Action} action
+ * @param {Player[]} players
+ * @returns {GameState}
+ */
 export function applyAction(game, state, uid, action, players) {
   assertPlaying(state);
   return checkRpsRound(game, state, players, uid, action);

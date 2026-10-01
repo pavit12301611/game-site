@@ -2,6 +2,12 @@
  * memory engine — flip two cards; a match scores and keeps the turn, a miss passes it on.
  * Games: Memory Match, Neon Pairs, Emoji Flip, Arcade Pairs.
  */
+
+/** @typedef {import('../types.js').Game} Game */
+/** @typedef {import('../types.js').Player} Player */
+/** @typedef {import('../types.js').GameState} GameState */
+/** @typedef {import('../types.js').Action} Action */
+
 import { advanceTurn, assertPlaying, assertTurn, finishByScore, newBase, scoresFor, shuffled } from './shared.js';
 
 /** Card faces. Keep at least as many entries as the largest `options.pairs` in the catalog. */
@@ -12,6 +18,12 @@ export function memoryCardIcon(index) {
   return MEMORY_ICONS[index % MEMORY_ICONS.length];
 }
 
+/**
+ * @param {Game} game
+ * @param {Player[]} players
+ * @param {string} [seed]
+ * @returns {GameState}
+ */
 export function createInitialState(game, players, seed) {
   const ids = players.map((player) => player.uid);
   const pairs = Math.min(game.options.pairs, MEMORY_ICONS.length);
@@ -27,6 +39,14 @@ export function createInitialState(game, players, seed) {
   };
 }
 
+/**
+ * @param {Game} game
+ * @param {GameState} state
+ * @param {string} uid
+ * @param {Action} action
+ * @param {Player[]} players
+ * @returns {GameState}
+ */
 export function applyAction(game, state, uid, action, players) {
   assertPlaying(state);
   assertTurn(state, uid);

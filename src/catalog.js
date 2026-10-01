@@ -13,6 +13,11 @@ import {
 import { memoryCardIcon } from './engines/memory.js';
 import { QUIZ_QUESTIONS, getQuizQuestion } from './engines/quiz.js';
 
+/** @typedef {import('./types.js').Game} Game */
+/** @typedef {import('./types.js').Player} Player */
+/** @typedef {import('./types.js').GameState} GameState */
+/** @typedef {import('./types.js').Action} Action */
+
 export const CATEGORIES = ['All games', 'Arcade', 'Party', 'Strategy', 'Puzzle'];
 
 export const GAMES = [
@@ -58,23 +63,24 @@ export const GAMES = [
   { id: 'mastermind', title: 'Mastermind', category: 'Puzzle', engine: 'code', icon: '▦', accent: 'violet', blurb: 'Read the hints, beat the clock, break the code.', options: { digits: 4, maxGuesses: 10 } },
 ];
 
-/** @param {string} gameId @returns {typeof GAMES[number] | null} */
+/** @param {string} gameId @returns {Game | null} */
 export function getGame(gameId) {
   return GAMES.find((game) => game.id === gameId) ?? null;
 }
 
 /**
- * @param {string | { id: string, engine: string }} gameOrId
- * @returns {{ id: string, engine: string } | null}
+ * @param {string | Game} gameOrId
+ * @returns {Game | null}
  */
 function resolveGame(gameOrId) {
   return typeof gameOrId === 'string' ? getGame(gameOrId) : gameOrId;
 }
 
 /**
- * @param {string | { id: string, engine: string }} gameOrId
- * @param {{ uid: string, name?: string }[]} players
+ * @param {string | Game} gameOrId
+ * @param {Player[]} players
  * @param {string} [seed]
+ * @returns {GameState}
  */
 export function createInitialGameState(gameOrId, players, seed = 'psd') {
   const game = resolveGame(gameOrId);
@@ -84,11 +90,12 @@ export function createInitialGameState(gameOrId, players, seed = 'psd') {
 }
 
 /**
- * @param {string | { id: string, engine: string }} gameOrId
- * @param {Record<string, any>} currentState
+ * @param {string | Game} gameOrId
+ * @param {GameState} currentState
  * @param {string} uid
- * @param {Record<string, any>} action
- * @param {{ uid: string }[]} players
+ * @param {Action} action
+ * @param {Player[]} players
+ * @returns {GameState}
  */
 export function applyGameAction(gameOrId, currentState, uid, action, players) {
   const game = resolveGame(gameOrId);

@@ -3,8 +3,20 @@
  * sinking every rival's fleet first. Shots are keyed `targetUid:index` per shooter.
  * Games: Sea Battle, Pixel Fleet, Alien Skirmish.
  */
+
+/** @typedef {import('../types.js').Game} Game */
+/** @typedef {import('../types.js').Player} Player */
+/** @typedef {import('../types.js').GameState} GameState */
+/** @typedef {import('../types.js').Action} Action */
+
 import { advanceTurn, assertPlaying, assertTurn, makeRandom, newBase } from './shared.js';
 
+/**
+ * @param {Game} game
+ * @param {Player[]} players
+ * @param {string} [seed]
+ * @returns {GameState}
+ */
 export function createInitialState(game, players, seed) {
   const boardSize = game.options.board;
   const random = makeRandom(`${seed}:${game.id}:fleet`);
@@ -23,6 +35,14 @@ export function createInitialState(game, players, seed) {
   };
 }
 
+/**
+ * @param {Game} game
+ * @param {GameState} state
+ * @param {string} uid
+ * @param {Action} action
+ * @param {Player[]} players
+ * @returns {GameState}
+ */
 export function applyAction(game, state, uid, action, players) {
   assertPlaying(state);
   assertTurn(state, uid);

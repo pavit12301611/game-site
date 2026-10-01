@@ -10,6 +10,12 @@
  * comes from `makeRandom(seed)` so the same room seed always deals the same game.
  */
 
+/** @typedef {import('../types.js').Game} Game */
+/** @typedef {import('../types.js').Player} Player */
+/** @typedef {import('../types.js').GameState} GameState */
+/** @typedef {import('../types.js').Action} Action */
+/** @typedef {import('../types.js').BaseState} BaseState */
+
 /** @template T @param {T} value @returns {T} */
 export function copy(value) {
   return structuredClone(value);
@@ -66,14 +72,17 @@ export function shuffled(values, seed) {
   return items;
 }
 
-/** @returns {string} the uid that plays after `uid`, wrapping around and skipping nobody. */
+/** @param {Player[]} players
+ * @param {string} uid
+ * @returns {string} the uid that plays after `uid`, wrapping around and skipping nobody.
+ */
 export function nextPlayer(players, uid) {
   const index = players.findIndex((player) => player.uid === uid);
   return players[(index + 1 + players.length) % players.length]?.uid ?? uid;
 }
 
 /**
- * @param {{ uid: string }[]} players
+ * @param {Player[]} players
  * @param {Record<string, number>} scores
  * @returns {string | null} the single highest scorer, or null for a tie / an all-zero board
  */
@@ -83,7 +92,11 @@ export function winnerFromScores(players, scores) {
   return winners.length === 1 ? winners[0].uid : null;
 }
 
-/** Fields every engine state starts from. @returns {Record<string, any>} */
+/** Fields every engine state starts from.
+ * @param {Player[]} players
+ * @param {string} [firstUid]
+ * @returns {BaseState}
+ */
 export function newBase(players, firstUid) {
   return {
     phase: 'playing',
@@ -99,7 +112,12 @@ export function scoresFor(ids) {
   return Object.fromEntries(ids.map((uid) => [uid, 0]));
 }
 
-/** Ends a score-based game: one clear leader wins, anything else is a draw. */
+/** Ends a score-based game: one clear leader wins, anything else is a draw.
+ * @param {GameState} state
+ * @param {Player[]} players
+ * @param {Record<string, number>} scoreMap
+ * @returns {void}
+ */
 export function finishByScore(state, players, scoreMap) {
   const winnerUid = winnerFromScores(players, scoreMap);
   state.phase = 'finished';
@@ -107,17 +125,27 @@ export function finishByScore(state, players, scoreMap) {
   state.result = winnerUid ? 'winner' : 'draw';
 }
 
-/** @throws {Error} when the match is already over. */
+/** @param {GameState} state
+ * @throws {Error} when the match is already over.
+ */
 export function assertPlaying(state) {
   if (state.phase !== 'playing') throw new Error('This round is already over.');
 }
 
-/** @throws {Error} when it is not `uid`'s turn (engines without turns simply do not call this). */
+/** @param {GameState} state
+ * @param {string} uid
+ * @throws {Error} when it is not `uid`'s turn (engines without turns simply do not call this).
+ */
 export function assertTurn(state, uid) {
   if (state.turnUid && state.turnUid !== uid) throw new Error('Wait for your turn.');
 }
 
-/** Hands the turn to the next player. */
+/** Hands the turn to the next player.
+ * @param {GameState} state
+ * @param {Player[]} players
+ * @param {string} uid
+ * @returns {void}
+ */
 export function advanceTurn(state, players, uid) {
   state.turnUid = nextPlayer(players, uid);
 }

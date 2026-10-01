@@ -141,6 +141,11 @@ export function nextToggledTheme(currentResolvedTheme = 'dark') {
 
 /**
  * Loads a validated list of game IDs from localStorage.
+ * @param {Storage} storage
+ * @param {string} key
+ * @param {Set<string> | null} [validIds]
+ * @param {number} [maxItems]
+ * @returns {string[]}
  */
 export function loadStoredGameIds(storage, key, validIds = null, maxItems = 40) {
   try {
@@ -148,7 +153,9 @@ export function loadStoredGameIds(storage, key, validIds = null, maxItems = 40) 
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
+    /** @type {Set<string>} */
     const seen = new Set();
+    /** @type {string[]} */
     const result = [];
     for (const item of parsed) {
       const id = String(item || '').trim();
@@ -177,6 +184,11 @@ export function saveStoredGameIds(storage, key, ids) {
 
 /**
  * Toggles a gameId in the favorites array and persists if storage is provided.
+ * @param {string[]} favorites
+ * @param {string} gameId
+ * @param {Set<string> | null} [validIds]
+ * @param {Storage | null} [storage]
+ * @returns {string[]}
  */
 export function toggleFavoriteGameId(favorites = [], gameId = '', validIds = null, storage = null) {
   const id = String(gameId || '').trim();
@@ -189,6 +201,12 @@ export function toggleFavoriteGameId(favorites = [], gameId = '', validIds = nul
 
 /**
  * Prepends a gameId to the recently played list (capped at maxItems) and persists if storage is provided.
+ * @param {string[]} recent
+ * @param {string} gameId
+ * @param {Set<string> | null} [validIds]
+ * @param {number} [maxItems]
+ * @param {Storage | null} [storage]
+ * @returns {string[]}
  */
 export function recordRecentGameId(recent = [], gameId = '', validIds = null, maxItems = 8, storage = null) {
   const id = String(gameId || '').trim();

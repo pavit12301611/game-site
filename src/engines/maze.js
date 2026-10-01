@@ -5,12 +5,23 @@
  * The layout is a fixed, hand-drawn 7x7 wall set (indices into the flat board) so every player
  * sees exactly the same maze. `scores` counts steps taken, so the winner is also the shortest route.
  */
+
+/** @typedef {import('../types.js').Game} Game */
+/** @typedef {import('../types.js').Player} Player */
+/** @typedef {import('../types.js').GameState} GameState */
+/** @typedef {import('../types.js').Action} Action */
+
 import { assertPlaying, newBase, scoresFor } from './shared.js';
 
 export const MAZE_WALLS = [8, 9, 11, 15, 18, 22, 24, 25, 29, 32, 33, 37, 38];
 
 const DIRECTIONS = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
 
+/**
+ * @param {Game} game
+ * @param {Player[]} players
+ * @returns {GameState}
+ */
 export function createInitialState(game, players) {
   const width = game.options.width;
   const height = game.options.height;
@@ -27,6 +38,14 @@ export function createInitialState(game, players) {
   };
 }
 
+/**
+ * @param {Game} game
+ * @param {GameState} state
+ * @param {string} uid
+ * @param {Action} action
+ * @param {Player[]} players
+ * @returns {GameState}
+ */
 export function applyAction(game, state, uid, action, players) {
   assertPlaying(state);
   const delta = DIRECTIONS[action.direction];

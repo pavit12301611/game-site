@@ -7,6 +7,12 @@
  * on its own.
  */
 import { assertPlaying, copy } from './shared.js';
+
+/** @typedef {import('../types.js').Game} Game */
+/** @typedef {import('../types.js').Player} Player */
+/** @typedef {import('../types.js').GameState} GameState */
+/** @typedef {import('../types.js').Action} Action */
+/** @typedef {import('../types.js').Engine} Engine */
 import * as battle from './battle.js';
 import * as code from './code.js';
 import * as drop from './drop.js';
@@ -25,7 +31,7 @@ export function engineIds() {
   return Object.keys(ENGINES);
 }
 
-/** @param {string} engineId @returns {{ createInitialState: Function, applyAction: Function } | null} */
+/** @param {string} engineId @returns {Engine | null} */
 export function getEngine(engineId) {
   return ENGINES[engineId] ?? null;
 }
@@ -33,10 +39,10 @@ export function getEngine(engineId) {
 export { assertPlaying, copy } from './shared.js';
 
 /**
- * @param {{ id: string, engine: string, options: object }} game
- * @param {{ uid: string, name?: string }[]} players
+ * @param {Game} game
+ * @param {Player[]} players
  * @param {string} [seed]
- * @returns {Record<string, any>} a fresh, Firestore-safe game state
+ * @returns {GameState} a fresh, Firestore-safe game state
  */
 export function createInitialGameState(game, players, seed = 'psd') {
   const engine = getEngine(game.engine);
@@ -46,6 +52,12 @@ export function createInitialGameState(game, players, seed = 'psd') {
 
 /**
  * Applies one move to a copy of `currentState` and returns the next state.
+ * @param {Game} game
+ * @param {GameState} currentState
+ * @param {string} uid
+ * @param {Action} action
+ * @param {Player[]} players
+ * @returns {GameState}
  * @throws {Error} with a player-facing message when the move is illegal.
  */
 export function applyGameAction(game, currentState, uid, action, players) {

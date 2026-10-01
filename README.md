@@ -70,13 +70,22 @@ Two things to know: the flag is **ignored by a production build** (`vite build`)
 
 ```bash
 npm test            # unit tests: no network, no Firebase credentials, no Java
+npm run typecheck   # tsc --checkJs over every pure module (JSDoc types)
 npm run test:rules  # firestore.rules against the Firestore emulator (needs Java)
 npm run audit       # npm audit --audit-level=high
 ```
 
-- `.github/workflows/ci.yml` runs `npm ci`, `npm test` and `npm run build` on every push and pull request, a `firestore-rules` job that installs Java and runs the emulator rules tests, and an informational `npm audit` job.
+- `.github/workflows/ci.yml` runs `npm ci`, `npm test`, `npm run typecheck` and `npm run build` on every push and pull request, a `firestore-rules` job that installs Java and runs the emulator rules tests, and an informational `npm audit` job.
 - Dependabot (`.github/dependabot.yml`) opens one grouped pull request for patch and minor updates every week. Major upgrades, such as `firebase` 12 or `vite` 8, arrive alone so they can be reviewed and tested on their own.
 - The game rules are locked by `tests/fixtures/engine-baseline.json`, which fingerprints every state of all 40 games and replays them on every run. If you change a rule on purpose, regenerate it with `node tests/fixtures/generate-engine-baseline.mjs` and say so in the pull request.
+
+### Type checking is JSDoc, not a rewrite
+
+`jsconfig.json` runs `tsc --checkJs` over every pure module (engines, catalog, helpers, config,
+errors, emulator and `firebase.js`), with the shared shapes named once in `src/types.js`.
+`src/main.js` is excluded until item 91 splits it: 1600 lines of DOM code is typed module by module,
+as each module is extracted. `noImplicitAny` is off for the same reason and gets switched on per
+module once the annotations are in place.
 
 ## Connection status: what the labels mean
 
@@ -250,6 +259,28 @@ A new Google account needs its own `admins/{googleUid}` document if it should be
 - For username friends, both players create an account. Open **Friends → Add by username**, send a request, and have the other player accept it. Use **Challenge** to create a room and deliver an in-app direct invite.
 - Use a second browser profile or an incognito window to test another player. To test a three-player room, select **3 players** and join from two separate browser profiles.
 - The app supports browser-native share when available and always provides a copyable room link.
+
+## Security headers (Vercel)
+
+`vercel.json` sets the response headers for every deployment: a Content-Security-Policy, HSTS,
+`X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, `X-Frame-Options` and
+`Cross-Origin-Opener-Policy: same-origin-allow-popups` (plain `same-origin` would break the Google
+sign-in popup). Hashed files under `/assets/` are cached for a year. `tests/vercel-headers.test.js`
+guards them, so a future edit cannot quietly drop the Firebase origins.
+
+Two deliberate `'unsafe-inline'` entries, and why:
+
+- `script-src 'unsafe-inline'` — `index.html` applies the saved theme in a tiny inline bootstrap
+  script before the bundle loads, and the game cards use `onerror` fallbacks for their artwork.
+- `style-src 'unsafe-inline'` — cards and progress bars set CSS custom properties through `style`
+  attributes, which no nonce can cover for DOM built at runtime.
+
+The CSP allows `https://*.googleapis.com`, `https://*.firebaseapp.com`, `https://*.firebaseio.com`
+(plus `wss://`) and `https://apis.google.com`, which is what Firebase Auth and Firestore need.
+
+If a deployment ever loses Google sign-in or goes quiet on Firestore, open the browser console: a CSP
+violation names the exact directive and origin, and the fix is one word in `vercel.json` (then
+redeploy). Headers only apply to Vercel deployments, never to `npm run dev`.
 
 ## Troubleshooting
 
