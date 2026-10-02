@@ -65,8 +65,11 @@ export async function sendGameAction(action) {
     return;
   }
   try {
-    await doOnlineAction(action);
+    const acknowledged = doOnlineAction(action);
+    // `doOnlineAction` has already drawn the optimistic frame synchronously. Match the sound to the
+    // press, not to a cross-region Firestore round trip.
     playUiTone('tap');
+    await acknowledged;
   } catch (error) {
     playUiTone('error');
     showToast(friendlyError(error), 'warning');

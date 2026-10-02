@@ -33,6 +33,8 @@ export const state = {
   room: null,
   roomId: null,
   roomError: '',
+  /** Inputs already drawn locally but not acknowledged by the room transaction yet. */
+  onlineActionsPending: 0,
   /** uid -> { lastSeenMs, status } for the current online room (src/online/presence.js). */
   presence: {},
   /** Server clock minus local clock, measured from our own heartbeat; 0 until known. */

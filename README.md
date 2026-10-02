@@ -84,7 +84,8 @@ Two things to know: the flag is **ignored by a production build** (`vite build`)
 | `src/cpu.js` | Local practice and the CPU opponent, using the same engines as online play. |
 | `src/diagnostics.js` | The setup dialog's "Run check" button. |
 | `src/online/session.js` | `ensureOnlineUser()`: guests are anonymous accounts, so a link never forces a sign-up. |
-| `src/online/rooms.js` | Create a room, join by link, start the match, make a move (all transactional). |
+| `src/online/rooms.js` | Create/join rooms and queue latency-compensated moves; Firestore transactions remain authoritative. |
+| `src/online/action-sync.js` | Pure optimistic-move replay, bounded idempotency markers, and rematch revision handling. |
 | `src/online/presence.js` | "Who is still in this room": your heartbeat in `rooms/{roomId}/presence/{uid}`, everyone else's read back (see below). |
 | `src/presence-status.js` | The pure half of presence: the here / away / left verdicts and the heartbeat loop, unit-tested with fake timers. |
 | `src/online/admin.js` | The admin dashboard's reads. |
@@ -110,6 +111,20 @@ is drawn anyway. The collaborators are passed in from `src/app.js`, which is wha
 `tests/boot.test.js` run the Firebase branch in Node. The production outage that motivated this was
 a `ReferenceError` in that branch: two functions called in `src/app.js` without an import, which
 stopped the first paint on Vercel only - every local run has `firebaseReady === false`.
+
+### Fast online moves
+
+Online input uses latency compensation: the same game engine that validates the authoritative move
+also draws it locally before the Firestore round trip finishes. Outstanding inputs are replayed over
+new room snapshots, and a bounded action-id history prevents a committed move from appearing twice.
+The UI shows `Applied instantly · syncing …` until the server acknowledges it. If the transaction is
+rejected (for example, another player already ended the match), only that optimistic input is rolled
+back and the normal player-facing error appears.
+
+Only one transaction per browser is in flight. Inputs made during it are committed together in the
+next transaction, which matters most for tap races and maze key repeats: they no longer create a pile
+of transactions that contend with each other. Transactions still re-read the room and remain the
+source of truth, so the faster feedback does not weaken concurrent-move safety.
 
 ### Presence: who is still in the room
 
