@@ -16,13 +16,14 @@
 
 import { collection, doc, onSnapshot, runTransaction, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase.js';
-import { applyGameAction, createInitialGameState, getGame } from '../catalog.js';
+import { createInitialGameState, getGame } from '../catalog.js';
 import { friendlyError } from '../errors.js';
 import { render } from '../render.js';
 import { state } from '../state.js';
 import { playerDisplayName } from '../ui/players.js';
 import { ensureOnlineUser } from './session.js';
 import { deletePresenceIn, startPresence, stopPresence } from './presence.js';
+import { roomAfterOnlineActions } from './action-sync.js';
 import { DISPLAY_NAME_STORAGE_KEY } from '../helpers.js';
 
 /**
@@ -38,6 +39,102 @@ const emptyUnsubscribe = () => {};
 let stopRoom = emptyUnsubscribe;
 /** Which room id a join is in flight for, so a double navigation cannot open it twice. */
 let roomOpening = '';
+let actionSequence = 0;
+
+/**
+ * One queue per room visit. Only one transaction from this browser runs at a time; actions pressed
+ * while it is in flight become the next batch. That removes self-contention in fast games (a tap
+ * race used to start one competing transaction per tap).
+ * @typedef {{
+ *   id: string,
+ *   action: Record<string, any>,
+ *   status: 'queued' | 'sending',
+ *   resolve: () => void,
+ *   reject: (error: unknown) => void,
+ * }} PendingAction
+ * @typedef {{
+ *   roomId: string,
+ *   uid: string,
+ *   authoritativeRoom: Record<string, any> | null,
+ *   pending: PendingAction[],
+ *   processing: boolean,
+ * }} ActionContext
+ */
+
+/** @type {ActionContext | null} */
+let activeActions = null;
+
+/** A short, unique id used to make replay around a snapshot/commit boundary idempotent. */
+function nextActionId(uid) {
+  actionSequence += 1;
+  const randomId = globalThis.crypto?.randomUUID?.();
+  return randomId || `${uid.slice(0, 8)}-${Date.now().toString(36)}-${actionSequence.toString(36)}`;
+}
+
+/** @param {ActionContext} context */
+function isActiveContext(context) {
+  return activeActions === context && state.roomId === context.roomId;
+}
+
+/**
+ * Draw the last server room plus every input that is still on its way. If a remote move made one
+ * of those inputs invalid, leave it out; its transaction will reject it with the useful error.
+ * @param {ActionContext} context
+ * @param {boolean} [paint]
+ */
+function projectPendingActions(context, paint = true) {
+  if (!isActiveContext(context) || !context.authoritativeRoom) return;
+  let projected = context.authoritativeRoom;
+  for (const entry of context.pending) {
+    try {
+      projected = roomAfterOnlineActions(projected, context.uid, [entry]).room;
+    } catch {
+      // The authoritative transaction decides the error. A stale optimistic frame must not win.
+    }
+  }
+  state.room = projected;
+  state.onlineActionsPending = context.pending.length;
+  if (paint) render();
+}
+
+/** @param {ActionContext} context */
+async function flushOnlineActions(context) {
+  if (context.processing) return;
+  const batch = context.pending.filter((entry) => entry.status === 'queued');
+  if (!batch.length) return;
+  context.processing = true;
+  for (const entry of batch) entry.status = 'sending';
+
+  const roomRef = doc(store, 'rooms', context.roomId);
+  let newestRoom = context.authoritativeRoom;
+  try {
+    const committedRoom = await runTransaction(store, async (transaction) => {
+      const snapshot = await transaction.get(roomRef);
+      if (!snapshot.exists()) throw new Error('The room was closed.');
+      const room = { id: snapshot.id, ...snapshot.data() };
+      newestRoom = room;
+      const result = roomAfterOnlineActions(room, context.uid, batch);
+      if (result.appliedIds.length) transaction.update(roomRef, roomUpdateForMove(result.room.state));
+      return result.room;
+    });
+    context.authoritativeRoom = committedRoom;
+    const sent = new Set(batch);
+    context.pending = context.pending.filter((entry) => !sent.has(entry));
+    projectPendingActions(context);
+    for (const entry of batch) entry.resolve();
+  } catch (error) {
+    // Roll back only the rejected optimistic inputs. When the transaction managed to read a newer
+    // server room before rejecting, use it immediately instead of waiting for another snapshot.
+    if (newestRoom) context.authoritativeRoom = newestRoom;
+    const failed = new Set(batch);
+    context.pending = context.pending.filter((entry) => !failed.has(entry));
+    projectPendingActions(context);
+    for (const entry of batch) entry.reject(error);
+  } finally {
+    context.processing = false;
+    if (context.pending.some((entry) => entry.status === 'queued')) void flushOnlineActions(context);
+  }
+}
 
 /**
  * Listen to a room you are a member of, and start saying "I am here" in it.
@@ -48,18 +145,28 @@ export function subscribeToRoom(roomId, uid) {
   stopRoom();
   state.roomId = roomId;
   state.roomError = '';
+  if (!activeActions || activeActions.roomId !== roomId || activeActions.uid !== uid) {
+    activeActions = { roomId, uid, authoritativeRoom: null, pending: [], processing: false };
+    state.onlineActionsPending = 0;
+  }
+  const context = activeActions;
   startPresence(roomId, uid);
   stopRoom = onSnapshot(doc(store, 'rooms', roomId), (snapshot) => {
+    if (!isActiveContext(context)) return;
     if (!snapshot.exists()) {
+      context.authoritativeRoom = null;
       state.room = null;
+      state.onlineActionsPending = 0;
       state.roomError = 'This invite room no longer exists.';
     } else {
-      state.room = { id: snapshot.id, ...snapshot.data() };
+      context.authoritativeRoom = { id: snapshot.id, ...snapshot.data() };
       state.roomError = '';
-      if (state.room.gameId && !getGame(state.room.gameId)) state.roomError = 'This room points to a game that is not in the catalog.';
+      projectPendingActions(context, false);
+      if (state.room?.gameId && !getGame(state.room.gameId)) state.roomError = 'This room points to a game that is not in the catalog.';
     }
     render();
   }, (error) => {
+    if (!isActiveContext(context)) return;
     state.roomError = friendlyError(error);
     render();
   });
@@ -212,20 +319,36 @@ export function roomUpdateForMove(nextState) {
   return { state: nextState, status: 'finished', winnerUid: nextState.winnerUid ?? null, updatedAt: serverTimestamp() };
 }
 
-export async function doOnlineAction(action) {
+/**
+ * Draw an online input now, then reconcile it through the room transaction in the background.
+ *
+ * This intentionally is not an `async function`: validation and the optimistic frame happen before
+ * a Promise is returned, so callers can play feedback at press time rather than after network RTT.
+ * @param {Record<string, any>} action
+ * @returns {Promise<void>}
+ */
+export function doOnlineAction(action) {
   if (!state.room || !state.user) throw new Error('Join a room before making a move.');
-  const roomRef = doc(store, 'rooms', state.room.id);
-  const user = state.user;
-  await runTransaction(store, async (transaction) => {
-    const snapshot = await transaction.get(roomRef);
-    if (!snapshot.exists()) throw new Error('The room was closed.');
-    const room = snapshot.data();
-    const players = (room.playerUids || []).map((uid, index) => ({ uid, name: room.playerNames?.[uid] || `Player ${index + 1}` }));
-    if (!players.some((player) => player.uid === user.uid)) throw new Error('You are no longer in this room.');
-    const game = getGame(room.gameId);
-    if (!game) throw new Error('This room points to a game that is not in the catalog.');
-    const nextState = applyGameAction(game, room.state, user.uid, action, players);
-    transaction.update(roomRef, roomUpdateForMove(nextState));
+  const context = activeActions;
+  if (!context || context.roomId !== state.room.id || context.uid !== state.user.uid) {
+    throw new Error('The room is still connecting. Try that move again.');
+  }
+
+  const entryBase = {
+    id: nextActionId(context.uid),
+    action,
+  };
+  // Validate against everything already visible and produce the instant frame before enqueuing.
+  const preview = roomAfterOnlineActions(state.room, context.uid, [entryBase]).room;
+
+  return new Promise((resolve, reject) => {
+    /** @type {PendingAction} */
+    const entry = { ...entryBase, status: 'queued', resolve, reject };
+    context.pending.push(entry);
+    state.room = preview;
+    state.onlineActionsPending = context.pending.length;
+    render();
+    void flushOnlineActions(context);
   });
 }
 
@@ -233,8 +356,10 @@ export function stopActiveRoom() {
   stopPresence({ markLeft: true });
   stopRoom();
   stopRoom = emptyUnsubscribe;
+  activeActions = null;
   state.room = null;
   state.roomId = null;
   state.roomError = '';
+  state.onlineActionsPending = 0;
   roomOpening = '';
 }

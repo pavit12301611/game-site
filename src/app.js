@@ -47,6 +47,7 @@ import {
   openRoomFromLink,
   startRoom,
 } from './online/rooms.js';
+import { markOnlineReset } from './online/action-sync.js';
 import { showToast } from './ui/toast.js';
 import { setupError } from './connection.js';
 import {
@@ -261,14 +262,17 @@ async function resetCurrentGame() {
     }
     if (!state.room || !state.user) return;
     if (state.room.hostUid !== state.user.uid) throw new Error('Only the room host can reset the game.');
+    if (state.onlineActionsPending) throw new Error('Your last move is still syncing. The rematch will be ready in a moment.');
     const roomId = state.room.id;
+    const resetSeed = `${roomId}:${Date.now()}`;
     await runTransaction(store, async (transaction) => {
       const roomRef = doc(store, 'rooms', roomId);
       const snapshot = await transaction.get(roomRef);
       if (!snapshot.exists()) throw new Error('The room no longer exists.');
       const room = snapshot.data();
       const players = room.playerUids.map((uid) => ({ uid, name: room.playerNames?.[uid] || 'Player' }));
-      transaction.update(roomRef, { state: createInitialGameState(room.gameId, players, `${room.id}:${Date.now()}`), status: 'playing', updatedAt: serverTimestamp() });
+      const freshState = createInitialGameState(room.gameId, players, resetSeed);
+      transaction.update(roomRef, { state: markOnlineReset(freshState, room.state), status: 'playing', winnerUid: null, updatedAt: serverTimestamp() });
     });
     state.codeDraft = [0, 0, 0, 0];
   } catch (error) {
