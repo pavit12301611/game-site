@@ -88,7 +88,7 @@ Two things to know: the flag is **ignored by a production build** (`vite build`)
 | `src/online/action-sync.js` | Pure optimistic-move replay, bounded idempotency markers, and rematch revision handling. |
 | `src/online/presence.js` | "Who is still in this room": your heartbeat in `rooms/{roomId}/presence/{uid}`, everyone else's read back (see below). |
 | `src/presence-status.js` | The pure half of presence: the here / away / left verdicts and the heartbeat loop, unit-tested with fake timers. |
-| `src/online/admin.js` | The admin dashboard's reads. |
+| `src/online/admin.js` | The admin studio's reads and privileged actions (delete/kick/grant/revoke - each one re-checks the flag server-side and refreshes the dashboard). |
 | `src/views/` | Pure "state in, HTML out": `shell`, `pages`, `modals`, `boards`, `fatal`. |
 | `src/ui/` | Small pieces: `html` (icons, escaping), `players`, `toast`, `theme`, `sound`, `prefs`, `links`. |
 | `src/engines/` | One module per game engine, with the catalog in `src/catalog.js`. |
@@ -322,7 +322,7 @@ Google sign-in (popup or redirect) only works on hosts Firebase knows about. On 
 2. Open the **Rules** tab.
 3. Replace the starter rules with the complete contents of this repository’s [`firestore.rules`](./firestore.rules) file, then click **Publish**.
 
-The rules keep room documents unlistable, limit rooms to their invite link, require Firebase Auth for writes, constrain joining to waiting rooms with open seats, let each member write only their own presence heartbeat under the room (and only members read them), protect friend requests, and make admin flags console-managed only. A link to a room that does not exist reads as "not found" (so players see *invite link is invalid or has expired* rather than a permission error), and admins can additionally list rooms and read `friendships` (the admin dashboard shows both counts). They intentionally do **not** make game outcomes cheat-proof: these are casual peer rooms, not ranked or prize games. For a competitive leaderboard, move authoritative game actions into Cloud Functions / a trusted server. Google accounts use the same authenticated UID checks and existing atomic `usernames`/`profiles` claim rules; no Firestore rule change is required for Google sign-in.
+The rules keep room documents unlistable, limit rooms to their invite link, require Firebase Auth for writes, constrain joining to waiting rooms with open seats, let each member write only their own presence heartbeat under the room (and only members read them), and protect friend requests. Admin flags start console-managed: only the **first** one is created by hand, because `create`/writes on `admins/**` require the caller to already hold a flag. After that, flagged admins manage everything from the **Admin studio** - rooms (inspect, kick lobby members, delete with heartbeats), players (remove a profile and free its username), social data (unlink friends, delete stale requests and invites), and other admin flags - and Firestore re-checks `admins/{uid}.admin == true` on every one of those writes, so a forged client flag changes nothing. A link to a room that does not exist reads as "not found" (so players see *invite link is invalid or has expired* rather than a permission error). The rules intentionally do **not** make game outcomes cheat-proof: these are casual peer rooms, not ranked or prize games. For a competitive leaderboard, move authoritative game actions into Cloud Functions / a trusted server. Google accounts use the same authenticated UID checks and existing atomic `usernames`/`profiles` claim rules; no Firestore rule change is required for Google sign-in.
 
 After you click **Publish**, check the rules against the real app once. It takes about two minutes and exercises every rule the game uses:
 
@@ -388,7 +388,7 @@ Google's Firebase-managed provider setup does not require adding a Google client
    - Type: `boolean`
    - Value: `true`
 
-5. Refresh the site (or sign out and in). **Admin studio** will appear in the sidebar. The rules permit reading only your own admin document and deny all client writes to the `admins` collection; add or revoke an admin manually in the Firebase Console.
+5. Refresh the site (or sign out and in). **Admin studio** will appear in the sidebar with the full control room: rooms, players, social graph and admin access, with every destructive action behind a confirm dialog and re-checked by Firestore. From here you can promote (and revoke) other admins directly in the **Access** tab - only this very first flag still needs the console, because writing `admins/**` requires already holding a flag.
 
 A new Google account needs its own `admins/{googleUid}` document if it should be an administrator. The client never treats a Google display name, email, or a hidden UI button as authorization; Firestore evaluates `admins/{uid}.admin == true` on protected reads and writes.
 
@@ -451,7 +451,7 @@ Developer console: a missing or invalid config is always logged (`console.error`
 - **Local personalization:** Favorites, recently played games, theme preference, subtle sound preference, and guest display name live in localStorage; no extra Firebase collection is required.
 - **Original artwork:** one optimized hero illustration and five reusable category/multiplayer covers live under `public/images/`. Cards use responsive `object-fit: cover`, lazy loading below the first shelf, and CSS artwork fallbacks if an image cannot load.
 - **Theme / accessibility:** an OS-aware light/dark theme toggle with persistence, visible keyboard focus, reduced-motion support, semantic controls, keyboard arrows in maze games, Space for tap races, and responsive layouts down to 320px wide. Every game screen includes a concise controls/rules panel generated from its engine.
-- **Admin:** `admins/{authUid}` with `admin: true`. The client hides the admin page unless the signed-in UID is approved; Firestore rules separately enforce admin-only room listing, let admins read `friendships` for the dashboard count, and deny client-side admin edits.
+- **Admin:** `admins/{authUid}` with `admin: true`. The client hides the admin page unless the signed-in UID is approved, and Firestore rules enforce the actual gate on every read and write. The studio has five sections: **Overview** (live metrics + recent rooms), **Rooms** (kick lobby members, delete rooms with their heartbeats), **Players** (copy UIDs, grant/revoke admin, remove a player and free their username), **Social** (unlink friend pairs, delete stale friend requests and game invites) and **Access** (list admins, promote by UID, revoke - self-lockout is ruled out server-side). The first admin flag is always added by hand in the Firebase console; every later one can come from the studio itself.
 
 ## Notes
 

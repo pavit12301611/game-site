@@ -49,6 +49,8 @@ export const state = {
   invites: [],
   adminData: null,
   adminLoading: false,
+  /** Which admin studio section is open: overview | rooms | players | social | access. */
+  adminTab: 'overview',
   selectedBattleTarget: '',
   codeDraft: [0, 0, 0, 0],
   displayName: localStorage.getItem(DISPLAY_NAME_STORAGE_KEY) || '',

@@ -18,9 +18,16 @@ service cloud.firestore {
     }
 
     match /admins/{uid} {
-      // Admin flags are provisioned manually in the Firebase console, never from the client.
-      allow get: if signedIn() && request.auth.uid == uid;
-      allow list, create, update, delete: if false;
+      // The first flag is provisioned manually in the Firebase console (nobody can mint one from
+      // the client without already being an admin). After that, admins manage access from the
+      // admin studio: a document holds exactly one boolean field, and a flag can never lock
+      // itself out by deleting its own document - revoke someone else, or use the console.
+      allow get: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow list: if isAdmin();
+      allow create, update: if isAdmin()
+        && request.resource.data.keys().hasOnly(['admin'])
+        && request.resource.data.admin is bool;
+      allow delete: if isAdmin() && request.auth.uid != uid;
     }
 
     match /profiles/{uid} {
@@ -44,7 +51,7 @@ service cloud.firestore {
         && request.resource.data.uid == resource.data.uid
         && request.resource.data.username == resource.data.username
         && request.resource.data.usernameLower == resource.data.usernameLower;
-      allow delete: if false;
+      allow delete: if isAdmin();
     }
 
     match /usernames/{usernameLower} {
@@ -59,7 +66,10 @@ service cloud.firestore {
         && request.resource.data.createdAt == request.time
         && existsAfter(/databases/$(database)/documents/profiles/$(request.auth.uid))
         && getAfter(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.usernameLower == usernameLower;
-      allow update, delete: if false;
+      // A reservation is immutable, but an admin may free a name (the admin studio removes a
+      // player's profile and their reservation in one batch).
+      allow update: if false;
+      allow delete: if isAdmin();
     }
 
     match /friendRequests/{requestId} {
@@ -67,7 +77,8 @@ service cloud.firestore {
       allow get: if signedIn()
         && (resource == null || resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid);
       allow list: if signedIn()
-        && (resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid);
+          && (resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid)
+        || isAdmin();
       allow create: if signedIn()
         && request.resource.data.keys().hasOnly(['fromUid', 'toUid', 'fromName', 'toName', 'status', 'createdAt'])
         && request.resource.data.fromUid == request.auth.uid
@@ -83,8 +94,8 @@ service cloud.firestore {
         && request.resource.data.status in ['accepted', 'declined']
         && request.resource.data.respondedAt == request.time;
       allow delete: if signedIn()
-        && resource.data.fromUid == request.auth.uid
-        && resource.data.status == 'pending';
+        && ((resource.data.fromUid == request.auth.uid && resource.data.status == 'pending')
+          || isAdmin());
     }
 
     match /friendships/{friendshipId} {
@@ -104,7 +115,9 @@ service cloud.firestore {
         && getAfter(/databases/$(database)/documents/friendRequests/$(request.resource.data.requestId)).data.status == 'accepted'
         && getAfter(/databases/$(database)/documents/friendRequests/$(request.resource.data.requestId)).data.fromUid in request.resource.data.memberUids
         && getAfter(/databases/$(database)/documents/friendRequests/$(request.resource.data.requestId)).data.toUid in request.resource.data.memberUids;
-      allow update, delete: if false;
+      allow update: if false;
+      // Admins can unlink a pair from the admin studio.
+      allow delete: if isAdmin();
     }
 
     match /gameInvites/{inviteId} {
@@ -112,7 +125,8 @@ service cloud.firestore {
       allow get: if signedIn()
         && (resource == null || resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid);
       allow list: if signedIn()
-        && (resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid);
+          && (resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid)
+        || isAdmin();
       allow create: if signedIn()
         && request.resource.data.keys().hasOnly(['fromUid', 'toUid', 'fromName', 'toName', 'friendshipId', 'roomId', 'gameId', 'status', 'createdAt'])
         && request.resource.data.fromUid == request.auth.uid
@@ -130,7 +144,7 @@ service cloud.firestore {
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'respondedAt'])
         && request.resource.data.status in ['accepted', 'declined']
         && request.resource.data.respondedAt == request.time;
-      allow delete: if signedIn() && resource.data.fromUid == request.auth.uid;
+      allow delete: if signedIn() && (resource.data.fromUid == request.auth.uid || isAdmin());
     }
 
     match /rooms/{roomId} {
@@ -157,7 +171,9 @@ service cloud.firestore {
         && request.resource.data.state is map
         && request.resource.data.createdAt == request.time
         && request.resource.data.updatedAt == request.time;
-      allow update: if signedIn() && (
+      // Admins bypass every player-level constraint: the admin studio can kick a lobby member,
+      // force-close a match, or rewrite room data, and Firestore itself checks their flag.
+      allow update: if isAdmin() || (signedIn() && (
         (
           resource.data.status == 'waiting'
           && request.resource.data.status == 'waiting'
@@ -250,7 +266,7 @@ service cloud.firestore {
             )
           )
         )
-      );
+      ));
       allow delete: if signedIn()
         && (isAdmin()
           || (resource.data.hostUid == request.auth.uid && resource.data.status == 'waiting')

@@ -92,6 +92,11 @@ export function renderModal() {
   if (!state.modal) return '';
   const modal = state.modal;
   if (modal.type === 'result') return renderResultModal();
+  if (modal.type === 'confirm') {
+    // The admin studio's "are you sure?" gate. `modal.run` is the callback that executes the
+    // confirmed work; src/app.js invokes it from the confirm button. Text is plain and escaped.
+    return `<div class="modal-backdrop" data-action="modal-backdrop"><section class="modal-card confirm-modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title"><button class="modal-close" data-action="close-modal" aria-label="Cancel">${icon('close')}</button><div class="username-badge confirm-badge">!</div><div class="eyebrow">Confirm before it happens</div><h2 id="confirm-title">${esc(modal.title || 'Are you sure?')}</h2><p>${esc(modal.body || '')}</p><div class="conflict-actions"><button class="button button-danger button-full" data-action="confirm-modal-run">${icon('trash')} ${esc(modal.confirmLabel || 'Yes, do it')}</button><button class="button button-outline button-full" data-action="close-modal">Keep it as is</button></div></section></div>`;
+  }
   if (modal.type === 'game') {
     const game = getGame(modal.gameId);
     if (!game) return '';

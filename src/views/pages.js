@@ -152,12 +152,136 @@ export function timeAgo(timestamp) {
 }
 
 
+/** The five admin studio tabs. */
+const ADMIN_TABS = [
+  ['overview', 'Overview'],
+  ['rooms', 'Rooms'],
+  ['players', 'Players'],
+  ['social', 'Social'],
+  ['access', 'Access'],
+];
+
+/** A short, recognisable slice of a Firebase UID. */
+function shortUid(uid = '') {
+  return uid.length > 10 ? `${uid.slice(0, 6)}…${uid.slice(-3)}` : uid;
+}
+
+/** The delete button every destructive admin row shares (confirmations live in src/app.js). */
+function adminDeleteButton(action, attrs, label) {
+  return `<button class="icon-button subtle is-danger" data-action="${action}" ${attrs} aria-label="${esc(label)}" title="${esc(label)}">${icon('trash')}</button>`;
+}
+
+/** Kick chips for the players of a waiting lobby, each with its own confirm behind it. */
+function adminRoomPlayers(room) {
+  const uids = room.playerUids || [];
+  const names = room.playerNames || {};
+  return `<div class="admin-chip-row">${uids.map((uid) => {
+    const name = names[uid] || 'Player';
+    const kick = room.status === 'waiting'
+      ? `<button class="chip-kick" data-action="admin-kick-player" data-room-id="${esc(room.id)}" data-uid="${esc(uid)}" data-name="${esc(name)}" aria-label="Kick ${esc(name)} from this lobby" title="Kick from lobby">${icon('close')}</button>`
+      : '';
+    return `<span class="player-chip">${esc(name)}${uid === room.hostUid ? '<i class="host-chip">Host</i>' : ''}${kick}</span>`;
+  }).join('')}</div>`;
+}
+
+function renderAdminRoomsTable(rooms, { limitRows = Infinity } = {}) {
+  if (!rooms.length) return `<div class="empty-inline"><span>◉</span><b>No rooms yet</b><small>The first private room will show up here.</small></div>`;
+  const rows = [...rooms]
+    .sort((a, b) => (timestampDate(b.createdAt)?.getTime() || 0) - (timestampDate(a.createdAt)?.getTime() || 0))
+    .slice(0, limitRows)
+    .map((room) => `<tr><td><span class="table-game">${esc(getGame(room.gameId)?.title || room.gameId)}</span></td><td>${adminRoomPlayers(room)}</td><td><span class="status-pill status-${room.status}">${esc(room.status || 'unknown')}</span></td><td>${timeAgo(room.createdAt)}</td><td class="admin-actions">${adminDeleteButton('admin-delete-room', `data-room-id="${esc(room.id)}" data-name="${esc(room.hostName || 'this room')}"`, `Delete the ${esc(getGame(room.gameId)?.title || 'room')} room`)}</td></tr>`)
+    .join('');
+  return `<div class="admin-table-wrap"><table class="admin-table"><thead><tr><th scope="col">Game</th><th scope="col">Players</th><th scope="col">Status</th><th scope="col">Created</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+function renderAdminOverview(data) {
+  const pendingRequests = data.requests.filter((request) => request.status === 'pending').length;
+  const pendingInvites = data.invites.filter((invite) => invite.status === 'pending').length;
+  const liveRooms = data.rooms.filter((room) => room.status === 'playing').length;
+  const metrics = [
+    ['Registered players', data.profiles.length, 'Accounts with a username'],
+    ['Admins', data.admins.length, 'UIDs with studio access'],
+    ['Rooms (latest 100)', data.rooms.length, `${liveRooms} match in progress`],
+    ['Friend connections', data.friendships.length, 'Accepted friend links'],
+    ['Pending requests', pendingRequests, 'Friend requests unanswered'],
+    ['Pending invites', pendingInvites, 'Game invites unanswered'],
+  ];
+  return `<div class="admin-metrics">${metrics.map(([label, value, hint]) => `<article><span>${esc(label)}</span><b>${state.adminLoading ? '…' : value}</b><small>${esc(hint)}</small></article>`).join('')}</div>
+    <div class="admin-grid">
+      <section class="surface admin-table-panel"><div class="panel-heading"><div><span class="eyebrow">Live room snapshot</span><h2>Recent rooms</h2></div><button class="text-button" data-action="admin-tab" data-tab="rooms">Manage all ${icon('arrow')}</button></div>${renderAdminRoomsTable(data.rooms, { limitRows: 8 })}</section>
+      <aside class="surface admin-powers"><div class="panel-heading"><div><span class="eyebrow">God mode, on</span><h2>What this studio can do</h2></div><span class="admin-live"><i></i> ${GAMES.length} games</span></div><ul class="admin-powers-list"><li><b>Rooms:</b> inspect every room, kick anyone from a waiting lobby, delete a room with its heartbeats.</li><li><b>Players:</b> remove a profile and free its username, so repeat offenders cannot hide.</li><li><b>Social:</b> unlink friend pairs, clear stale requests and game invites.</li><li><b>Access:</b> grant and revoke admin flags without opening the Firebase console.</li></ul><div class="notice-panel"><span>${icon('shield')}</span><div><b>Firestore enforces every button.</b><p>Each action above checks <code>admins/{yourUid}.admin == true</code> on the server. A forged flag in someone else's browser cannot touch this data.</p></div></div></aside>
+    </div>`;
+}
+
+function renderAdminPlayers(data) {
+  const adminIds = new Set(data.admins.map((admin) => admin.id));
+  const profiles = [...data.profiles].sort((a, b) => (timestampDate(b.createdAt)?.getTime() || 0) - (timestampDate(a.createdAt)?.getTime() || 0));
+  if (!profiles.length) return `<div class="empty-inline"><span>◎</span><b>No players yet</b><small>Profiles appear the moment someone claims a username.</small></div>`;
+  return `<div class="admin-table-wrap"><table class="admin-table"><thead><tr><th scope="col">Player</th><th scope="col">UID</th><th scope="col">Joined</th><th scope="col">Access</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead><tbody>${profiles.map((profile) => {
+    const isSelf = profile.uid === state.user?.uid;
+    const isAdminRow = adminIds.has(profile.uid);
+    const access = isAdminRow ? `<span class="status-pill status-playing">admin</span>` : `<span class="status-pill">player</span>`;
+    const actions = [
+      `<button class="icon-button subtle" data-action="admin-copy-uid" data-uid="${esc(profile.uid)}" aria-label="Copy the full UID of @${esc(profile.username || 'player')}" title="Copy UID">${icon('copy')}</button>`,
+      isAdminRow
+        ? isSelf ? '' : `<button class="icon-button subtle is-warn" data-action="admin-revoke" data-uid="${esc(profile.uid)}" data-name="${esc(profile.username || 'player')}" aria-label="Revoke admin access for @${esc(profile.username || 'player')}" title="Revoke admin">${icon('crown')}</button>`
+        : `<button class="icon-button subtle" data-action="admin-grant" data-uid="${esc(profile.uid)}" data-name="${esc(profile.username || 'player')}" aria-label="Make @${esc(profile.username || 'player')} an admin" title="Grant admin">${icon('crown')}</button>`,
+      isSelf ? '' : adminDeleteButton('admin-remove-player', `data-uid="${esc(profile.uid)}" data-name="${esc(profile.username || 'player')}" data-username="${esc(profile.usernameLower || '')}"`, `Remove @${esc(profile.username || 'player')} and free their username`),
+    ].join('');
+    return `<tr><td><span class="admin-player"><span class="avatar avatar-${friendColor(profile.uid)}">${esc((profile.username || 'P').slice(0, 1).toUpperCase())}</span><b>@${esc(profile.username || 'player')}</b></span></td><td><code class="uid-chip">${esc(shortUid(profile.uid))}</code></td><td>${dateLabel(profile.createdAt)}</td><td>${access}</td><td class="admin-actions">${actions}</td></tr>`;
+  }).join('')}</tbody></table></div>`;
+}
+
+function renderAdminSocial(data) {
+  const friendships = data.friendships.length
+    ? `<div class="admin-table-wrap"><table class="admin-table"><thead><tr><th scope="col">Pair</th><th scope="col">Since</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead><tbody>${data.friendships.map((link) => {
+      const names = link.memberNames || {};
+      const pair = (link.memberUids || []).map((uid) => names[uid] || shortUid(uid)).join(' & ');
+      return `<tr><td><b>${esc(pair)}</b></td><td>${dateLabel(link.createdAt)}</td><td class="admin-actions">${adminDeleteButton('admin-delete-friendship', `data-friendship-id="${esc(link.id)}" data-name="${esc(pair)}"`, `Unlink ${esc(pair)}`)}</td></tr>`;
+    }).join('')}</tbody></table></div>`
+    : `<div class="empty-inline"><span>◎</span><b>No friend links yet</b><small>Accepted requests form links here.</small></div>`;
+  const requests = data.requests.length
+    ? `<div class="admin-list">${data.requests.map((request) => `<div class="admin-list-row"><div><b>@${esc(request.fromName || 'player')}</b> → <b>@${esc(request.toName || 'player')}</b><small class="admin-dim">${esc(request.status || 'pending')} · ${timeAgo(request.createdAt)}</small></div>${adminDeleteButton('admin-delete-request', `data-request-id="${esc(request.id)}" data-name="@${esc(request.fromName || '?')} → @${esc(request.toName || '?')}"`, 'Delete this friend request')}</div>`).join('')}</div>`
+    : `<div class="empty-inline"><span>✦</span><b>No friend requests</b><small>Nothing unanswered or declined right now.</small></div>`;
+  const invites = data.invites.length
+    ? `<div class="admin-list">${data.invites.map((invite) => `<div class="admin-list-row"><div><b>@${esc(invite.fromName || 'player')}</b> invited <b>@${esc(invite.toName || 'player')}</b><small class="admin-dim">${esc(getGame(invite.gameId)?.title || 'A game')} · ${esc(invite.status || 'pending')} · ${timeAgo(invite.createdAt)}</small></div>${adminDeleteButton('admin-delete-invite', `data-invite-id="${esc(invite.id)}" data-name="${esc(getGame(invite.gameId)?.title || 'game invite')}"`, 'Delete this game invite')}</div>`).join('')}</div>`
+    : `<div class="empty-inline"><span>✦</span><b>No game invites</b><small>Direct challenges will land here.</small></div>`;
+  return `<section class="surface admin-table-panel"><div class="panel-heading"><div><span class="eyebrow">The friend graph</span><h2>Friend links <i>${data.friendships.length}</i></h2></div></div>${friendships}</section>
+    <div class="admin-grid"><section class="surface admin-table-panel"><div class="panel-heading"><div><span class="eyebrow">Inbox traffic</span><h2>Friend requests <i>${data.requests.length}</i></h2></div></div>${requests}</section>
+    <section class="surface admin-table-panel"><div class="panel-heading"><div><span class="eyebrow">Direct challenges</span><h2>Game invites <i>${data.invites.length}</i></h2></div></div>${invites}</section></div>`;
+}
+
+function renderAdminAccess(data) {
+  const profileNames = new Map(data.profiles.map((profile) => [profile.uid, profile.username]));
+  const admins = data.admins.length
+    ? `<div class="admin-list">${data.admins.map((admin) => {
+      const isSelf = admin.id === state.user?.uid;
+      const name = profileNames.get(admin.id);
+      return `<div class="admin-list-row"><div><b>${esc(name ? `@${name}` : shortUid(admin.id))} ${isSelf ? '<span class="status-pill status-playing">you</span>' : ''}</b><small class="admin-dim"><code class="uid-chip">${esc(shortUid(admin.id))}</code> · full studio access</small></div>${isSelf ? `<span class="admin-dim">Self-lockout is blocked by the rules</span>` : `<button class="button button-outline button-small" data-action="admin-revoke" data-uid="${esc(admin.id)}" data-name="${esc(name || shortUid(admin.id))}">${icon('crown')} Revoke</button>`}</div>`;
+    }).join('')}</div>`
+    : `<div class="empty-inline"><span>◉</span><b>No admins?!</b><small>You are reading this page, so one flag exists - refresh may be behind.</small></div>`;
+  return `<div class="admin-grid"><section class="surface admin-table-panel"><div class="panel-heading"><div><span class="eyebrow">Who holds the keys</span><h2>Admin access <i>${data.admins.length}</i></h2></div></div>${admins}
+    <div class="admin-grant-panel"><div class="eyebrow">Promote someone</div><form data-form="admin-grant"><label for="admin-uid-input">Firebase user UID<div class="admin-grant-row"><input id="admin-uid-input" name="uid" type="text" minlength="8" maxlength="64" placeholder="kR8vN…b2z" required autocomplete="off"><button class="button button-primary" type="submit">${icon('crown')} Make admin</button></div></label><small>Find UIDs under Firebase Console → Authentication → Users, or copy one from the Players tab. Their studio appears on next refresh.</small></form></div></section>
+    <aside class="surface admin-powers"><div class="panel-heading"><div><span class="eyebrow">Safety rails</span><h2>Still enforced by Firestore</h2></div><span>${icon('shield')}</span></div><ul class="admin-powers-list"><li>Nobody can mint their first flag from the client - the <b>first</b> admin is still created in the Firebase console.</li><li>A flag document can only ever contain <code>admin: true/false</code>, nothing else.</li><li>You cannot revoke yourself (rules block it), so the studio can never lock itself out.</li><li>Revoked admins lose access the moment their token refreshes.</li></ul></aside></div>`;
+}
+
 export function renderAdmin() {
   if (!state.isAdmin) return `<section class="admin-denied"><span>${icon('shield')}</span><h1>Restricted area</h1><p>This Firebase account is not marked as an administrator.</p><button class="button button-primary" data-action="navigate" data-page="home">Back to the arcade</button></section>`;
   const data = state.adminData;
-  return `<section class="admin-heading"><div><div class="eyebrow">Private admin area · UID verified</div><h1>Arcade control<span>.</span></h1><p>Only accounts with <code>admins/{uid}.admin = true</code> can see this workspace.</p></div><button class="button button-outline" data-action="refresh-admin">${icon('spark')} Refresh data</button></section>
-    <div class="admin-metrics"><article><span>Registered players</span><b>${state.adminLoading ? '…' : data?.profiles ?? '—'}</b><small>Profiles currently readable</small></article><article><span>Friend connections</span><b>${state.adminLoading ? '…' : data?.friendships ?? '—'}</b><small>Accepted friend links</small></article><article><span>Rooms (latest 50)</span><b>${state.adminLoading ? '…' : data?.rooms?.length ?? '—'}</b><small>Recent private rooms</small></article><article><span>Catalog</span><b>${GAMES.length}</b><small>Browser-ready game modes</small></article></div>
-    <section class="surface admin-table-panel"><div class="panel-heading"><div><span class="eyebrow">Live room snapshot</span><h2>Recent rooms</h2></div><span class="admin-live"><i></i> Firestore</span></div>${state.adminLoading ? `<div class="empty-inline"><b>Loading arcade stats…</b></div>` : data?.error ? `<div class="notice-panel notice-warn">${esc(data.error)}</div>` : data?.rooms?.length ? `<div class="admin-table-wrap"><table class="admin-table"><thead><tr><th scope="col">Game</th><th scope="col">Host</th><th scope="col">Players</th><th scope="col">Status</th><th scope="col">Created</th></tr></thead><tbody>${data.rooms.sort((a, b) => (timestampDate(b.createdAt)?.getTime() || 0) - (timestampDate(a.createdAt)?.getTime() || 0)).slice(0, 20).map((room) => `<tr><td><span class="table-game">${esc(getGame(room.gameId)?.title || room.gameId)}</span></td><td>${esc(room.hostName || 'Player')}</td><td>${(room.playerUids || []).length} / ${room.maxPlayers || 2}</td><td><span class="status-pill status-${room.status}">${esc(room.status || 'unknown')}</span></td><td>${timeAgo(room.createdAt)}</td></tr>`).join('')}</tbody></table></div>` : `<div class="empty-inline"><span>◉</span><b>No rooms yet</b><small>The first private room will show up here.</small></div>`}</section>`;
+  const tab = ADMIN_TABS.some(([id]) => id === state.adminTab) ? state.adminTab : 'overview';
+  const tabs = ADMIN_TABS.map(([id, label]) => `<button class="filter-pill ${tab === id ? 'is-active' : ''}" data-action="admin-tab" data-tab="${id}">${label}</button>`).join('');
+  let body;
+  if (!data) body = `<div class="empty-inline"><b>Loading the control room…</b></div>`;
+  else if (data.error) body = `<div class="notice-panel notice-warn">${esc(data.error)}</div>`;
+  else if (tab === 'rooms') body = `<section class="surface admin-table-panel"><div class="panel-heading"><div><span class="eyebrow">Every private room</span><h2>Rooms <i>${data.rooms.length}</i></h2></div><span class="admin-live"><i></i> latest 100</span></div>${renderAdminRoomsTable(data.rooms)}</section>`;
+  else if (tab === 'players') body = `<section class="surface admin-table-panel"><div class="panel-heading"><div><span class="eyebrow">Everyone who claimed a name</span><h2>Players <i>${data.profiles.length}</i></h2></div><span class="admin-live"><i></i> latest 300</span></div>${renderAdminPlayers(data)}</section>`;
+  else if (tab === 'social') body = renderAdminSocial(data);
+  else if (tab === 'access') body = renderAdminAccess(data);
+  else body = renderAdminOverview(data);
+  return `<section class="admin-heading"><div><div class="eyebrow">Private admin area · UID verified · god mode</div><h1>Arcade control<span>.</span></h1><p>Only accounts with <code>admins/{uid}.admin = true</code> can see this workspace - and Firestore re-checks the flag on every action.</p></div><button class="button button-outline" data-action="refresh-admin">${icon('spark')} Refresh data</button></section>
+    <div class="filter-pills admin-tabs" role="tablist" aria-label="Admin sections">${tabs}</div>
+    ${state.adminLoading && data && !data.error ? `<div class="admin-refreshing"><i></i> Syncing with Firestore…</div>` : ''}
+    ${body}`;
 }
 
 export function renderRoom() {

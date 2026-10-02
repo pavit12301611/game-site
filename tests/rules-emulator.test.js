@@ -186,14 +186,56 @@ test('the only editable field on a profile is lastSeenAt', async (t) => {
   await ruts.assertFails(deleteDoc(doc(alice, 'profiles', ALICE)));
 });
 
-test('admin flags are read-only, and only their owner can read them', async (t) => {
+test('admin flags: owners read theirs, admins manage access, and a first flag cannot be minted', async (t) => {
   if (!ready(t)) return;
   const alice = testEnv.authenticatedContext(ALICE).firestore();
   const bob = testEnv.authenticatedContext(BOB).firestore();
   await seed(async (db) => setDoc(doc(db, 'admins', ALICE), { admin: true }));
   await ruts.assertSucceeds(getDoc(doc(alice, 'admins', ALICE)));
-  await ruts.assertFails(getDoc(doc(bob, 'admins', ALICE)));
-  await ruts.assertFails(setDoc(doc(alice, 'admins', ALICE), { admin: true }));
+  await ruts.assertFails(getDoc(doc(bob, 'admins', ALICE)), 'not everyone reads other flags');
+  await ruts.assertSucceeds(getDocs(collection(alice, 'admins')), 'an admin lists the flags');
+  await ruts.assertFails(setDoc(doc(bob, 'admins', BOB), { admin: true }), 'nobody mints their first flag from the client');
+  await ruts.assertSucceeds(setDoc(doc(alice, 'admins', BOB), { admin: true }), 'an admin can promote someone');
+  await ruts.assertFails(setDoc(doc(alice, 'admins', CAROL), { admin: true, level: 9 }), 'a flag holds only the boolean');
+  await ruts.assertFails(deleteDoc(doc(alice, 'admins', ALICE)), 'a flag cannot lock itself out');
+  // Bob is an admin now, so revoking him works - through Alice, not by himself.
+  await ruts.assertSucceeds(deleteDoc(doc(alice, 'admins', BOB)));
+  await ruts.assertFails(getDocs(collection(bob, 'admins')), 'the revoked admin loses access immediately');
+});
+
+test('the admin studio can clean up rooms, profiles, usernames and friend links', async (t) => {
+  if (!ready(t)) return;
+  const alice = testEnv.authenticatedContext(ALICE).firestore();
+  const bob = testEnv.authenticatedContext(BOB).firestore();
+  await seed(async (db) => {
+    await setDoc(doc(db, 'admins', ALICE), { admin: true });
+    await profileBatch(db, BOB, 'bob').commit();
+    await setDoc(doc(db, 'rooms', 'mod-room'), waitingRoom(BOB));
+    await setDoc(doc(db, 'friendships', 'a1_b1'), {
+      memberUids: [ALICE, BOB],
+      memberNames: { [ALICE]: 'Alice', [BOB]: 'bob' },
+      requestId: 'r1',
+      createdAt: ts(),
+    });
+  });
+  // Without the flag the same cleanups stay forbidden, one by one.
+  await ruts.assertFails(deleteDoc(doc(bob, 'profiles', BOB)), 'players still cannot delete profiles');
+  await ruts.assertFails(deleteDoc(doc(bob, 'usernames', 'bob')), 'or free a username');
+  await ruts.assertFails(deleteDoc(doc(bob, 'friendships', 'a1_b1')), 'or unlink friends');
+  await ruts.assertFails(getDocs(collection(bob, 'friendRequests')), 'or list other inboxes');
+  // The admin studio fires exactly these writes (profile + username go in one batch).
+  await ruts.assertSucceeds(updateDoc(doc(alice, 'rooms', 'mod-room'), {
+    playerUids: [],
+    playerNames: {},
+    updatedAt: ts(),
+  }), 'an admin rewrites a room to kick everyone');
+  await ruts.assertSucceeds(deleteDoc(doc(alice, 'rooms', 'mod-room')));
+  await ruts.assertSucceeds(deleteDoc(doc(alice, 'friendships', 'a1_b1')));
+  await ruts.assertSucceeds(getDocs(collection(alice, 'friendRequests')));
+  const cleanup = writeBatch(alice);
+  cleanup.delete(doc(alice, 'profiles', BOB));
+  cleanup.delete(doc(alice, 'usernames', 'bob'));
+  await ruts.assertSucceeds(cleanup.commit());
 });
 
 test('a host can open a private room for two or three players', async (t) => {

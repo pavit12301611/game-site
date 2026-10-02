@@ -213,6 +213,80 @@ test('the admin page is not reachable for a normal visitor', () => {
   assert.ok(!$('.admin-table'), 'no admin data is rendered');
 });
 
+test('the admin studio renders every section with its action buttons for a flagged admin', async () => {
+  // Rendering is pure "state in, HTML out", so a flagged state paints the studio *without* a
+  // Firebase backend: loadAdminData returns immediately when Firebase is off, and Firestore stays
+  // the real gatekeeper for the buttons shown here (firestore.rules isAdmin()).
+  const { state } = await import('../src/state.js');
+  const { GAMES } = await import('../src/catalog.js');
+  const gameId = GAMES[0].id;
+  state.isAdmin = true;
+  state.user = { uid: 'uid-admin-1', isAnonymous: false };
+  state.adminLoading = false;
+  state.adminTab = 'overview';
+  state.adminData = {
+    error: '',
+    rooms: [
+      { id: 'room-waiting', gameId, hostUid: 'uid-2', hostName: 'Hosty', playerUids: ['uid-2', 'uid-3'], playerNames: { 'uid-2': 'Hosty', 'uid-3': 'Guesty' }, maxPlayers: 2, status: 'waiting' },
+      { id: 'room-live', gameId, hostUid: 'uid-2', hostName: 'Hosty', playerUids: ['uid-2', 'uid-3'], playerNames: { 'uid-2': 'Hosty', 'uid-3': 'Guesty' }, maxPlayers: 2, status: 'playing' },
+    ],
+    profiles: [
+      { uid: 'uid-admin-1', username: 'boss', usernameLower: 'boss' },
+      { uid: 'uid-2', username: 'hosty', usernameLower: 'hosty' },
+    ],
+    admins: [{ id: 'uid-admin-1', admin: true }],
+    friendships: [{ id: 'f1', memberUids: ['uid-2', 'uid-3'], memberNames: { 'uid-2': 'Hosty', 'uid-3': 'Guesty' } }],
+    requests: [{ id: 'r1', fromUid: 'uid-2', toUid: 'uid-3', fromName: 'hosty', toName: 'guesty', status: 'pending' }],
+    invites: [{ id: 'i1', fromUid: 'uid-2', toUid: 'uid-3', fromName: 'hosty', toName: 'guesty', gameId, status: 'pending' }],
+  };
+  try {
+    setHash('#/admin');
+    assert.equal(all('.admin-tabs [data-action="admin-tab"]').length, 5, 'all five studio sections exist');
+    assert.ok($('.admin-metrics'), 'the overview metrics render');
+    assert.match($('#page-content').textContent, /What this studio can do/);
+
+    click(button('admin-tab', '[data-tab="rooms"]'));
+    assert.ok(button('admin-delete-room', '[data-room-id="room-waiting"]'), 'each room can be deleted');
+    assert.ok(button('admin-kick-player', '[data-room-id="room-waiting"][data-uid="uid-3"]'), 'a waiting lobby member can be kicked');
+    assert.ok(!button('admin-kick-player', '[data-room-id="room-live"]'), 'kicks are not offered for a running match');
+
+    click(button('admin-tab', '[data-tab="players"]'));
+    assert.ok($('.uid-chip'), 'player UIDs are shown');
+    assert.ok(button('admin-grant', '[data-uid="uid-2"]'), 'a player can be promoted');
+    assert.ok(button('admin-remove-player', '[data-uid="uid-2"]'), 'a player can be removed');
+    assert.ok(!button('admin-remove-player', '[data-uid="uid-admin-1"]'), 'your own row has no self-destruct');
+
+    click(button('admin-tab', '[data-tab="social"]'));
+    assert.ok(button('admin-delete-friendship', '[data-friendship-id="f1"]'), 'a friend link can be unlinked');
+    assert.ok(button('admin-delete-request', '[data-request-id="r1"]'), 'a request can be deleted');
+    assert.ok(button('admin-delete-invite', '[data-invite-id="i1"]'), 'an invite can be deleted');
+
+    click(button('admin-tab', '[data-tab="access"]'));
+    assert.ok($('#admin-uid-input'), 'the promote-by-UID form exists');
+    assert.match($('#page-content').textContent, /@boss/, 'admin names resolve from profiles');
+    assert.match($('#page-content').textContent, /Self-lockout is blocked/, 'your own flag cannot be revoked from here');
+
+    // Every destructive click goes through the confirm modal, and cancel leaves the data alone.
+    click(button('admin-tab', '[data-tab="rooms"]'));
+    click(button('admin-delete-room', '[data-room-id="room-waiting"]'));
+    assert.ok($('.confirm-modal'), 'the confirm gate opens before anything destructive');
+    assert.equal(state.modal.type, 'confirm');
+    click(button('close-modal'));
+    assert.ok(!$('.confirm-modal'), 'cancelling closes the gate');
+
+    for (const control of all('#page-content button')) {
+      const label = (control.getAttribute('aria-label') || control.textContent || '').trim();
+      assert.ok(label.length > 0, `admin studio button without a label: ${control.outerHTML.slice(0, 80)}`);
+    }
+  } finally {
+    state.isAdmin = false;
+    state.user = null;
+    state.adminData = null;
+    state.adminTab = 'overview';
+    setHash('#/home');
+  }
+});
+
 test('every rendered control has an accessible name', () => {
   setHash('#/catalog');
   const controls = all('button');
