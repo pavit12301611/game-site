@@ -36,6 +36,45 @@
 .table-game { font-weight: 600; }
 .admin-heading code { padding: 2px 8px; border-radius: var(--r-1); background: var(--surface-2); font-size: var(--fs-2); }
 
+/* Admin studio: tabs, power panels, action rows */
+.admin-tabs { margin: var(--sp-4) 0 var(--sp-5); }
+.admin-grid { display: grid; gap: var(--sp-5); }
+@media (min-width: 960px) { .admin-grid { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); } }
+.admin-powers ul, .admin-powers-list { display: grid; gap: var(--sp-3); margin: var(--sp-4) 0 0; padding-left: var(--sp-5); color: var(--ink-muted); font-size: var(--fs-2); }
+.admin-powers-list b { color: var(--ink); }
+.admin-powers .notice-panel { margin-top: var(--sp-4); }
+.admin-powers code { padding: 1px 6px; border-radius: var(--r-1); background: var(--surface-3); font-size: var(--fs-1); }
+.admin-actions { white-space: nowrap; text-align: right; }
+.admin-actions .icon-button { margin-left: var(--sp-1); }
+.admin-player { display: inline-flex; align-items: center; gap: var(--sp-2); }
+.uid-chip { padding: 2px 8px; border: 1px dashed var(--control-edge); border-radius: var(--r-2); background: var(--surface-2); font-family: var(--font-mono); font-size: var(--fs-1); }
+.admin-dim { color: var(--ink-muted); font-size: var(--fs-1); }
+.admin-chip-row { display: flex; flex-wrap: wrap; gap: var(--sp-2); max-width: 420px; }
+.player-chip { display: inline-flex; align-items: center; gap: var(--sp-2); padding: 3px 6px 3px var(--sp-3); border: 1px solid var(--line); border-radius: 999px; background: var(--surface-2); font-size: var(--fs-1); }
+.player-chip .host-chip { position: static; padding: 0 6px; font-size: 9px; }
+.chip-kick { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; padding: 0; border: 1px solid var(--line); border-radius: 50%; background: transparent; color: var(--ink-muted); cursor: pointer; }
+.chip-kick:hover { border-color: var(--bad); color: var(--bad); }
+.chip-kick .icon { width: 12px; height: 12px; }
+.admin-list { display: grid; gap: var(--sp-3); }
+.admin-list-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-3); padding: var(--sp-3) var(--sp-4); border: 1px solid var(--line); border-radius: var(--r-3); background: var(--surface-2); }
+.admin-list-row > div { display: grid; gap: 2px; min-width: 0; }
+.admin-list-row b { overflow-wrap: anywhere; }
+.admin-grant-panel { margin-top: var(--sp-5); padding-top: var(--sp-4); border-top: 1px dashed var(--line); display: grid; gap: var(--sp-2); }
+.admin-grant-panel form { display: grid; gap: var(--sp-2); }
+.admin-grant-row { display: grid; grid-template-columns: 1fr; gap: var(--sp-2); margin-top: var(--sp-2); }
+@media (min-width: 560px) { .admin-grant-row { grid-template-columns: 1fr auto; } }
+.admin-refreshing { display: flex; align-items: center; gap: var(--sp-2); margin-bottom: var(--sp-4); color: var(--ink-muted); font-size: var(--fs-2); }
+.admin-refreshing i { width: 8px; height: 8px; border-radius: 50%; background: var(--neon-cyan); animation: admin-pulse 1s ease-in-out infinite; }
+@keyframes admin-pulse { 50% { opacity: 0.25; transform: scale(0.7); } }
+
+/* Danger / warning accents for privileged actions */
+.icon-button.is-danger:hover:not(:disabled) { border-color: var(--bad); color: var(--bad); box-shadow: 0 0 12px rgb(255 138 160 / 0.35); }
+.icon-button.is-warn:hover:not(:disabled) { border-color: var(--warn); color: var(--warn); box-shadow: 0 0 12px rgb(255 210 63 / 0.3); }
+.button-danger { background: linear-gradient(135deg, #ff4d7e, #c1123a); border-color: #ff8aa0; box-shadow: 0 4px 0 #7d0d29, 0 0 18px rgb(255 77 126 / 0.35); color: #fff; }
+.button-danger:hover:not(:disabled) { background: linear-gradient(135deg, #ff6390, #d4203f); transform: translateY(-1px); }
+.button-danger:active:not(:disabled) { transform: translateY(2px); box-shadow: 0 1px 0 #7d0d29; }
+.confirm-badge { border-color: var(--bad) !important; color: var(--bad) !important; }
+
 /* ---------- Lobby ---------- */
 .lobby-topline, .play-topline { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-3); }
 .room-code { display: inline-flex; align-items: center; gap: var(--sp-2); min-height: 36px; padding: 0 var(--sp-4); border: 1px dashed var(--control-edge); border-radius: var(--r-2); background: var(--surface-1); color: var(--ink-muted); font-family: var(--font-mono); font-size: var(--fs-2); }

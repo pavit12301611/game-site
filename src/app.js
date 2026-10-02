@@ -40,7 +40,17 @@ import {
   respondToFriend,
   sendFriendRequest,
 } from './social.js';
-import { loadAdminData } from './online/admin.js';
+import {
+  adminDeleteFriendRequest,
+  adminDeleteFriendship,
+  adminDeleteGameInvite,
+  adminDeleteRoom,
+  adminGrantAccess,
+  adminKickPlayer,
+  adminRemovePlayer,
+  adminRevokeAccess,
+  loadAdminData,
+} from './online/admin.js';
 import {
   createOnlineRoom,
   leaveWaitingRoom,
@@ -129,6 +139,13 @@ function handleSettingsSubmit(form) {
   showToast('Settings saved on this device.');
 }
 
+async function handleAdminGrantSubmit(form) {
+  /** Granting by raw UID goes through the same confirm gate as the player-row button. */
+  const uidToPromote = String(new FormData(form).get('uid') || '').trim();
+  if (!uidToPromote) throw new Error('Paste a user UID first.');
+  openAdminConfirm('Grant admin access?', `UID ${uidToPromote} gets the full control room: every room, player, link and admin flag. Only promote someone you trust completely.`, 'Grant access', () => adminGrantAccess(uidToPromote));
+}
+
 async function handleAuthSubmit(form) {
   if (!firebaseReady) throw setupError();
   state.authError = '';
@@ -169,6 +186,19 @@ async function handleCreateRoomSubmit(form) {
 function openRoomModal(gameId = GAMES[0].id, friend = null) {
   // When online play is unavailable the dialog itself explains why and keeps practice reachable.
   modalOpen({ type: 'room', gameId, friend });
+}
+
+/**
+ * The admin studio's safety gate: a confirm dialog whose "do it" button runs `run` (a function
+ * stored on the modal state, invoked by the `confirm-modal-run` action below).
+ */
+function openAdminConfirm(title, body, confirmLabel, run) {
+  modalOpen({ type: 'confirm', title, body, confirmLabel, run });
+}
+
+/** One small linter-friendly wrapper: admin dataset attributes come in as possibly undefined. */
+function adminArg(value = '') {
+  return String(value || '');
 }
 
 function handleClick(event) {
@@ -246,6 +276,55 @@ function handleClick(event) {
     return;
   }
   if (action === 'refresh-admin') { void loadAdminData(); return; }
+  if (action === 'admin-tab') { state.adminTab = adminArg(actionButton.dataset.tab) || 'overview'; render(); return; }
+  if (action === 'confirm-modal-run') {
+    // The confirm modal carries its work as a function; close first so errors toast over the page.
+    const run = state.modal?.type === 'confirm' ? state.modal.run : null;
+    modalClose();
+    if (typeof run === 'function') void Promise.resolve(run());
+    return;
+  }
+  if (action === 'admin-delete-room') {
+    openAdminConfirm('Delete this room?', `The room hosted by ${adminArg(actionButton.dataset.name)} and every heartbeat under it will be permanently deleted. Players inside will see the room vanish.`, 'Delete room', () => adminDeleteRoom(adminArg(roomId)));
+    return;
+  }
+  if (action === 'admin-kick-player') {
+    openAdminConfirm('Kick this player from the lobby?', `${adminArg(actionButton.dataset.name)} loses their seat immediately. If they were the host, the next player in line becomes the host.`, 'Kick player', () => adminKickPlayer(adminArg(roomId), adminArg(uid)));
+    return;
+  }
+  if (action === 'admin-remove-player') {
+    openAdminConfirm('Remove this player?', `@${adminArg(actionButton.dataset.name)}'s profile is deleted and their username is freed for anyone to claim. Their admin flag (if any) goes too. Their sign-in itself stays, but they become a plain guest.`, 'Remove player', () => adminRemovePlayer(adminArg(uid), adminArg(actionButton.dataset.username)));
+    return;
+  }
+  if (action === 'admin-delete-friendship') {
+    openAdminConfirm('Unlink these friends?', `${adminArg(actionButton.dataset.name)} will no longer see each other in friend lists. They can re-add later.`, 'Unlink friends', () => adminDeleteFriendship(adminArg(actionButton.dataset.friendshipId)));
+    return;
+  }
+  if (action === 'admin-delete-request') {
+    openAdminConfirm('Delete this friend request?', `The request ${adminArg(actionButton.dataset.name)} disappears from both inboxes.`, 'Delete request', () => adminDeleteFriendRequest(adminArg(requestId)));
+    return;
+  }
+  if (action === 'admin-delete-invite') {
+    openAdminConfirm('Delete this game invite?', `The ${adminArg(actionButton.dataset.name)} invite can no longer be accepted.`, 'Delete invite', () => adminDeleteGameInvite(adminArg(inviteId)));
+    return;
+  }
+  if (action === 'admin-grant') {
+    openAdminConfirm('Grant admin access?', `@${adminArg(actionButton.dataset.name)} gets the full control room: every room, player, link and admin flag. Only do this for yourself or someone you trust completely.`, 'Grant access', () => adminGrantAccess(uid));
+    return;
+  }
+  if (action === 'admin-revoke') {
+    openAdminConfirm('Revoke admin access?', `${adminArg(actionButton.dataset.name)} loses the studio on their next refresh. You can restore it anytime.`, 'Revoke access', () => adminRevokeAccess(adminArg(uid)));
+    return;
+  }
+  if (action === 'admin-copy-uid') {
+    const fullUid = adminArg(uid);
+    if (navigator.clipboard?.writeText) {
+      void navigator.clipboard.writeText(fullUid).then(() => showToast('UID copied to the clipboard.'), () => showToast(fullUid, 'warning'));
+    } else {
+      showToast(fullUid, 'warning');
+    }
+    return;
+  }
 }
 
 async function resetCurrentGame() {
@@ -301,6 +380,7 @@ function handleSubmit(event) {
   if (type === 'create-room') task = handleCreateRoomSubmit(form);
   else if (type === 'auth') task = handleAuthSubmit(form);
   else if (type === 'username-setup') task = handleUsernameSetupSubmit(form);
+  else if (type === 'admin-grant') task = handleAdminGrantSubmit(form);
   else if (type === 'settings') { handleSettingsSubmit(form); if (submitButton) submitButton.disabled = false; return; }
   else if (type === 'friend-search') { requestFriendSearch(form); if (submitButton) submitButton.disabled = false; return; }
   Promise.resolve(task).catch((error) => {

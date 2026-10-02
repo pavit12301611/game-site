@@ -131,16 +131,24 @@ test('no rule is open to the world and none can be used without signing in', () 
   assert.ok(allowStatements().length > 20, 'the statement parser must see the rules');
 });
 
-test('admin flags are readable only by their owner and never writable from the client', () => {
+test('admin flags: owners read theirs, admins manage access, and nobody mints a first flag from the client', () => {
   const statements = allowStatements(matchBlock('admins'));
-  assert.ok(statements.length >= 2);
-  for (const { methods, condition } of statements) {
-    if (methods.includes('get')) {
-      assert.deepEqual(methods, ['get'], 'the admins collection must not be listable');
-      assert.match(condition, /request\.auth\.uid == uid/);
-    } else {
-      assert.equal(condition, 'false', `"${methods.join(', ')}" on admins must be denied`);
-    }
+  const get = statements.find(({ methods }) => methods.length === 1 && methods[0] === 'get');
+  assert.ok(get, 'admins needs a dedicated get rule');
+  assert.match(get.condition, /request\.auth\.uid == uid/, 'the owner reads their own flag');
+  assert.match(get.condition, /isAdmin\(\)/, 'admins may read each flag (the studio lists who has access)');
+  const list = statements.find(({ methods }) => methods.includes('list'));
+  assert.equal(list?.condition, 'isAdmin()', 'only admins may list the admins collection');
+  const write = statements.find(({ methods }) => methods.includes('create') && methods.includes('update'));
+  assert.ok(write, 'admins can grant/update flags from the admin studio');
+  assert.match(write.condition, /isAdmin\(\)/, 'only someone who already IS an admin can write a flag (a first flag cannot be minted from the client)');
+  assert.match(write.condition, /hasOnly\(\['admin'\]\)/, 'a flag document holds exactly the admin field');
+  assert.match(write.condition, /\.admin is bool/, 'and it is a boolean');
+  const remove = statements.find(({ methods }) => methods.includes('delete'));
+  assert.match(remove.condition, /isAdmin\(\)/, 'only admins revoke flags');
+  assert.match(remove.condition, /request\.auth\.uid != uid/, 'a flag cannot lock itself out by deleting its own document');
+  for (const { condition } of statements) {
+    assert.notEqual(condition, 'true', 'no admin statement may be unconditional');
   }
   const isAdmin = code.slice(code.indexOf('function isAdmin()'), code.indexOf('function isRoomMember'));
   assert.match(isAdmin, /admins\/\$\(request\.auth\.uid\)/);
@@ -169,8 +177,8 @@ test('friend requests and game invites return missing gets as not-found without 
     const list = statements.find(({ methods }) => methods.length === 1 && methods[0] === 'list');
     assert.equal(
       list?.condition,
-      'signedIn() && (resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid)',
-      `${name}: list access stays restricted to participants`,
+      'signedIn() && (resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid) || isAdmin()',
+      `${name}: list access stays restricted to participants, plus the admin studio's moderation view`,
     );
   }
 });
@@ -184,11 +192,26 @@ test('friendships: members read their own, admins may read all (the admin dashbo
   assert.ok(read.condition.indexOf('memberUids') < read.condition.indexOf('isAdmin()'), 'check membership before the billed admin lookup');
 });
 
-test('friendships and usernames are immutable once created, and profiles cannot be deleted', () => {
-  const immutable = { friendships: ['update', 'delete'], usernames: ['update', 'delete'], profiles: ['delete'] };
-  for (const [name, methods] of Object.entries(immutable)) {
-    const denied = allowStatements(matchBlock(name)).filter(({ condition }) => condition === 'false').flatMap((item) => item.methods);
-    for (const method of methods) assert.ok(denied.includes(method), `${name}: ${method} must be denied`);
+test('friendships, usernames and profiles stay immutable for players; deletion is an admin-only power', () => {
+  // Players can never rewrite history: friendship and username documents cannot be *updated* by
+  // anyone. Deleting profiles/usernames/friendships is what the admin studio's cleanup actions
+  // do, and those statements must be guarded by isAdmin() - never open to an ordinary player.
+  const denied = {
+    friendships: ['update'],
+    usernames: ['update'],
+  };
+  for (const [name, methods] of Object.entries(denied)) {
+    const blocked = allowStatements(matchBlock(name)).filter(({ condition }) => condition === 'false').flatMap((item) => item.methods);
+    for (const method of methods) assert.ok(blocked.includes(method), `${name}: ${method} must be denied for everyone`);
+  }
+  const adminOnlyDeletes = { friendships: ['delete'], usernames: ['delete'], profiles: ['delete'] };
+  for (const [name, methods] of Object.entries(adminOnlyDeletes)) {
+    const statements = allowStatements(matchBlock(name));
+    for (const method of methods) {
+      const allowed = statements.filter(({ methods: m }) => m.includes(method));
+      assert.ok(allowed.length > 0, `${name}: ${method} may not be silently dropped (the admin studio needs it)`);
+      for (const statement of allowed) assert.match(statement.condition, /isAdmin\(\)/, `${name}: ${method} must require the admin flag`);
+    }
   }
 });
 

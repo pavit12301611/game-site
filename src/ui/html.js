@@ -27,6 +27,8 @@ export const ICONS = {
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4"/>',
   moon: '<path d="M20.5 15.2A8.5 8.5 0 0 1 8.8 3.5 8.5 8.5 0 1 0 20.5 15.2Z"/>',
   wifi: '<path d="M2 8.5a15.5 15.5 0 0 1 20 0M5 12a10.8 10.8 0 0 1 14 0M8.5 15.5a6 6 0 0 1 7 0M12 19h.01"/>',
+  trash: '<path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14ZM10 11v6M14 11v6"/>',
+  crown: '<path d="M3 17h18M5 17 3.4 7.6 8 11l4-6.6L16 11l4.6-3.4L19 17H5Z"/>',
 };
 
 export function icon(name, className = '') {
