@@ -6,7 +6,7 @@
  * every write is wrapped, so the app never throws because of a preference.
  */
 
-import { GAMES, getGame } from '../catalog.js';
+import { LIBRARY as GAMES } from '../catalog.js';
 import { recordRecentGameId, toggleFavoriteGameId } from '../helpers.js';
 import { state } from '../state.js';
 import { showToast } from './toast.js';
@@ -17,6 +17,6 @@ export function recordRecentGame(gameId) {
 
 export function toggleFavorite(gameId) {
   state.favorites = toggleFavoriteGameId(state.favorites, gameId, new Set(GAMES.map((game) => game.id)), localStorage);
-  const game = getGame(gameId);
+  const game = GAMES.find(game => game.id === gameId);
   showToast(`${game?.title || 'Game'} ${state.favorites.includes(gameId) ? 'added to favorites' : 'removed from favorites'}.`);
 }

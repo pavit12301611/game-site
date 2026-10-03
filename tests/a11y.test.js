@@ -90,14 +90,14 @@ test('a toast is announced too', () => {
 
 test('focus returns to the same control after a repaint', () => {
   setHash('#/catalog');
-  const star = all('[data-action="toggle-favorite"]').find((node) => node.dataset.gameId === 'neon-gomoku');
+  const star = all('[data-action="toggle-favorite"]').find((node) => node.dataset.gameId === 'connect-four');
   star.focus();
   assert.equal(dom.window.document.activeElement, star);
   click(star); // toggles the favourite and repaints everything
   const now = dom.window.document.activeElement;
   assert.notEqual(now, star, 'the old node is gone');
   assert.equal(now.dataset.action, 'toggle-favorite');
-  assert.equal(now.dataset.gameId, 'neon-gomoku', 'focus is on the same game button');
+  assert.equal(now.dataset.gameId, 'connect-four', 'focus is on the same game button');
   click(now); // put the favourite back
 });
 

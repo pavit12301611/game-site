@@ -1,4 +1,4 @@
-import { GAMES } from '../catalog.js';
+import { LIBRARY as GAMES } from '../catalog.js';
 /**
  * The app chrome: sidebar, topbar, mobile nav, and the shell that wraps them around the current
  * page (plus the modal and the toast when there is one). `renderPage` is the router's switch - it

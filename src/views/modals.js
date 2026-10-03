@@ -8,7 +8,7 @@
  * values) and `renderLiveCheck` reports the result of the user-started live Firebase check.
  */
 
-import { GAMES, getGame, getGameArtwork } from '../catalog.js';
+import { ROOM_GAMES as GAMES, getGame, getGameArtwork } from '../catalog.js';
 import { connection, onlineUnavailableNote } from '../connection.js';
 import { firebaseReady, firebaseSetup } from '../firebase.js';
 import { currentGame, currentGameState, currentPlayers, currentUid, state } from '../state.js';

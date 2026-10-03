@@ -1,5 +1,6 @@
 import {
-  GAMES,
+  ROOM_GAMES as GAMES,
+  LIBRARY,
   createInitialGameState,
   getGame,
 } from './catalog.js';
@@ -218,10 +219,11 @@ function handleClick(event) {
   if (action === 'skip-to-content') { const main = /** @type {HTMLElement | null} */ (document.querySelector('#page-content')); if (main) { main.setAttribute('tabindex', '-1'); main.focus(); } return; }
   if (action === 'open-settings') { modalOpen({ type: 'settings' }); return; }
   if (action === 'toggle-favorite') { toggleFavorite(gameId); return; }
+  if (action === 'launch-solo') { recordRecentGame(gameId); return; }
   if (action === 'open-game') { recordRecentGame(gameId); modalOpen({ type: 'game', gameId }); return; }
   if (action === 'filter-category') { state.category = category; if (state.page !== 'catalog') { navigate('catalog'); return; } render(); return; }
   if (action === 'clear-filters') { state.query = ''; state.category = 'All games'; render(); return; }
-  if (action === 'quick-play') { const game = GAMES[Math.floor(Math.random() * GAMES.length)]; recordRecentGame(game.id); modalOpen({ type: 'game', gameId: game.id }); return; }
+  if (action === 'quick-play') { const game = LIBRARY[Math.floor(Math.random() * LIBRARY.length)]; recordRecentGame(game.id); if (game.options.launch) { location.assign(game.options.launch); return; } modalOpen({ type: 'game', gameId: game.id }); return; }
   if (action === 'quick-room') { openRoomModal(GAMES[0].id); return; }
   if (action === 'open-friends') { navigate('friends'); return; }
   if (action === 'show-setup') {

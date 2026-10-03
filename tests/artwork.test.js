@@ -27,18 +27,9 @@ function listImages(dir, prefix = '') {
 }
 
 test('every game has its own picture: a distinct file, a 640 px variant, a subject text and a credit', () => {
-  assert.equal(GAMES.length, 160);
+  assert.equal(GAMES.length, 40);
   const hashes = new Set();
   for (const game of GAMES) {
-    if (game.options.variant) {
-      const art = getGameArtwork(game);
-      assert.equal(art.src, `/images/expansion/${game.id}.svg`);
-      assert.ok(art.alt && art.credit);
-      assert.deepEqual([art.width, art.height], [640, 400]);
-      assert.ok(existsSync(onDisk(art.src)));
-      hashes.add(sha(onDisk(art.src)));
-      continue;
-    }
     assert.ok(Object.hasOwn(GAME_ARTWORK, game.id), `${game.id} has an entry in GAME_ARTWORK`);
     const art = getGameArtwork(game);
     assert.equal(art.src, `/images/games/${game.id}.webp`, `${game.id} uses its own file`);
@@ -51,28 +42,27 @@ test('every game has its own picture: a distinct file, a 640 px variant, a subje
       hashes.add(sha(onDisk(file)));
     }
   }
-  assert.equal(hashes.size, 200, 'no two games (or sizes) share the same picture');
-  assert.equal(new Set(GAMES.map((game) => getGameArtwork(game).alt)).size, 160, 'no two games share a description');
+  assert.equal(hashes.size, 80, 'no two games (or sizes) share the same picture');
+  assert.equal(new Set(GAMES.map((game) => getGameArtwork(game).alt)).size, 40, 'no two games share a description');
 });
 
 test('picture files stay within the weight budget (150 KB full size, 40 KB small) and the catalog within 2 MB', () => {
   let catalogBytes = 0;
   for (const game of GAMES) {
-    if (game.options.variant) { catalogBytes += statSync(onDisk(getGameArtwork(game).src)).size; continue; }
     const full = statSync(onDisk(`/images/games/${game.id}.webp`)).size;
     const small = statSync(onDisk(`/images/games/${game.id}-640.webp`)).size;
     assert.ok(full <= FULL_MAX, `${game.id}.webp is ${full} B`);
     assert.ok(small <= SMALL_MAX, `${game.id}-640.webp is ${small} B`);
     catalogBytes += small; // a catalog card downloads the 640 px variant on a phone
   }
-  assert.ok(catalogBytes <= 2 * 1024 * 1024, `the 160 catalog cards weigh ${catalogBytes} B at 640 px`);
+  assert.ok(catalogBytes <= 2 * 1024 * 1024, `the legacy artwork collection weigh ${catalogBytes} B at 640 px`);
   for (const file of listImages(imagesDir)) {
     assert.ok(statSync(join(imagesDir, file)).size <= FULL_MAX, `${file} is at most 150 KB`);
   }
 });
 
 test('the hero and the four category covers exist, with sizes that match the markup', () => {
-  assert.deepEqual([HERO_ARTWORK.width, HERO_ARTWORK.height], [1600, 900]);
+  assert.deepEqual([HERO_ARTWORK.width, HERO_ARTWORK.height], [960, 600]);
   assert.ok(existsSync(onDisk(HERO_ARTWORK.src)) && existsSync(onDisk('/images/hero-800.webp')));
   assert.deepEqual(Object.keys(CATEGORY_ARTWORK), CATEGORIES.filter((name) => !['All games', '3D arenas', '2D classics'].includes(name)));
   for (const [name, art] of Object.entries(CATEGORY_ARTWORK)) {
@@ -111,7 +101,7 @@ test('artImage always writes width, height and alt; only the hero is eager with 
 
   const hero = artImage(HERO_ARTWORK, { className: 'hero-artwork', hero: true });
   assert.match(hero, /fetchpriority="high"/);
-  assert.match(hero, /width="1600" height="900"/);
+  assert.match(hero, /width="960" height="600"/);
   assert.doesNotMatch(hero, /loading="lazy"/);
 });
 

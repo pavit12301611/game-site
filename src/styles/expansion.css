@@ -1,17 +1,9 @@
-/* Expansion layer: keeps original theme and accessibility tokens intact. */
-.hero-panel { border: 1px solid #6987bd55; box-shadow: 0 24px 80px #02071955; }
-.hero-copy h1 { letter-spacing: -.055em; }
-.hero-kicker { letter-spacing: .08em; }
-.game-card { transition: transform .2s, box-shadow .2s; }
-.game-card:hover { transform: translateY(-5px); box-shadow: 0 18px 35px #060b2440; }
-.game-card.is-3d { border-color: #51bdc9; }
-.game-card.is-3d .game-card-meta { color: #218994; font-weight: 700; }
-.arena-viewport { width: 100%; overflow: hidden; background: #080d20; border: 1px solid #344969; border-radius: 18px; margin-bottom: 24px; }
-.arena-caption { display: flex; justify-content: space-between; gap: 12px; padding: 16px; font: 11px 'JetBrains Mono', monospace; color: #80ecfa; }
-.arena-caption span:last-child { color: #aebed4; }
-[data-arena-3d] { min-height: 160px; color: #d6e7ff; }
-[data-arena-3d] canvas { display: block; width: 100%; }
-.filter-pills { flex-wrap: wrap; }
-@media (prefers-reduced-motion: reduce) { .game-card { transition: none; } .game-card:hover { transform: none; } }
-@media (max-width: 600px) { .arena-caption { flex-direction: column; } }
-.original-launch{display:flex;align-items:center;justify-content:space-between;gap:24px;margin:28px 0;padding:32px;border:1px solid #8be5c6;background:linear-gradient(120deg,#102b2b,#101c2c);color:#effaf6;border-radius:18px}.original-launch h2{font:700 38px 'Chakra Petch',sans-serif;margin:8px 0}.original-launch p{max-width:620px;color:#c2d9d4;line-height:1.7}.original-launch small{color:#a5c8c0}.original-launch .eyebrow{color:#9af8d6}.original-launch a{flex-shrink:0;text-decoration:none}.original-library-link{display:block;padding:18px 22px;margin-bottom:24px;border:1px solid #75c1a8;border-radius:12px;color:inherit;text-decoration:none;background:#71deb214;font-weight:600}@media(max-width:650px){.original-launch{align-items:flex-start;flex-direction:column;padding:24px}}
+/* Curated library finish. Uses the existing accessible light/dark theme tokens. */
+.hero-panel{border:1px solid #6987bd55;box-shadow:0 24px 80px #02071955;min-height:460px}
+.hero-copy h1{letter-spacing:-.055em;text-shadow:none}.hero-copy h1 em{color:#a4f7cd;text-shadow:none}.hero-kicker{letter-spacing:.04em}.hero-copy .press-start{color:#a4f7cd;animation:none;text-shadow:none;font-size:12px}.hero-copy>p{font-size:16px;max-width:460px;line-height:1.75}.hero-copy h1{font-size:clamp(44px,5.3vw,78px)}.hero-panel::before{background:linear-gradient(90deg,#080f1dee 0%,#080f1dbb 45%,#080f1d22 100%)}
+.hero-actions .button-primary{--primary:#a4f7cd;--primary-hover:#c1ffe0;--primary-ledge:#4b8c70;--on-primary:#0a2017;--primary-glow:none}
+.game-card{border:1px solid var(--line);border-radius:15px;box-shadow:0 6px 20px #060b241a;transition:transform .2s,box-shadow .2s}.game-card:hover{transform:translateY(-5px);box-shadow:0 18px 35px #060b2440;border-color:var(--control-edge)}.game-art{border-bottom:1px solid var(--line)}.game-art::after{background:linear-gradient(180deg,transparent 70%,#080e1922)}.game-art-image{filter:none}.game-card.is-3d{border-color:#719d96}.game-card-meta{font-size:10px;letter-spacing:.035em;line-height:1.7}.game-card-copy{gap:9px;padding:19px 21px 22px}.game-card-title{font-size:22px}.game-card-copy p{font-size:13px;line-height:1.7;-webkit-line-clamp:3}.card-play{font-size:11px;letter-spacing:.08em}.game-card-hit:visited{color:inherit}.favorite-button{backdrop-filter:blur(8px)}
+.filter-pills{flex-wrap:wrap}.filter-pill{font-size:12px}.marquee{border-width:1px;opacity:.8;font-size:10px;letter-spacing:.15em}.stat-strip b{text-shadow:none}.featured-section .game-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.section-heading h2{letter-spacing:-.035em}
+@media(min-width:1500px){.featured-section .game-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media(max-width:600px){.featured-section .game-grid{grid-template-columns:1fr}.hero-panel{min-height:430px}.hero-panel::before{background:linear-gradient(0deg,#080f1df0,#080f1dcc 65%,#080f1d44)}.hero-copy>p{font-size:14px}}
+@media(prefers-reduced-motion:reduce){.game-card{transition:none}.game-card:hover{transform:none}}

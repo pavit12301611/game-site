@@ -1,4 +1,4 @@
-import { EXPANSION_GAMES } from './expansion.js';
+import { SOLO_GAMES } from './arcade/catalog.js';
 /**
  * The game catalog: the list of playable games plus the artwork and how-to-play copy for each.
  *
@@ -58,13 +58,18 @@ export const GAMES = [
   { id: 'sea-battle', title: 'Sea Battle', category: 'Strategy', engine: 'battle', icon: '▤', accent: 'blue', blurb: 'Take turns calling shots on your rivals’ fleets.', options: { board: 6, fleet: 4 } },
   { id: 'pixel-fleet', title: 'Pixel Fleet', category: 'Strategy', engine: 'battle', icon: '▥', accent: 'cyan', blurb: 'A compact, turn-based fleet hunt for 2–3.', options: { board: 6, fleet: 4 } },
   { id: 'alien-skirmish', title: 'Alien Skirmish', category: 'Arcade', engine: 'battle', icon: '✣', accent: 'green', blurb: 'Scout, aim, and clear every rival’s pixel base.', options: { board: 6, fleet: 4 } },
-  { id: 'pong-rally', title: 'Pong Rally', category: 'Arcade', engine: 'rally', icon: '▰', accent: 'cyan', blurb: 'Trade volleys and be first to seven clean hits.', options: { target: 7 } },
+  { id: 'pong-rally', title: 'Volley Tactics', category: 'Arcade', engine: 'rally', icon: '▰', accent: 'cyan', blurb: 'A turn-based lane duel. Read the ball, choose a return, and score seven.', options: { target: 7 } },
   { id: 'paddle-wars', title: 'Paddle Wars', category: 'Party', engine: 'rally', icon: '▱', accent: 'pink', blurb: 'Choose a lane, return the volley, win the rally.', options: { target: 7 } },
   { id: 'air-hockey', title: 'Air Hockey', category: 'Party', engine: 'rally', icon: '◉', accent: 'blue', blurb: 'A turn-by-turn table duel with a quick puck.', options: { target: 7 } },
   { id: 'codebreaker', title: 'Codebreaker', category: 'Puzzle', engine: 'code', icon: '⌗', accent: 'green', blurb: 'Crack the hidden four-digit sequence in turns.', options: { digits: 4, maxGuesses: 10 } },
   { id: 'mastermind', title: 'Mastermind', category: 'Puzzle', engine: 'code', icon: '▦', accent: 'violet', blurb: 'Read the hints, beat the clock, break the code.', options: { digits: 4, maxGuesses: 10 } },
-  ...EXPANSION_GAMES,
 ];
+
+/** Public room library: one representative per existing rule engine.
+ * GAMES retains old IDs only for backward-compatible saved room links and regression tests.
+ */
+export const ROOM_GAMES = GAMES.filter((game, index, all) => all.findIndex(other => other.engine === game.engine) === index);
+export const LIBRARY = [...SOLO_GAMES, ...ROOM_GAMES];
 
 /** @param {string} gameId @returns {Game | null} */
 export function getGame(gameId) {
@@ -115,13 +120,13 @@ export function getMemoryCardIcon(index) {
 
 /** The landing hero: a composite of the generated game photos (see scripts/build-composites.sh). */
 export const HERO_ARTWORK = Object.freeze({
-  src: '/images/hero.webp',
-  srcset: '/images/hero-800.webp 800w, /images/hero.webp 1600w',
-  width: 1600,
-  height: 900,
+  src: '/images/originals/apex-circuit.webp',
+  srcset: '',
+  width: 960,
+  height: 600,
   alt: '',
   focal: '62% 50%',
-  credit: 'Generated image (composite of generated game photos)',
+  credit: 'AI-generated Apex Circuit cover illustration, not a gameplay screenshot',
 });
 
 /** One cover per category, also composites of generated photos. Keys match CATEGORIES (minus "All games"). */
@@ -171,9 +176,9 @@ export const GAME_PHOTOS = {
   'bug-blaster': "Retro tin toy ray gun on a workbench",
   'button-masher': "Oversized red push button with a finger above it",
   'byte-escape': "Green circuit board whose traces read as a maze, macro",
-  'codebreaker': "Brass combination padlock with number dials, no brand",
+  'codebreaker': "Four glowing vault dials with feedback pegs and a golden opening lock",
   'coin-flip-clash': "Plain blank gold coin spinning mid-air",
-  'connect-four': "Upright blue four-in-a-row frame with red and yellow discs, no logo",
+  'connect-four': "Violet gravity board with glossy coral and golden discs",
   'dice-duel': "Two ivory dice tumbling on green felt",
   'eight-bit-riddles': "Generic retro handheld console with abstract blocky pixels on its screen, no logo",
   'emoji-decode': "Colourful generic smiley stickers on a wooden table",
@@ -181,8 +186,8 @@ export const GAME_PHOTOS = {
   'five-in-row': "Large wooden drop-frame with red and yellow discs, side light",
   'laser-duel': "Red and green laser beams crossing in fog",
   'mastermind': "Coloured code pegs with black and white feedback pegs on a plain wooden board",
-  'maze-runner': "Aerial view of a green hedge maze in a garden",
-  'memory-match': "Face-down navy cards on a table, two turned up",
+  'maze-runner': "Teal labyrinth with player pawns and a golden star gate",
+  'memory-match': "Violet memory tiles with matching mint moons and geometric patterned backs",
   'movie-mayhem': "Blank clapperboard and a bowl of popcorn, no writing, no poster",
   'neon-gomoku': "Go board with black and white stones, close crop",
   'neon-labyrinth': "Narrow maze corridor lit by orange and cyan neon strips",
@@ -191,14 +196,14 @@ export const GAME_PHOTOS = {
   'paddle-wars': "Two table-tennis paddles facing each other with a white ball",
   'pixel-fleet': "Small toy wooden boats on a blue grid cloth",
   'pixel-pop-quiz': "Four coloured plastic quiz buzzers on a wooden table, no logo",
-  'pixel-tac-toe': "Wooden tic-tac-toe board with turned X and O pieces",
-  'pixel-tap': "Big blue arcade push button on a metal panel",
-  'pong-rally': "Table-tennis paddles and orange ball on a blue table with a net",
+  'pixel-tac-toe': "Coral X and cyan O pieces on a floating midnight-blue three-by-three game board",
+  'pixel-tap': "Luminous mint arcade button with three competitive progress meters",
+  'pong-rally': "Three-lane volley court with mint and coral paddles and golden ball",
   'reaction-rush': "Vintage stopwatch mid-run held in a hand",
   'retro-rewind': "Audio cassette and blank video tape with plain labels, no branding",
-  'retro-trivia': "Vintage wood-cased television in a cosy room, no brand",
-  'rock-paper-scissors': "Three hands showing rock, paper and scissors",
-  'sea-battle': "Grey plastic peg board with toy ships and red and white pegs, no box art",
+  'retro-trivia': "Retro indigo quiz monitor with a glowing question mark and contestant buzzers",
+  'rock-paper-scissors': "Coral rock fist, mint paper palm and lavender scissors hand icons",
+  'sea-battle': "Stylized battleship over a cyan sea radar grid with a coral target marker",
   'spacebar-showdown': "Macro of a mechanical keyboard spacebar with blank keycaps",
   'star-runner': "Wooden ball-maze labyrinth toy with a star hole",
   'turbo-charge': "Boost gauge on a car dashboard, needle high, no numbers",
@@ -218,7 +223,7 @@ export const GAME_ARTWORK = Object.freeze(
       height: 800,
       alt,
       focal: 'center center',
-      credit: 'Generated image',
+      credit: 'Generated game artwork, not a gameplay screenshot',
     })]),
   ),
 );
@@ -228,7 +233,7 @@ export function getGameArtwork(gameOrId) {
   const game = typeof gameOrId === 'string' ? getGame(gameOrId) : gameOrId;
   if (!game) return { ...CATEGORY_ARTWORK.Arcade, engineLabel: 'Arcade' };
   const engineLabel = ENGINE_LABELS[game.engine] || 'Arcade mode';
-  if (game.options.variant) return { src: `/images/expansion/${game.id}.svg`, srcset: '', width: 640, height: 400, alt: `${game.title} illustrated challenge cover`, credit: 'Procedural SVG illustration', engineLabel };
+  if (game.options.cover) return { src: `/images/originals/${game.options.cover}.webp`, srcset: '', width: 960, height: 600, alt: `${game.title} illustrated game cover`, credit: 'AI-generated cover illustration, not a gameplay screenshot', engineLabel: game.options.label };
   const own = Object.hasOwn(GAME_ARTWORK, game.id) ? GAME_ARTWORK[game.id] : null;
   return { ...(own || CATEGORY_ARTWORK[game.category] || CATEGORY_ARTWORK.Arcade), engineLabel };
 }

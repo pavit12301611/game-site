@@ -95,31 +95,31 @@ test('start-up ends in a painted page: shell, sidebar brand and hero are in #app
   assert.equal(all('.nav-item').length >= 3, true, 'the sidebar shows Home / Game library / Friends');
 });
 
-test('the catalog lists all 160 games and filters by search text', () => {
+test('the catalog lists all 22 games and filters by search text', () => {
   setHash('#/catalog');
-  assert.equal(all('[data-action="open-game"]').length, 160);
-  assert.match($('.game-count').textContent, /160/);
+  assert.equal(all('[data-action="open-game"]').length, 10);
+  assert.match($('.game-count').textContent, /22/);
 
   const search = $('#global-search');
   assert.ok(search, 'the global search box exists');
   search.value = 'maze';
   search.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
   const titles = all('.game-card-title').map((node) => node.textContent);
-  assert.ok(titles.length > 0 && titles.length < 160, 'search narrows the shelf');
+  assert.ok(titles.length > 0 && titles.length < 22, 'search narrows the shelf');
   assert.ok(titles.every((title) => /maze|labyrinth|escape|runner/i.test(title)), 'only maze games remain');
 
   search.value = '';
   search.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
-  assert.equal(all('[data-action="open-game"]').length, 160, 'clearing the search restores the shelf');
+  assert.equal(all('[data-action="open-game"]').length, 10, 'clearing the search restores the shelf');
 });
 
 test('a category filter narrows the shelf and can be cleared', () => {
   setHash('#/catalog');
   const pill = all('[data-action="filter-category"]').find((node) => node.dataset.category === 'Puzzle');
   click(pill);
-  assert.ok(all('[data-action="open-game"]').length < 160, 'only puzzle games are shown');
+  assert.ok(all('[data-action="open-game"]').length < 22, 'only puzzle games are shown');
   click(all('[data-action="filter-category"]').find((node) => node.dataset.category === 'All games'));
-  assert.equal(all('[data-action="open-game"]').length, 160);
+  assert.equal(all('[data-action="open-game"]').length, 10);
 });
 
 test('opening a game offers local practice and disables online rooms without Firebase', () => {
@@ -325,8 +325,8 @@ test('landing and catalog images: sized, lazy except the hero, and every game ca
   if (clear) click(clear);
   click(all('[data-action="filter-category"]').find((node) => node.dataset.category === 'All games'));
   const sources = all('.game-card img').map((img) => img.getAttribute('src'));
-  assert.equal(sources.length, 160);
-  assert.equal(new Set(sources).size, 160, 'no two cards share a picture');
+  assert.equal(sources.length, 22);
+  assert.equal(new Set(sources).size, 22, 'no two cards share a picture');
 });
 
 test('a category cover on the landing page opens the catalog filtered to that category', () => {
@@ -335,17 +335,56 @@ test('a category cover on the landing page opens the catalog filtered to that ca
   assert.equal(dom.window.location.hash, '#/catalog');
   assert.ok($('#catalog-grid'), 'the catalog is showing');
   assert.ok(all('.filter-pill.is-active').some((node) => node.dataset.category === 'Strategy'), 'the Strategy filter is active');
-  assert.ok(all('.game-card').length > 0 && all('.game-card').length < 160);
+  assert.ok(all('.game-card').length > 0 && all('.game-card').length < 22);
   click(all('[data-action="filter-category"]').find((node) => node.dataset.category === 'All games'));
 });
 
-test('dimension filters partition all 160 entries', () => {
+test('dimension filters partition all 22 entries', () => {
   setHash('#/catalog');
   const search = $('#global-search'); search.value = ''; search.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
   click(all('[data-action="filter-category"]').find(n => n.dataset.category === '3D arenas'));
-  assert.equal(all('.game-card').length, 20);
+  assert.equal(all('.game-card').length, 1);
   click(all('[data-action="filter-category"]').find(n => n.dataset.category === '2D classics'));
-  assert.equal(all('.game-card').length, 140);
+  assert.equal(all('.game-card').length, 21);
   click(all('[data-action="filter-category"]').find(n => n.dataset.category === 'All games'));
-  assert.equal(all('.game-card').length, 160);
+  assert.equal(all('.game-card').length, 22);
+});
+
+test('Memory Match reveals the shuffled card value, not its cell index', async () => {
+  setHash('#/catalog');
+  click(all('[data-action="open-game"]').find(node => node.dataset.gameId === 'memory-match'));
+  click(button('practice-game'));
+  const { state } = await import('../src/state.js');
+  const cards = state.local.gameState.cards;
+  const pair = cards.findIndex((card, index) => index > 0 && card === cards[0]);
+  click(button('memory-flip', '[data-index="0"]'));
+  assert.equal(button('memory-flip', '[data-index="0"]').textContent, cards[0]);
+  click(button('memory-flip', `[data-index="${pair}"]`));
+  assert.equal(button('memory-flip', `[data-index="${pair}"]`).textContent, cards[0]);
+  assert.equal(state.local.gameState.scores['local-you'], 1);
+  click(button('leave-session'));
+});
+
+test('maze rendering keeps both player pawns visible on a shared tile', async () => {
+  const { renderMazeBoard } = await import('../src/views/boards.js');
+  const { createInitialGameState } = await import('../src/catalog.js');
+  const players = [{ uid: 'one', name: 'One' }, { uid: 'two', name: 'Two' }];
+  const gameState = createInitialGameState('maze-runner', players);
+  gameState.positions.two = { ...gameState.positions.one };
+  const root = dom.window.document.createElement('div'); root.innerHTML = renderMazeBoard(gameState, players, 'one');
+  assert.equal(root.querySelectorAll('.maze-token').length, 2);
+  assert.equal(root.querySelector('.maze-occupants:has(.maze-token)').children.length, 2);
+});
+
+test('volley court coordinates reflect the chosen lane without changing the score rules', async () => {
+  const { renderRallyBoard } = await import('../src/views/boards.js');
+  const { createInitialGameState, applyGameAction } = await import('../src/catalog.js');
+  const players = [{ uid: 'one', name: 'One' }, { uid: 'two', name: 'Two' }];
+  const current = createInitialGameState('pong-rally', players);
+  const next = applyGameAction('pong-rally', current, 'one', { lane: 2 }, players);
+  const root = dom.window.document.createElement('div'); root.innerHTML = renderRallyBoard(next, players, 'one');
+  assert.equal(root.querySelector('.rally-court').style.getPropertyValue('--return-y'), '78%');
+  assert.equal(root.querySelector('.rally-court').style.getPropertyValue('--return-x'), '76%');
+  assert.equal(root.querySelectorAll('.court-paddle').length, 2);
+  assert.equal(next.scores.one, 1);
 });

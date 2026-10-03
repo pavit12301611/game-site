@@ -11,7 +11,7 @@
  * Every value that comes from another player (names, room ids, game titles) goes through `esc()`.
  */
 
-import { CATEGORIES, CATEGORY_ARTWORK, GAMES, HERO_ARTWORK, getGame, getGameArtwork, getGameGuide } from '../catalog.js';
+import { CATEGORIES, CATEGORY_ARTWORK, ROOM_GAMES as GAMES, LIBRARY, HERO_ARTWORK, getGame, getGameArtwork, getGameGuide } from '../catalog.js';
 import { connection } from '../connection.js';
 import { firebaseReady, firebaseSetup } from '../firebase.js';
 import { isRoomExpired } from '../helpers.js';
@@ -32,7 +32,7 @@ export function renderGameCard(game, level = 3) {
   const isFavorite = state.favorites.includes(game.id);
   return `<article class="game-card ${game.options.dimension === '3D' ? 'is-3d' : ''}" data-category="${esc(game.category)}">
     <span class="game-art art-${game.accent || 'blue'}">${artImage(artwork, { className: 'game-art-image', sizes: '(min-width: 1024px) 320px, (min-width: 640px) 45vw, calc(100vw - 32px)' })}</span>
-    <div class="game-card-copy"><span class="game-card-meta">${game.options.variant ? 'CHALLENGE VARIANT · ' : ''}${game.options.dimension === '3D' ? '◈ 3D' : '2D'} · ${esc(game.category)} · 2–3 players · ${esc(artwork.engineLabel)}</span><h${level} class="game-card-title"><button class="game-card-hit" data-action="open-game" data-game-id="${game.id}" aria-label="Open ${esc(game.title)}">${esc(game.title)}</button></h${level}><p>${esc(game.blurb)}</p><span class="card-play" aria-hidden="true">Open ${icon('arrow')}</span></div>
+    <div class="game-card-copy"><span class="game-card-meta">${game.options.dimension === '3D' ? '◈ 3D' : '2D'} · ${esc(game.category)} · ${game.options.launch ? esc(game.options.players || 'Solo') : '2–3 players'} · ${esc(artwork.engineLabel)}</span><h${level} class="game-card-title">${game.options.launch ? `<a class="game-card-hit" href="${esc(game.options.launch)}" data-action="launch-solo" data-game-id="${game.id}" data-solo-game="${game.id}" aria-label="Play ${esc(game.title)}">${esc(game.title)}</a>` : `<button class="game-card-hit" data-action="open-game" data-game-id="${game.id}" aria-label="Open ${esc(game.title)}">${esc(game.title)}</button>`}</h${level}><p>${esc(game.blurb)}</p><span class="card-play" aria-hidden="true">Open ${icon('arrow')}</span></div>
     <button class="favorite-button ${isFavorite ? 'is-favorite' : ''}" data-action="toggle-favorite" data-game-id="${game.id}" aria-label="${isFavorite ? 'Remove' : 'Add'} ${esc(game.title)} ${isFavorite ? 'from' : 'to'} favorites" aria-pressed="${isFavorite}">${isFavorite ? '★' : '☆'}</button>
   </article>`;
 }
@@ -43,7 +43,7 @@ export function renderGameGrid(games, level = 3) {
 }
 
 export function gamesForIds(ids) {
-  return ids.map((id) => getGame(id)).filter(Boolean);
+  return ids.map((id) => LIBRARY.find(game => game.id === id)).filter(Boolean);
 }
 
 export function renderPersonalShelves() {
@@ -55,7 +55,7 @@ export function renderPersonalShelves() {
 
 export function filteredGames() {
   const term = state.query.trim().toLowerCase();
-  return GAMES.filter((game) => (state.category === 'All games' || game.category === state.category || (state.category === '3D arenas' && game.options.dimension === '3D') || (state.category === '2D classics' && game.options.dimension !== '3D'))
+  return LIBRARY.filter((game) => (state.category === 'All games' || game.category === state.category || (state.category === '3D arenas' && game.options.dimension === '3D') || (state.category === '2D classics' && game.options.dimension !== '3D'))
     && (!term || `${game.title} ${game.category} ${game.blurb}`.toLowerCase().includes(term)));
 }
 
@@ -66,24 +66,26 @@ export function renderSetupCallout(conn = connection()) {
 
 export function renderCategoryRow() {
   const cards = Object.keys(CATEGORY_ARTWORK).map((name) => {
-    const count = GAMES.filter((game) => game.category === name).length;
+    const count = LIBRARY.filter((game) => game.category === name).length;
     return `<li><button class="category-card" data-action="filter-category" data-category="${esc(name)}">${artImage(CATEGORY_ARTWORK[name], { className: 'category-card-image', sizes: '(min-width: 1024px) 280px, (min-width: 560px) 45vw, 100vw' })}<span class="category-card-copy"><b>${esc(name)}</b><small>${count} games</small></span></button></li>`;
   }).join('');
   return `<section class="section-block category-section" aria-labelledby="category-title"><div class="section-heading"><div><div class="eyebrow">Find your mood</div><h2 id="category-title">Browse by category<span>.</span></h2></div></div><ul class="category-row">${cards}</ul></section>`;
 }
 
 export function renderHome() {
-  const featured = [GAMES[40], GAMES[50], GAMES[60], GAMES[70], GAMES[80], GAMES[0]];
+  const featured = LIBRARY.slice(0, 4);
   const conn = connection();
   return `<section class="hero-panel">
     ${artImage(HERO_ARTWORK, { className: 'hero-artwork', hero: true })}
-    <div class="hero-copy"><div class="hero-kicker"><span class="live-pulse is-${conn.kind}"></span>${esc(conn.label)}<i>·</i> No downloads</div><p class="press-start" aria-hidden="true">▶ PRESS START</p><h1>Next dimension.<br><em>Same crew.</em></h1><p>Meet Apex Circuit: real-time 3D racing, built for your browser. Or bring your crew to 40 original arcade entries and 120 shared-engine challenge variants.</p><div class="hero-actions"><button class="button button-primary" data-action="navigate" data-page="catalog">Explore the arcade ${icon('arrow')}</button><button class="button button-glass" data-action="open-friends">Play with friends ${icon('people')}</button></div><div class="hero-footnote">Made for <b>2–3 players</b> · works on laptops &amp; phones</div></div>
+    <div class="hero-copy"><div class="hero-kicker"><span class="live-pulse is-${conn.kind}"></span>${esc(conn.label)}<i>·</i> No downloads</div><p class="press-start" aria-hidden="true">▶ PRESS START</p><h1>Your next<br><em>obsession.</em></h1><p>Twelve standalone games. Ten social classics. From a neon snake to a real 3D racing circuit—different rules, different worlds, no numbered copies.</p><div class="hero-actions"><button class="button button-primary" data-action="navigate" data-page="catalog">Explore the arcade ${icon('arrow')}</button><button class="button button-glass" data-action="open-friends">Play with friends ${icon('people')}</button></div><div class="hero-footnote"><b>Solo adventures & social classics</b> · works on laptops &amp; phones</div></div>
   </section>
-  <div class="marquee" aria-hidden="true"><span>★ INSERT FRIENDS ★ PRESS START ★ 40 ORIGINAL ENTRIES + 120 VARIANTS ★ 2–3 PLAYERS ★ NO DOWNLOADS ★ SHARE A LINK ★ HIGH SCORE IS WAITING ★</span></div>
-  <section class="original-launch"><div><span class="eyebrow">PSD ORIGINAL / REAL-TIME 3D</span><h2>Apex Circuit<span>.</span></h2><p>Steer. Brake. Find your racing line. A standalone 3-lap circuit racer with 2 AI rivals—not a boost preset.</p><small>Single-player vs AI · Keyboard + touch · WebGL required</small></div><a href="/drive.html" class="button button-primary">Drive now ↗</a></section>
+  <div class="marquee" aria-hidden="true"><span>★ INSERT FRIENDS ★ PRESS START ★ ${LIBRARY.length} DISTINCT GAMES ★ 2–3 PLAYERS ★ NO DOWNLOADS ★ SHARE A LINK ★ HIGH SCORE IS WAITING ★</span></div>
   ${renderSetupCallout(conn)}
-  <section class="stat-strip" aria-label="Arcade facts"><div><b>${GAMES.length}</b><span>games & challenge variants</span></div><div><b>2–3</b><span>players per room</span></div><div><b>0</b><span>downloads required</span></div></section>
-  <section class="section-block featured-section"><div class="section-heading"><div><div class="eyebrow">Pick up and play</div><h2>Discover your next obsession<span>.</span></h2><p>Easy to learn. Hard to leave the lobby.</p></div><button class="text-button" data-action="navigate" data-page="catalog">Browse all ${GAMES.length} ${icon('arrow')}</button></div>${renderGameGrid(featured)}</section>
+  <section class="stat-strip" aria-label="Arcade facts"><div><b>${LIBRARY.length}</b><span>distinct games</span></div><div><b>2–3</b><span>players per room</span></div><div><b>0</b><span>downloads required</span></div></section>
+  <section class="section-block featured-section"><div class="section-heading"><div><div class="eyebrow">Pick up and play</div><h2>Built to be played<span>.</span></h2><p>Four different ways to get completely carried away.</p></div><button class="text-button" data-action="navigate" data-page="catalog">Browse all ${LIBRARY.length} ${icon('arrow')}</button></div>${renderGameGrid(featured)}</section>
+  <section class="section-block"><div class="section-heading"><div><div class="eyebrow">BETTER WITH YOUR PEOPLE</div><h2>One room. Real rivalries<span>.</span></h2><p>Ten distinct social classics. Practice against the CPU or invite 2–3 players when online rooms are configured.</p></div></div>${renderGameGrid(GAMES.slice(0, 4))}</section>
+  <section class="section-block featured-section"><div class="section-heading"><div><div class="eyebrow">NEW · THE TABLETOP COLLECTION</div><h2>A different kind of challenge<span>.</span></h2><p>Merge. Uncover. Outflank. Find your angle. Four distinct games, not four versions of the same one.</p></div></div>${renderGameGrid(LIBRARY.slice(4, 8))}</section>
+  <section class="section-block featured-section"><div class="section-heading"><div><div class="eyebrow">NEW · THE CHALLENGE COLLECTION</div><h2>Think fast. Land softly<span>.</span></h2><p>Stacking, crate puzzles, lunar flight and hex territory. Four new mechanics, four different challenges.</p></div></div>${renderGameGrid(LIBRARY.slice(8, 12))}</section>
   ${renderCategoryRow()}
   ${renderPersonalShelves()}
   <section class="invite-banner"><div class="invite-symbol">${icon('link')}</div><div><div class="eyebrow">A better way to say “you on?”</div><h2>Make a room. Share the link.</h2><p>Your friends join in the browser. No install, no matching accounts required to try a guest room.</p></div><button class="button button-dark" data-action="quick-room">Create a game room ${icon('arrow')}</button></section>
@@ -92,11 +94,10 @@ export function renderHome() {
 
 export function renderCatalog() {
   const games = filteredGames();
-  return `<section class="catalog-heading"><div><div class="eyebrow">Insert friends here</div><h1>Choose your playground<span>.</span></h1><p>40 original entries + 120 shared-engine challenge variants. These room-based challenges support 2–3 players; Apex Circuit is a separate single-player racer.</p></div><button class="button button-primary" data-action="quick-room">${icon('link')} Create invite room</button></section>
-    <div class="catalog-toolbar"><div class="filter-pills">${CATEGORIES.map((category) => `<button class="filter-pill ${state.category === category ? 'is-active' : ''}" data-action="filter-category" data-category="${esc(category)}">${esc(category)}${category === 'All games' ? `<i>${GAMES.length}</i>` : ''}</button>`).join('')}</div><span class="game-count">SHOWING <b>${games.length}</b> / ${GAMES.length}</span></div>
-    <a class="original-library-link" href="/drive.html">NEW ORIGINAL · Apex Circuit — real-time 3D racing vs AI ↗</a>
+  return `<section class="catalog-heading"><div><div class="eyebrow">Insert friends here</div><h1>Choose your playground<span>.</span></h1><p>${LIBRARY.length} distinct games. Twelve standalone games and ten room-based classics. No numbered variants. Pick your kind of play.</p></div><button class="button button-primary" data-action="quick-room">${icon('link')} Create invite room</button></section>
+    <div class="catalog-toolbar"><div class="filter-pills">${CATEGORIES.map((category) => `<button class="filter-pill ${state.category === category ? 'is-active' : ''}" data-action="filter-category" data-category="${esc(category)}">${esc(category)}${category === 'All games' ? `<i>${LIBRARY.length}</i>` : ''}</button>`).join('')}</div><span class="game-count">SHOWING <b>${games.length}</b> / ${LIBRARY.length}</span></div>
     <div id="catalog-grid">${renderGameGrid(games, 2)}</div>
-    <div class="catalog-bottom"><span>Every room is private by invite link.</span><button class="text-button" data-action="show-setup">How online play works ${icon('arrow')}</button></div>`;
+    <div class="catalog-bottom"><span>Solo games play instantly. Social classics use private invite rooms.</span><button class="text-button" data-action="show-setup">How online play works ${icon('arrow')}</button></div>`;
 }
 
 export function getFriendName(friend) {
@@ -216,7 +217,7 @@ function renderAdminOverview(data) {
   return `<div class="admin-metrics">${metrics.map(([label, value, hint]) => `<article><span>${esc(label)}</span><b>${state.adminLoading ? '…' : value}</b><small>${esc(hint)}</small></article>`).join('')}</div>
     <div class="admin-grid">
       <section class="surface admin-table-panel"><div class="panel-heading"><div><span class="eyebrow">Live room snapshot</span><h2>Recent rooms</h2></div><button class="text-button" data-action="admin-tab" data-tab="rooms">Manage all ${icon('arrow')}</button></div>${renderAdminRoomsTable(activeRooms, { limitRows: 8 })}</section>
-      <aside class="surface admin-powers"><div class="panel-heading"><div><span class="eyebrow">God mode, on</span><h2>What this studio can do</h2></div><span class="admin-live"><i></i> ${GAMES.length} games</span></div><ul class="admin-powers-list"><li><b>Rooms:</b> inspect every room, kick anyone from a waiting lobby, delete a room with its heartbeats.</li><li><b>Players:</b> remove a profile and free its username, so repeat offenders cannot hide.</li><li><b>Social:</b> unlink friend pairs, clear stale requests and game invites.</li><li><b>Access:</b> grant and revoke admin flags without opening the Firebase console.</li></ul><div class="notice-panel"><span>${icon('shield')}</span><div><b>Firestore enforces every button.</b><p>Each action above checks <code>admins/{yourUid}.admin == true</code> on the server. A forged flag in someone else's browser cannot touch this data.</p></div></div></aside>
+      <aside class="surface admin-powers"><div class="panel-heading"><div><span class="eyebrow">God mode, on</span><h2>What this studio can do</h2></div><span class="admin-live"><i></i> ${LIBRARY.length} games</span></div><ul class="admin-powers-list"><li><b>Rooms:</b> inspect every room, kick anyone from a waiting lobby, delete a room with its heartbeats.</li><li><b>Players:</b> remove a profile and free its username, so repeat offenders cannot hide.</li><li><b>Social:</b> unlink friend pairs, clear stale requests and game invites.</li><li><b>Access:</b> grant and revoke admin flags without opening the Firebase console.</li></ul><div class="notice-panel"><span>${icon('shield')}</span><div><b>Firestore enforces every button.</b><p>Each action above checks <code>admins/{yourUid}.admin == true</code> on the server. A forged flag in someone else's browser cannot touch this data.</p></div></div></aside>
     </div>`;
 }
 

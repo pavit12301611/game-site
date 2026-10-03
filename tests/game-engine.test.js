@@ -22,12 +22,12 @@ function play(gameId, moves, players = twoPlayers, seed = 'test-seed') {
   return state;
 }
 
-test('the catalog contains exactly 160 unique, selectable games', () => {
-  assert.equal(GAMES.length, 160);
-  assert.equal(new Set(GAMES.map((game) => game.id)).size, 160);
+test('the catalog contains 40 legacy entries for saved-room compatibility', () => {
+  assert.equal(GAMES.length, 40);
+  assert.equal(new Set(GAMES.map((game) => game.id)).size, 40);
   assert.ok(GAMES.every((game) => game.title && game.blurb && game.engine && game.options));
   assert.deepEqual(new Set(GAMES.map((game) => game.engine)), new Set(['line', 'drop', 'memory', 'race', 'rps', 'quiz', 'maze', 'battle', 'rally', 'code']));
-  assert.ok(GAMES.every((game) => getGameArtwork(game).src === (game.options.variant ? `/images/expansion/${game.id}.svg` : `/images/games/${game.id}.webp`)));
+  assert.ok(GAMES.every((game) => getGameArtwork(game).src === `/images/games/${game.id}.webp`));
   assert.ok(GAMES.every((game) => getGameGuide(game)?.goal && getGameGuide(game)?.controls && getGameGuide(game)?.rules));
 });
 

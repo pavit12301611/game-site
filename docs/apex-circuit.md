@@ -1,6 +1,6 @@
 # Apex Circuit — first distinct browser-3D milestone
 
-A standalone real-time low-poly circuit racer at `/drive.html`, reachable from the homepage and catalog. This is separate from the 120 shared-engine variants; those now carry explicit CHALLENGE VARIANT labels. The project has 40 legacy entries, 120 variants, and this additional standalone racer. Neither 120 independent games nor AAA/Unity delivery is claimed.
+A standalone real-time low-poly circuit racer at `/drive.html`, reachable from the homepage and catalog. It is one of eight standalone games in the current eighteen-game curated library. The earlier numbered expansion has been removed. See [Curated arcade](curated-library.md). Neither 40 new independent games nor AAA/Unity delivery is claimed.
 
 ## Implemented
 - A continuous driving model: acceleration, drag, braking, speed-dependent steering and track-wall collision penalties.

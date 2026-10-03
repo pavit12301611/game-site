@@ -29,3 +29,5 @@ import './styles/fx.css';
 import './app.js';
 
 import './styles/expansion.css';
+
+import './styles/social-graphics.css';

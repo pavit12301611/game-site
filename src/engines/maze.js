@@ -31,7 +31,7 @@ export function createInitialState(game, players) {
     turnUid: null,
     width,
     height,
-    walls: game.options.layout ? Array.from({ length: 5 }, (_, row) => Array.from({ length: 5 }, (_, col) => ({ x: col + 1, y: row + 1 }))).flat().filter(({ x, y }) => ((x * 7 + y * 11 + game.options.layout * 3) % 13) < 5).map(({ x, y }) => y * width + x) : [...MAZE_WALLS],
+    walls: [...MAZE_WALLS],
     positions: Object.fromEntries(players.map((player, index) => [player.uid, starts[index]])),
     goal: { x: width - 1, y: 0 },
     scores: scoresFor(players.map((player) => player.uid)),

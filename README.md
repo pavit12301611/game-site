@@ -1,3 +1,5 @@
+> **Current public library:** 22 distinct games — 12 standalone games and 10 social classics. The numbered 120-preset expansion was removed. See [the current game inventory and test scope](docs/curated-library.md). Older sections below describing 40 entries refer to the backward-compatible legacy registry, not the visible game count.
+
 # PSD-gaming
 
 A lightweight, responsive browser arcade for laptops and phones. The shelf contains **40 original retro-style mini-games** with ten compact rulesets, local practice against a browser rival, private 2–3 player rooms, username friends, direct game invites, optional email accounts, guest play, and a UID-gated admin area.

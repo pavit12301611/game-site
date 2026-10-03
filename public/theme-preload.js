@@ -10,8 +10,8 @@
       const hero = document.createElement('link');
       hero.rel = 'preload';
       hero.as = 'image';
-      hero.href = '/images/hero.webp';
-      hero.setAttribute('imagesrcset', '/images/hero-800.webp 800w, /images/hero.webp 1600w');
+      hero.href = '/images/originals/apex-circuit.webp';
+      hero.setAttribute('imagesrcset', '');
       hero.setAttribute('imagesizes', '100vw');
       hero.setAttribute('fetchpriority', 'high');
       document.head.appendChild(hero);

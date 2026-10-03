@@ -14,7 +14,7 @@ import {
   loadStoredGameIds,
   resolveTheme,
 } from './helpers.js';
-import { GAMES, getGame } from './catalog.js';
+import { LIBRARY as GAMES, getGame } from './catalog.js';
 import { presenceVerdicts } from './presence-status.js';
 
 /**

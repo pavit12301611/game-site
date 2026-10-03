@@ -1,4 +1,3 @@
-import { syncArena3D } from './ui/arena3d.js';
 /**
  * The one function that paints the app.
  *
@@ -45,7 +44,6 @@ export function render() {
   else restoreFocus(appRoot, before);
   manageDialogFocus(appRoot, before, pageChanged);
   syncLiveRegion(appRoot);
-  syncArena3D(appRoot);
   applyFx(appRoot);
   trackResult(render);
 }
