@@ -471,6 +471,41 @@ test('a waiting room gives your seat back when you leave, and goes away with the
   await ruts.assertFails(deleteDoc(doc(carol, 'rooms', 'keep')));
 });
 
+test('a room older than 1 hour cannot be updated by players and may be deleted by any signed-in user', async (t) => {
+  if (!ready(t)) return;
+  const alice = testEnv.authenticatedContext(ALICE).firestore();
+  const bob = testEnv.authenticatedContext(BOB).firestore();
+  const carol = testEnv.authenticatedContext(CAROL).firestore();
+  const overOneHourAgo = new Date(Date.now() - 61 * 60 * 1000);
+  await seed(async (db) => {
+    await setDoc(doc(db, 'rooms', 'expired-waiting'), {
+      ...waitingRoom(ALICE),
+      createdAt: overOneHourAgo,
+      updatedAt: overOneHourAgo,
+    });
+    await setDoc(doc(db, 'rooms', 'expired-playing'), {
+      ...waitingRoom(ALICE),
+      playerUids: [ALICE, BOB],
+      playerNames: { [ALICE]: 'Alice', [BOB]: 'Bob' },
+      status: 'playing',
+      createdAt: overOneHourAgo,
+      updatedAt: overOneHourAgo,
+    });
+  });
+  await ruts.assertFails(updateDoc(doc(bob, 'rooms', 'expired-waiting'), {
+    playerUids: [ALICE, BOB],
+    playerNames: { [ALICE]: 'Alice', [BOB]: 'Bob' },
+    state: { phase: 'playing', turnUid: ALICE, moves: 0 },
+    updatedAt: ts(),
+  }), 'cannot join a waiting room older than 1 hour');
+  await ruts.assertFails(updateDoc(doc(alice, 'rooms', 'expired-playing'), {
+    state: { phase: 'playing', turnUid: BOB, moves: 1 },
+    updatedAt: ts(),
+  }), 'cannot make moves in a running room older than 1 hour');
+  await ruts.assertSucceeds(deleteDoc(doc(carol, 'rooms', 'expired-waiting')), 'any signed-in user may delete an expired waiting room');
+  await ruts.assertSucceeds(deleteDoc(doc(carol, 'rooms', 'expired-playing')), 'any signed-in user may delete an expired playing room');
+});
+
 test('a missing friend request or game invite reads as not-found for a signed-in player', async (t) => {
   if (!ready(t)) return;
   const alice = testEnv.authenticatedContext(ALICE).firestore();

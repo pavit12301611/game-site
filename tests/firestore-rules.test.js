@@ -162,8 +162,20 @@ test('rooms: unlistable except for admins, and a missing room reads as "not foun
   assert.match(get.condition, /resource == null/, 'reading a room that does not exist must not throw permission-denied');
   assert.match(get.condition, /resource\.data\.status == 'waiting'/);
   assert.match(get.condition, /isRoomMember\(resource\.data\)/);
+  assert.match(get.condition, /isExpiredRoom\(resource\.data\)/, 'expired rooms can be read by link visitors so they can be auto-deleted');
   const list = statements.find(({ methods }) => methods.includes('list'));
   assert.equal(list?.condition, 'isAdmin()', 'only admins may list rooms');
+});
+
+test('rooms older than 1 hour cannot be updated by players and may be deleted by any signed-in user', () => {
+  assert.match(code, /function isExpiredRoom\(room\)\s*\{\s*return room\.createdAt is timestamp\s*&&\s*request\.time >= room\.createdAt \+ duration\.value\(1,\s*'h'\);\s*\}/);
+  const statements = ownStatements('rooms');
+  const update = statements.find(({ methods }) => methods.includes('update'));
+  assert.ok(update, 'rooms needs an update rule');
+  assert.match(update.condition, /!isExpiredRoom\(resource\.data\)/, 'players cannot join or move in a room older than 1 hour');
+  const remove = statements.find(({ methods }) => methods.includes('delete'));
+  assert.ok(remove, 'rooms needs a delete rule');
+  assert.match(remove.condition, /isExpiredRoom\(resource\.data\)/, 'any signed-in user may delete an expired room');
 });
 
 test('friend requests and game invites return missing gets as not-found without broadening list access', () => {

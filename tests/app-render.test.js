@@ -227,8 +227,9 @@ test('the admin studio renders every section with its action buttons for a flagg
   state.adminData = {
     error: '',
     rooms: [
-      { id: 'room-waiting', gameId, hostUid: 'uid-2', hostName: 'Hosty', playerUids: ['uid-2', 'uid-3'], playerNames: { 'uid-2': 'Hosty', 'uid-3': 'Guesty' }, maxPlayers: 2, status: 'waiting' },
-      { id: 'room-live', gameId, hostUid: 'uid-2', hostName: 'Hosty', playerUids: ['uid-2', 'uid-3'], playerNames: { 'uid-2': 'Hosty', 'uid-3': 'Guesty' }, maxPlayers: 2, status: 'playing' },
+      { id: 'room-waiting', gameId, hostUid: 'uid-2', hostName: 'Hosty', playerUids: ['uid-2', 'uid-3'], playerNames: { 'uid-2': 'Hosty', 'uid-3': 'Guesty' }, maxPlayers: 2, status: 'waiting', createdAt: Date.now() - 10 * 60 * 1000 },
+      { id: 'room-live', gameId, hostUid: 'uid-2', hostName: 'Hosty', playerUids: ['uid-2', 'uid-3'], playerNames: { 'uid-2': 'Hosty', 'uid-3': 'Guesty' }, maxPlayers: 2, status: 'playing', createdAt: Date.now() - 20 * 60 * 1000 },
+      { id: 'room-expired', gameId, hostUid: 'uid-2', hostName: 'OldHost', playerUids: ['uid-2'], playerNames: { 'uid-2': 'OldHost' }, maxPlayers: 2, status: 'waiting', createdAt: Date.now() - 61 * 60 * 1000 },
     ],
     profiles: [
       { uid: 'uid-admin-1', username: 'boss', usernameLower: 'boss' },
@@ -249,6 +250,7 @@ test('the admin studio renders every section with its action buttons for a flagg
     assert.ok(button('admin-delete-room', '[data-room-id="room-waiting"]'), 'each room can be deleted');
     assert.ok(button('admin-kick-player', '[data-room-id="room-waiting"][data-uid="uid-3"]'), 'a waiting lobby member can be kicked');
     assert.ok(!button('admin-kick-player', '[data-room-id="room-live"]'), 'kicks are not offered for a running match');
+    assert.ok(!button('admin-delete-room', '[data-room-id="room-expired"]'), 'rooms older than 1 hour are excluded');
 
     click(button('admin-tab', '[data-tab="players"]'));
     assert.ok($('.uid-chip'), 'player UIDs are shown');

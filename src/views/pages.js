@@ -14,7 +14,8 @@
 import { CATEGORIES, CATEGORY_ARTWORK, GAMES, HERO_ARTWORK, getGame, getGameArtwork, getGameGuide } from '../catalog.js';
 import { connection } from '../connection.js';
 import { firebaseReady, firebaseSetup } from '../firebase.js';
-import { state, currentGame, currentGameState, currentPlayers, currentPresence, currentUid } from '../state.js';
+import { isRoomExpired } from '../helpers.js';
+import { state, currentGame, currentGameState, currentPlayers, currentPresence, currentUid, presenceNow } from '../state.js';
 import { artImage, esc, icon } from '../ui/html.js';
 import { formatAwayFor } from '../presence-status.js';
 import { activeName, isGoogleUser } from '../ui/players.js';
@@ -185,8 +186,10 @@ function adminRoomPlayers(room) {
 }
 
 function renderAdminRoomsTable(rooms, { limitRows = Infinity } = {}) {
-  if (!rooms.length) return `<div class="empty-inline"><span>◉</span><b>No rooms yet</b><small>The first private room will show up here.</small></div>`;
-  const rows = [...rooms]
+  const nowMs = presenceNow();
+  const activeRooms = rooms.filter((room) => !isRoomExpired(room, nowMs));
+  if (!activeRooms.length) return `<div class="empty-inline"><span>◉</span><b>No rooms yet</b><small>The first private room will show up here.</small></div>`;
+  const rows = [...activeRooms]
     .sort((a, b) => (timestampDate(b.createdAt)?.getTime() || 0) - (timestampDate(a.createdAt)?.getTime() || 0))
     .slice(0, limitRows)
     .map((room) => `<tr><td><span class="table-game">${esc(getGame(room.gameId)?.title || room.gameId)}</span></td><td>${adminRoomPlayers(room)}</td><td><span class="status-pill status-${room.status}">${esc(room.status || 'unknown')}</span></td><td>${timeAgo(room.createdAt)}</td><td class="admin-actions">${adminDeleteButton('admin-delete-room', `data-room-id="${esc(room.id)}" data-name="${esc(room.hostName || 'this room')}"`, `Delete the ${esc(getGame(room.gameId)?.title || 'room')} room`)}</td></tr>`)
@@ -195,20 +198,22 @@ function renderAdminRoomsTable(rooms, { limitRows = Infinity } = {}) {
 }
 
 function renderAdminOverview(data) {
+  const nowMs = presenceNow();
+  const activeRooms = data.rooms.filter((room) => !isRoomExpired(room, nowMs));
   const pendingRequests = data.requests.filter((request) => request.status === 'pending').length;
-  const pendingInvites = data.invites.filter((invite) => invite.status === 'pending').length;
-  const liveRooms = data.rooms.filter((room) => room.status === 'playing').length;
+  const pendingInvites = data.invites.filter((invite) => invite.status === 'pending' && !isRoomExpired(invite, nowMs)).length;
+  const liveRooms = activeRooms.filter((room) => room.status === 'playing').length;
   const metrics = [
     ['Registered players', data.profiles.length, 'Accounts with a username'],
     ['Admins', data.admins.length, 'UIDs with studio access'],
-    ['Rooms (latest 100)', data.rooms.length, `${liveRooms} match in progress`],
+    ['Rooms (latest 100)', activeRooms.length, `${liveRooms} match in progress`],
     ['Friend connections', data.friendships.length, 'Accepted friend links'],
     ['Pending requests', pendingRequests, 'Friend requests unanswered'],
     ['Pending invites', pendingInvites, 'Game invites unanswered'],
   ];
   return `<div class="admin-metrics">${metrics.map(([label, value, hint]) => `<article><span>${esc(label)}</span><b>${state.adminLoading ? '…' : value}</b><small>${esc(hint)}</small></article>`).join('')}</div>
     <div class="admin-grid">
-      <section class="surface admin-table-panel"><div class="panel-heading"><div><span class="eyebrow">Live room snapshot</span><h2>Recent rooms</h2></div><button class="text-button" data-action="admin-tab" data-tab="rooms">Manage all ${icon('arrow')}</button></div>${renderAdminRoomsTable(data.rooms, { limitRows: 8 })}</section>
+      <section class="surface admin-table-panel"><div class="panel-heading"><div><span class="eyebrow">Live room snapshot</span><h2>Recent rooms</h2></div><button class="text-button" data-action="admin-tab" data-tab="rooms">Manage all ${icon('arrow')}</button></div>${renderAdminRoomsTable(activeRooms, { limitRows: 8 })}</section>
       <aside class="surface admin-powers"><div class="panel-heading"><div><span class="eyebrow">God mode, on</span><h2>What this studio can do</h2></div><span class="admin-live"><i></i> ${GAMES.length} games</span></div><ul class="admin-powers-list"><li><b>Rooms:</b> inspect every room, kick anyone from a waiting lobby, delete a room with its heartbeats.</li><li><b>Players:</b> remove a profile and free its username, so repeat offenders cannot hide.</li><li><b>Social:</b> unlink friend pairs, clear stale requests and game invites.</li><li><b>Access:</b> grant and revoke admin flags without opening the Firebase console.</li></ul><div class="notice-panel"><span>${icon('shield')}</span><div><b>Firestore enforces every button.</b><p>Each action above checks <code>admins/{yourUid}.admin == true</code> on the server. A forged flag in someone else's browser cannot touch this data.</p></div></div></aside>
     </div>`;
 }
@@ -270,10 +275,11 @@ export function renderAdmin() {
   const data = state.adminData;
   const tab = ADMIN_TABS.some(([id]) => id === state.adminTab) ? state.adminTab : 'overview';
   const tabs = ADMIN_TABS.map(([id, label]) => `<button class="filter-pill ${tab === id ? 'is-active' : ''}" data-action="admin-tab" data-tab="${id}">${label}</button>`).join('');
+  const activeRooms = data?.rooms ? data.rooms.filter((room) => !isRoomExpired(room, presenceNow())) : [];
   let body;
   if (!data) body = `<div class="empty-inline"><b>Loading the control room…</b></div>`;
   else if (data.error) body = `<div class="notice-panel notice-warn">${esc(data.error)}</div>`;
-  else if (tab === 'rooms') body = `<section class="surface admin-table-panel"><div class="panel-heading"><div><span class="eyebrow">Every private room</span><h2>Rooms <i>${data.rooms.length}</i></h2></div><span class="admin-live"><i></i> latest 100</span></div>${renderAdminRoomsTable(data.rooms)}</section>`;
+  else if (tab === 'rooms') body = `<section class="surface admin-table-panel"><div class="panel-heading"><div><span class="eyebrow">Every private room</span><h2>Rooms <i>${activeRooms.length}</i></h2></div><span class="admin-live"><i></i> latest 100 · 1h auto-delete</span></div>${renderAdminRoomsTable(activeRooms)}</section>`;
   else if (tab === 'players') body = `<section class="surface admin-table-panel"><div class="panel-heading"><div><span class="eyebrow">Everyone who claimed a name</span><h2>Players <i>${data.profiles.length}</i></h2></div><span class="admin-live"><i></i> latest 300</span></div>${renderAdminPlayers(data)}</section>`;
   else if (tab === 'social') body = renderAdminSocial(data);
   else if (tab === 'access') body = renderAdminAccess(data);

@@ -26,7 +26,7 @@ import { state } from './state.js';
 import { showToast } from './ui/toast.js';
 import { isGoogleUser } from './ui/players.js';
 import { stopSocial, subscribeSocial } from './social.js';
-import { openRoomFromLink } from './online/rooms.js';
+import { openRoomFromLink, sweepExpiredKnownRooms } from './online/rooms.js';
 import { DISPLAY_NAME_STORAGE_KEY, suggestUsername, validateUsername } from './helpers.js';
 
 /**
@@ -170,6 +170,7 @@ export async function refreshAccount(user) {
   render();
   if (state.socialError) showToast(state.socialError, 'warning');
   if (state.page === 'admin' && !state.isAdmin) navigate('home');
+  if (user && firebaseReady) void sweepExpiredKnownRooms();
   const route = parseHash();
   if (route.page === 'room' && route.id && user) void openRoomFromLink(route.id);
 }

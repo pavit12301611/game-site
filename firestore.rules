@@ -17,6 +17,11 @@ service cloud.firestore {
         && room.playerUids.hasAny([request.auth.uid]);
     }
 
+    function isExpiredRoom(room) {
+      return room.createdAt is timestamp
+        && request.time >= room.createdAt + duration.value(1, 'h');
+    }
+
     match /admins/{uid} {
       // The first flag is provisioned manually in the Firebase console (nobody can mint one from
       // the client without already being an admin). After that, admins manage access from the
@@ -144,7 +149,10 @@ service cloud.firestore {
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'respondedAt'])
         && request.resource.data.status in ['accepted', 'declined']
         && request.resource.data.respondedAt == request.time;
-      allow delete: if signedIn() && (resource.data.fromUid == request.auth.uid || isAdmin());
+      allow delete: if signedIn()
+        && (resource.data.fromUid == request.auth.uid
+          || (resource.data.toUid == request.auth.uid && isExpiredRoom(resource.data))
+          || isAdmin());
     }
 
     match /rooms/{roomId} {
@@ -152,9 +160,9 @@ service cloud.firestore {
       // `resource == null` lets a read of a room that does not exist succeed with "not found" (so the app can say
       // "This invite link is invalid or has expired"). Without it Firestore answers permission-denied, because
       // `resource.data` does not exist for a missing document. Existing rooms are still visible only while
-      // waiting, to their members, or to admins.
+      // waiting, to their members, once expired (so visitors can auto-delete stale rooms), or to admins.
       allow get: if signedIn()
-        && (resource == null || resource.data.status == 'waiting' || isRoomMember(resource.data) || isAdmin());
+        && (resource == null || resource.data.status == 'waiting' || isRoomMember(resource.data) || isExpiredRoom(resource.data) || isAdmin());
       allow list: if isAdmin();
       allow create: if signedIn()
         && request.resource.data.keys().hasOnly(['hostUid', 'hostName', 'gameId', 'playerUids', 'playerNames', 'maxPlayers', 'status', 'state', 'createdAt', 'updatedAt'])
@@ -173,7 +181,7 @@ service cloud.firestore {
         && request.resource.data.updatedAt == request.time;
       // Admins bypass every player-level constraint: the admin studio can kick a lobby member,
       // force-close a match, or rewrite room data, and Firestore itself checks their flag.
-      allow update: if isAdmin() || (signedIn() && (
+      allow update: if isAdmin() || (signedIn() && !isExpiredRoom(resource.data) && (
         (
           resource.data.status == 'waiting'
           && request.resource.data.status == 'waiting'
@@ -269,6 +277,7 @@ service cloud.firestore {
       ));
       allow delete: if signedIn()
         && (isAdmin()
+          || isExpiredRoom(resource.data)
           || (resource.data.hostUid == request.auth.uid && resource.data.status == 'waiting')
           // A waiting room nobody is left in is litter: whoever is still in it may clear it away.
           || (resource.data.status == 'waiting' && resource.data.playerUids.hasOnly([request.auth.uid])));

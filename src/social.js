@@ -12,13 +12,15 @@
  * host. This module only has to write the right shape.
  */
 
-import { collection, doc, getDoc, getDocs, limit, onSnapshot, query, serverTimestamp, setDoc, updateDoc, where, writeBatch } from 'firebase/firestore';
+import { collection, deleteDoc, doc, getDoc, getDocs, limit, onSnapshot, query, serverTimestamp, setDoc, updateDoc, where, writeBatch } from 'firebase/firestore';
 import { db, firebaseReady } from './firebase.js';
 import { friendlyError } from './errors.js';
+import { isRoomExpired } from './helpers.js';
+import { deleteExpiredRoom } from './online/rooms.js';
 import { unavailableSocialDocument } from './social-errors.js';
 import { render } from './render.js';
 import { setHash } from './router.js';
-import { state } from './state.js';
+import { presenceNow, state } from './state.js';
 import { showToast } from './ui/toast.js';
 
 /** A no-op unsubscribe, so the three listeners are always safe to stop. */
@@ -61,7 +63,13 @@ export function subscribeSocial(user) {
     render();
   }, (error) => reportSocialError('Friend list listener', error));
   stopInvites = onSnapshot(query(collection(store, 'gameInvites'), where('toUid', '==', user.uid)), (snapshot) => {
-    state.invites = rowsOf(snapshot).filter((row) => row.status === 'pending');
+    const pending = rowsOf(snapshot).filter((row) => row.status === 'pending');
+    const nowMs = presenceNow();
+    for (const invite of pending.filter((row) => isRoomExpired(row, nowMs))) {
+      void deleteExpiredRoom(invite.roomId, user.uid);
+      void deleteDoc(doc(store, 'gameInvites', invite.id)).catch(emptyUnsubscribe);
+    }
+    state.invites = pending.filter((row) => !isRoomExpired(row, nowMs));
     render();
   }, (error) => reportSocialError('Game invite listener', error));
 }
@@ -142,6 +150,11 @@ export async function joinGameInvite(inviteId, roomId) {
   try {
     const snapshot = await getDoc(inviteRef);
     if (!snapshot.exists() || snapshot.data().status !== 'pending') throw new Error('This game invite is no longer valid.');
+    if (isRoomExpired(snapshot.data(), presenceNow())) {
+      await deleteExpiredRoom(roomId, state.user?.uid);
+      await deleteDoc(inviteRef).catch(emptyUnsubscribe);
+      throw new Error('This game invite has expired.');
+    }
     await updateDoc(inviteRef, { status: 'accepted', respondedAt: serverTimestamp() });
     state.modal = null;
     setHash(`room/${roomId}`);
