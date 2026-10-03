@@ -13,6 +13,7 @@ import { activeName, playerIndex, playerMark } from '../ui/players.js';
 import { winningCells } from '../ui/win-cells.js';
 
 export function renderEngineBoard(game, gameState, players, me) {
+  if (game.options.dimension === '3D') return `<section class="arena-viewport"><div class="arena-caption"><span>◈ LIVE WEBGL ARENA</span><span>Player colors match the board below</span></div><div data-arena-3d>Loading 3D arena…</div></section>${renderEngineBoard({ ...game, options: { ...game.options, dimension: '2D' } }, gameState, players, me)}`;
   switch (game.engine) {
     case 'line': return renderLineBoard(gameState, players, me);
     case 'drop': return renderDropBoard(gameState, players, me);

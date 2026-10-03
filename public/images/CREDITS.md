@@ -105,3 +105,124 @@ may use them in this product. Replacing one with a real photo: keep the file nam
 | backdrop.webp | Page backdrop: neon arcade carpet pattern, washed to the theme with an overlay | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
 | trophy.webp | Winner trophy: golden cup with neon glow | generated | generated, no third-party material | Arena.ai Agent Mode image tool |
 | ../favicon.svg, ../favicon-48.png, ../apple-touch-icon.png | The app's helmet mark on a neon-yellow tile (hand-drawn vector, rasterised with ImageMagick) | generated (drawn) | original artwork, no third-party material | scripts/build-arcade-art.sh |
+
+| expansion/orbit-boost-1.svg | Orbit Boost 01 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/orbit-boost-2.svg | Orbit Boost 02 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/orbit-boost-3.svg | Orbit Boost 03 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/orbit-boost-4.svg | Orbit Boost 04 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/orbit-boost-5.svg | Orbit Boost 05 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/orbit-boost-6.svg | Orbit Boost 06 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/orbit-boost-7.svg | Orbit Boost 07 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/orbit-boost-8.svg | Orbit Boost 08 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/orbit-boost-9.svg | Orbit Boost 09 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/orbit-boost-10.svg | Orbit Boost 10 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/prism-escape-1.svg | Prism Escape 01 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/prism-escape-2.svg | Prism Escape 02 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/prism-escape-3.svg | Prism Escape 03 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/prism-escape-4.svg | Prism Escape 04 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/prism-escape-5.svg | Prism Escape 05 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/prism-escape-6.svg | Prism Escape 06 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/prism-escape-7.svg | Prism Escape 07 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/prism-escape-8.svg | Prism Escape 08 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/prism-escape-9.svg | Prism Escape 09 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/prism-escape-10.svg | Prism Escape 10 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/grid-masters-1.svg | Grid Masters 01 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/grid-masters-2.svg | Grid Masters 02 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/grid-masters-3.svg | Grid Masters 03 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/grid-masters-4.svg | Grid Masters 04 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/grid-masters-5.svg | Grid Masters 05 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/grid-masters-6.svg | Grid Masters 06 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/grid-masters-7.svg | Grid Masters 07 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/grid-masters-8.svg | Grid Masters 08 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/grid-masters-9.svg | Grid Masters 09 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/grid-masters-10.svg | Grid Masters 10 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/gravity-league-1.svg | Gravity League 01 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/gravity-league-2.svg | Gravity League 02 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/gravity-league-3.svg | Gravity League 03 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/gravity-league-4.svg | Gravity League 04 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/gravity-league-5.svg | Gravity League 05 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/gravity-league-6.svg | Gravity League 06 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/gravity-league-7.svg | Gravity League 07 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/gravity-league-8.svg | Gravity League 08 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/gravity-league-9.svg | Gravity League 09 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/gravity-league-10.svg | Gravity League 10 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/recall-lab-1.svg | Recall Lab 01 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/recall-lab-2.svg | Recall Lab 02 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/recall-lab-3.svg | Recall Lab 03 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/recall-lab-4.svg | Recall Lab 04 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/recall-lab-5.svg | Recall Lab 05 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/recall-lab-6.svg | Recall Lab 06 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/recall-lab-7.svg | Recall Lab 07 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/recall-lab-8.svg | Recall Lab 08 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/recall-lab-9.svg | Recall Lab 09 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/recall-lab-10.svg | Recall Lab 10 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/fleet-command-1.svg | Fleet Command 01 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/fleet-command-2.svg | Fleet Command 02 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/fleet-command-3.svg | Fleet Command 03 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/fleet-command-4.svg | Fleet Command 04 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/fleet-command-5.svg | Fleet Command 05 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/fleet-command-6.svg | Fleet Command 06 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/fleet-command-7.svg | Fleet Command 07 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/fleet-command-8.svg | Fleet Command 08 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/fleet-command-9.svg | Fleet Command 09 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/fleet-command-10.svg | Fleet Command 10 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/cipher-vault-1.svg | Cipher Vault 01 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/cipher-vault-2.svg | Cipher Vault 02 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/cipher-vault-3.svg | Cipher Vault 03 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/cipher-vault-4.svg | Cipher Vault 04 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/cipher-vault-5.svg | Cipher Vault 05 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/cipher-vault-6.svg | Cipher Vault 06 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/cipher-vault-7.svg | Cipher Vault 07 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/cipher-vault-8.svg | Cipher Vault 08 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/cipher-vault-9.svg | Cipher Vault 09 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/cipher-vault-10.svg | Cipher Vault 10 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/volley-club-1.svg | Volley Club 01 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/volley-club-2.svg | Volley Club 02 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/volley-club-3.svg | Volley Club 03 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/volley-club-4.svg | Volley Club 04 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/volley-club-5.svg | Volley Club 05 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/volley-club-6.svg | Volley Club 06 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/volley-club-7.svg | Volley Club 07 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/volley-club-8.svg | Volley Club 08 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/volley-club-9.svg | Volley Club 09 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/volley-club-10.svg | Volley Club 10 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/hand-clash-1.svg | Hand Clash 01 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/hand-clash-2.svg | Hand Clash 02 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/hand-clash-3.svg | Hand Clash 03 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/hand-clash-4.svg | Hand Clash 04 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/hand-clash-5.svg | Hand Clash 05 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/hand-clash-6.svg | Hand Clash 06 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/hand-clash-7.svg | Hand Clash 07 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/hand-clash-8.svg | Hand Clash 08 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/hand-clash-9.svg | Hand Clash 09 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/hand-clash-10.svg | Hand Clash 10 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/lucky-circuit-1.svg | Lucky Circuit 01 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/lucky-circuit-2.svg | Lucky Circuit 02 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/lucky-circuit-3.svg | Lucky Circuit 03 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/lucky-circuit-4.svg | Lucky Circuit 04 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/lucky-circuit-5.svg | Lucky Circuit 05 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/lucky-circuit-6.svg | Lucky Circuit 06 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/lucky-circuit-7.svg | Lucky Circuit 07 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/lucky-circuit-8.svg | Lucky Circuit 08 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/lucky-circuit-9.svg | Lucky Circuit 09 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/lucky-circuit-10.svg | Lucky Circuit 10 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/dice-district-1.svg | Dice District 01 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/dice-district-2.svg | Dice District 02 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/dice-district-3.svg | Dice District 03 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/dice-district-4.svg | Dice District 04 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/dice-district-5.svg | Dice District 05 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/dice-district-6.svg | Dice District 06 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/dice-district-7.svg | Dice District 07 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/dice-district-8.svg | Dice District 08 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/dice-district-9.svg | Dice District 09 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/dice-district-10.svg | Dice District 10 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/overdrive-1.svg | Overdrive 01 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/overdrive-2.svg | Overdrive 02 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/overdrive-3.svg | Overdrive 03 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/overdrive-4.svg | Overdrive 04 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/overdrive-5.svg | Overdrive 05 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/overdrive-6.svg | Overdrive 06 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/overdrive-7.svg | Overdrive 07 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/overdrive-8.svg | Overdrive 08 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/overdrive-9.svg | Overdrive 09 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |
+| expansion/overdrive-10.svg | Overdrive 10 geometric cover | Procedurally generated SVG | Project-owned | PSD Gaming |

@@ -95,31 +95,31 @@ test('start-up ends in a painted page: shell, sidebar brand and hero are in #app
   assert.equal(all('.nav-item').length >= 3, true, 'the sidebar shows Home / Game library / Friends');
 });
 
-test('the catalog lists all 40 games and filters by search text', () => {
+test('the catalog lists all 160 games and filters by search text', () => {
   setHash('#/catalog');
-  assert.equal(all('[data-action="open-game"]').length, 40);
-  assert.match($('.game-count').textContent, /40/);
+  assert.equal(all('[data-action="open-game"]').length, 160);
+  assert.match($('.game-count').textContent, /160/);
 
   const search = $('#global-search');
   assert.ok(search, 'the global search box exists');
   search.value = 'maze';
   search.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
   const titles = all('.game-card-title').map((node) => node.textContent);
-  assert.ok(titles.length > 0 && titles.length < 40, 'search narrows the shelf');
+  assert.ok(titles.length > 0 && titles.length < 160, 'search narrows the shelf');
   assert.ok(titles.every((title) => /maze|labyrinth|escape|runner/i.test(title)), 'only maze games remain');
 
   search.value = '';
   search.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
-  assert.equal(all('[data-action="open-game"]').length, 40, 'clearing the search restores the shelf');
+  assert.equal(all('[data-action="open-game"]').length, 160, 'clearing the search restores the shelf');
 });
 
 test('a category filter narrows the shelf and can be cleared', () => {
   setHash('#/catalog');
   const pill = all('[data-action="filter-category"]').find((node) => node.dataset.category === 'Puzzle');
   click(pill);
-  assert.ok(all('[data-action="open-game"]').length < 40, 'only puzzle games are shown');
+  assert.ok(all('[data-action="open-game"]').length < 160, 'only puzzle games are shown');
   click(all('[data-action="filter-category"]').find((node) => node.dataset.category === 'All games'));
-  assert.equal(all('[data-action="open-game"]').length, 40);
+  assert.equal(all('[data-action="open-game"]').length, 160);
 });
 
 test('opening a game offers local practice and disables online rooms without Firebase', () => {
@@ -186,7 +186,7 @@ test('leaving a practice match returns to the catalog', () => {
   click(button('practice-game'));
   assert.ok($('[data-action="drop-move"]') || all('[data-action="drop-move"]').length > 0, 'the drop board is rendered');
   click(button('leave-session'));
-  assert.match($('#page-content').textContent, /The game shelf|game shelf/i);
+  assert.match($('#page-content').textContent, /Choose your playground/i);
 });
 
 test('the theme toggle flips the document theme and persists the choice', () => {
@@ -325,8 +325,8 @@ test('landing and catalog images: sized, lazy except the hero, and every game ca
   if (clear) click(clear);
   click(all('[data-action="filter-category"]').find((node) => node.dataset.category === 'All games'));
   const sources = all('.game-card img').map((img) => img.getAttribute('src'));
-  assert.equal(sources.length, 40);
-  assert.equal(new Set(sources).size, 40, 'no two cards share a picture');
+  assert.equal(sources.length, 160);
+  assert.equal(new Set(sources).size, 160, 'no two cards share a picture');
 });
 
 test('a category cover on the landing page opens the catalog filtered to that category', () => {
@@ -335,6 +335,17 @@ test('a category cover on the landing page opens the catalog filtered to that ca
   assert.equal(dom.window.location.hash, '#/catalog');
   assert.ok($('#catalog-grid'), 'the catalog is showing');
   assert.ok(all('.filter-pill.is-active').some((node) => node.dataset.category === 'Strategy'), 'the Strategy filter is active');
-  assert.ok(all('.game-card').length > 0 && all('.game-card').length < 40);
+  assert.ok(all('.game-card').length > 0 && all('.game-card').length < 160);
   click(all('[data-action="filter-category"]').find((node) => node.dataset.category === 'All games'));
+});
+
+test('dimension filters partition all 160 entries', () => {
+  setHash('#/catalog');
+  const search = $('#global-search'); search.value = ''; search.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+  click(all('[data-action="filter-category"]').find(n => n.dataset.category === '3D arenas'));
+  assert.equal(all('.game-card').length, 20);
+  click(all('[data-action="filter-category"]').find(n => n.dataset.category === '2D classics'));
+  assert.equal(all('.game-card').length, 140);
+  click(all('[data-action="filter-category"]').find(n => n.dataset.category === 'All games'));
+  assert.equal(all('.game-card').length, 160);
 });

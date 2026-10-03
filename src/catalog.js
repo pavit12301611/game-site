@@ -1,3 +1,4 @@
+import { EXPANSION_GAMES } from './expansion.js';
 /**
  * The game catalog: the list of playable games plus the artwork and how-to-play copy for each.
  *
@@ -18,8 +19,9 @@ import { QUIZ_QUESTIONS, getQuizQuestion } from './engines/quiz.js';
 /** @typedef {import('./types.js').GameState} GameState */
 /** @typedef {import('./types.js').Action} Action */
 
-export const CATEGORIES = ['All games', 'Arcade', 'Party', 'Strategy', 'Puzzle'];
+export const CATEGORIES = ['All games', '3D arenas', '2D classics', 'Arcade', 'Party', 'Strategy', 'Puzzle'];
 
+/** @type {Game[]} */
 export const GAMES = [
   { id: 'pixel-tac-toe', title: 'Pixel Tic-Tac-Toe', category: 'Strategy', engine: 'line', icon: '✕', accent: 'blue', blurb: 'The tiny-board classic, now with a third seat.', options: { size: 3, connect: 3 } },
   { id: 'neon-gomoku', title: 'Neon Gomoku', category: 'Strategy', engine: 'line', icon: '◎', accent: 'violet', blurb: 'Line up five on a glowing big board.', options: { size: 9, connect: 5 } },
@@ -61,6 +63,7 @@ export const GAMES = [
   { id: 'air-hockey', title: 'Air Hockey', category: 'Party', engine: 'rally', icon: '◉', accent: 'blue', blurb: 'A turn-by-turn table duel with a quick puck.', options: { target: 7 } },
   { id: 'codebreaker', title: 'Codebreaker', category: 'Puzzle', engine: 'code', icon: '⌗', accent: 'green', blurb: 'Crack the hidden four-digit sequence in turns.', options: { digits: 4, maxGuesses: 10 } },
   { id: 'mastermind', title: 'Mastermind', category: 'Puzzle', engine: 'code', icon: '▦', accent: 'violet', blurb: 'Read the hints, beat the clock, break the code.', options: { digits: 4, maxGuesses: 10 } },
+  ...EXPANSION_GAMES,
 ];
 
 /** @param {string} gameId @returns {Game | null} */
@@ -225,6 +228,7 @@ export function getGameArtwork(gameOrId) {
   const game = typeof gameOrId === 'string' ? getGame(gameOrId) : gameOrId;
   if (!game) return { ...CATEGORY_ARTWORK.Arcade, engineLabel: 'Arcade' };
   const engineLabel = ENGINE_LABELS[game.engine] || 'Arcade mode';
+  if (game.options.variant) return { src: `/images/expansion/${game.id}.svg`, srcset: '', width: 640, height: 400, alt: `${game.title} illustrated challenge cover`, credit: 'Procedural SVG illustration', engineLabel };
   const own = Object.hasOwn(GAME_ARTWORK, game.id) ? GAME_ARTWORK[game.id] : null;
   return { ...(own || CATEGORY_ARTWORK[game.category] || CATEGORY_ARTWORK.Arcade), engineLabel };
 }

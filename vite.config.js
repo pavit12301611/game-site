@@ -15,6 +15,7 @@ export default defineConfig(({ mode }) => ({
   },
   build: {
     rollupOptions: {
+      input: { index: 'index.html', drive: 'drive.html' },
       output: {
         manualChunks(id) {
           if (id.includes('/node_modules/@firebase/') || id.includes('/node_modules/firebase/')) return 'firebase-vendor';

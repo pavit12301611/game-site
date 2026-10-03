@@ -30,9 +30,9 @@ function stageArt(game) {
 export function renderGameCard(game, level = 3) {
   const artwork = getGameArtwork(game);
   const isFavorite = state.favorites.includes(game.id);
-  return `<article class="game-card" data-category="${esc(game.category)}">
+  return `<article class="game-card ${game.options.dimension === '3D' ? 'is-3d' : ''}" data-category="${esc(game.category)}">
     <span class="game-art art-${game.accent || 'blue'}">${artImage(artwork, { className: 'game-art-image', sizes: '(min-width: 1024px) 320px, (min-width: 640px) 45vw, calc(100vw - 32px)' })}</span>
-    <div class="game-card-copy"><span class="game-card-meta">${esc(game.category)} · 2–3 players · ${esc(artwork.engineLabel)}</span><h${level} class="game-card-title"><button class="game-card-hit" data-action="open-game" data-game-id="${game.id}" aria-label="Open ${esc(game.title)}">${esc(game.title)}</button></h${level}><p>${esc(game.blurb)}</p><span class="card-play" aria-hidden="true">Open ${icon('arrow')}</span></div>
+    <div class="game-card-copy"><span class="game-card-meta">${game.options.variant ? 'CHALLENGE VARIANT · ' : ''}${game.options.dimension === '3D' ? '◈ 3D' : '2D'} · ${esc(game.category)} · 2–3 players · ${esc(artwork.engineLabel)}</span><h${level} class="game-card-title"><button class="game-card-hit" data-action="open-game" data-game-id="${game.id}" aria-label="Open ${esc(game.title)}">${esc(game.title)}</button></h${level}><p>${esc(game.blurb)}</p><span class="card-play" aria-hidden="true">Open ${icon('arrow')}</span></div>
     <button class="favorite-button ${isFavorite ? 'is-favorite' : ''}" data-action="toggle-favorite" data-game-id="${game.id}" aria-label="${isFavorite ? 'Remove' : 'Add'} ${esc(game.title)} ${isFavorite ? 'from' : 'to'} favorites" aria-pressed="${isFavorite}">${isFavorite ? '★' : '☆'}</button>
   </article>`;
 }
@@ -55,7 +55,7 @@ export function renderPersonalShelves() {
 
 export function filteredGames() {
   const term = state.query.trim().toLowerCase();
-  return GAMES.filter((game) => (state.category === 'All games' || game.category === state.category)
+  return GAMES.filter((game) => (state.category === 'All games' || game.category === state.category || (state.category === '3D arenas' && game.options.dimension === '3D') || (state.category === '2D classics' && game.options.dimension !== '3D'))
     && (!term || `${game.title} ${game.category} ${game.blurb}`.toLowerCase().includes(term)));
 }
 
@@ -73,16 +73,17 @@ export function renderCategoryRow() {
 }
 
 export function renderHome() {
-  const featured = GAMES.slice(0, 6);
+  const featured = [GAMES[40], GAMES[50], GAMES[60], GAMES[70], GAMES[80], GAMES[0]];
   const conn = connection();
   return `<section class="hero-panel">
     ${artImage(HERO_ARTWORK, { className: 'hero-artwork', hero: true })}
-    <div class="hero-copy"><div class="hero-kicker"><span class="live-pulse is-${conn.kind}"></span>${esc(conn.label)}<i>·</i> No downloads</div><p class="press-start" aria-hidden="true">▶ PRESS START</p><h1>Your arcade.<br><em>Everywhere.</em></h1><p>Forty bite-size retro games. Your people on the other side of the link. That’s the whole setup.</p><div class="hero-actions"><button class="button button-primary" data-action="navigate" data-page="catalog">Explore all 40 games ${icon('arrow')}</button><button class="button button-glass" data-action="open-friends">Play with friends ${icon('people')}</button></div><div class="hero-footnote">Made for <b>2–3 players</b> · works on laptops &amp; phones</div></div>
+    <div class="hero-copy"><div class="hero-kicker"><span class="live-pulse is-${conn.kind}"></span>${esc(conn.label)}<i>·</i> No downloads</div><p class="press-start" aria-hidden="true">▶ PRESS START</p><h1>Next dimension.<br><em>Same crew.</em></h1><p>Meet Apex Circuit: real-time 3D racing, built for your browser. Or bring your crew to 40 original arcade entries and 120 shared-engine challenge variants.</p><div class="hero-actions"><button class="button button-primary" data-action="navigate" data-page="catalog">Explore the arcade ${icon('arrow')}</button><button class="button button-glass" data-action="open-friends">Play with friends ${icon('people')}</button></div><div class="hero-footnote">Made for <b>2–3 players</b> · works on laptops &amp; phones</div></div>
   </section>
-  <div class="marquee" aria-hidden="true"><span>★ INSERT FRIENDS ★ PRESS START ★ 40 GAMES ★ 2–3 PLAYERS ★ NO DOWNLOADS ★ SHARE A LINK ★ HIGH SCORE IS WAITING ★</span></div>
+  <div class="marquee" aria-hidden="true"><span>★ INSERT FRIENDS ★ PRESS START ★ 40 ORIGINAL ENTRIES + 120 VARIANTS ★ 2–3 PLAYERS ★ NO DOWNLOADS ★ SHARE A LINK ★ HIGH SCORE IS WAITING ★</span></div>
+  <section class="original-launch"><div><span class="eyebrow">PSD ORIGINAL / REAL-TIME 3D</span><h2>Apex Circuit<span>.</span></h2><p>Steer. Brake. Find your racing line. A standalone 3-lap circuit racer with 2 AI rivals—not a boost preset.</p><small>Single-player vs AI · Keyboard + touch · WebGL required</small></div><a href="/drive.html" class="button button-primary">Drive now ↗</a></section>
   ${renderSetupCallout(conn)}
-  <section class="stat-strip" aria-label="Arcade facts"><div><b>40</b><span>tiny game worlds</span></div><div><b>2–3</b><span>players per room</span></div><div><b>0</b><span>downloads required</span></div></section>
-  <section class="section-block featured-section"><div class="section-heading"><div><div class="eyebrow">Pick up and play</div><h2>Start with a classic<span>.</span></h2><p>Easy to learn. Hard to leave the lobby.</p></div><button class="text-button" data-action="navigate" data-page="catalog">Browse all 40 ${icon('arrow')}</button></div>${renderGameGrid(featured)}</section>
+  <section class="stat-strip" aria-label="Arcade facts"><div><b>${GAMES.length}</b><span>games & challenge variants</span></div><div><b>2–3</b><span>players per room</span></div><div><b>0</b><span>downloads required</span></div></section>
+  <section class="section-block featured-section"><div class="section-heading"><div><div class="eyebrow">Pick up and play</div><h2>Discover your next obsession<span>.</span></h2><p>Easy to learn. Hard to leave the lobby.</p></div><button class="text-button" data-action="navigate" data-page="catalog">Browse all ${GAMES.length} ${icon('arrow')}</button></div>${renderGameGrid(featured)}</section>
   ${renderCategoryRow()}
   ${renderPersonalShelves()}
   <section class="invite-banner"><div class="invite-symbol">${icon('link')}</div><div><div class="eyebrow">A better way to say “you on?”</div><h2>Make a room. Share the link.</h2><p>Your friends join in the browser. No install, no matching accounts required to try a guest room.</p></div><button class="button button-dark" data-action="quick-room">Create a game room ${icon('arrow')}</button></section>
@@ -91,8 +92,9 @@ export function renderHome() {
 
 export function renderCatalog() {
   const games = filteredGames();
-  return `<section class="catalog-heading"><div><div class="eyebrow">Insert friends here</div><h1>The game shelf<span>.</span></h1><p>Every game runs in your browser and supports 2–3 players in a shared room.</p></div><button class="button button-primary" data-action="quick-room">${icon('link')} Create invite room</button></section>
+  return `<section class="catalog-heading"><div><div class="eyebrow">Insert friends here</div><h1>Choose your playground<span>.</span></h1><p>40 original entries + 120 shared-engine challenge variants. These room-based challenges support 2–3 players; Apex Circuit is a separate single-player racer.</p></div><button class="button button-primary" data-action="quick-room">${icon('link')} Create invite room</button></section>
     <div class="catalog-toolbar"><div class="filter-pills">${CATEGORIES.map((category) => `<button class="filter-pill ${state.category === category ? 'is-active' : ''}" data-action="filter-category" data-category="${esc(category)}">${esc(category)}${category === 'All games' ? `<i>${GAMES.length}</i>` : ''}</button>`).join('')}</div><span class="game-count">SHOWING <b>${games.length}</b> / ${GAMES.length}</span></div>
+    <a class="original-library-link" href="/drive.html">NEW ORIGINAL · Apex Circuit — real-time 3D racing vs AI ↗</a>
     <div id="catalog-grid">${renderGameGrid(games, 2)}</div>
     <div class="catalog-bottom"><span>Every room is private by invite link.</span><button class="text-button" data-action="show-setup">How online play works ${icon('arrow')}</button></div>`;
 }

@@ -1,3 +1,4 @@
+import { GAMES } from '../catalog.js';
 /**
  * The app chrome: sidebar, topbar, mobile nav, and the shell that wraps them around the current
  * page (plus the modal and the toast when there is one). `renderPage` is the router's switch - it
@@ -17,7 +18,7 @@ export function renderSidebar() {
   const conn = connection();
   const items = [
     { page: 'home', icon: 'home', label: 'Home' },
-    { page: 'catalog', icon: 'grid', label: 'Game library', count: '40' },
+    { page: 'catalog', icon: 'grid', label: 'Game library', count: String(GAMES.length) },
     { page: 'friends', icon: 'people', label: 'Friends', count: state.requests.length || null },
   ];
   if (state.isAdmin) items.push({ page: 'admin', icon: 'shield', label: 'Admin studio' });
@@ -45,7 +46,7 @@ export function renderTopbar() {
   const themeLabel = state.resolvedTheme === 'light' ? 'Switch to dark theme' : 'Switch to light theme';
   return `<header class="topbar">
     <div class="topbar-mobile-brand">${renderBrand()}<b>PSD<span>-GAMING</span></b></div>
-    <label class="search-box">${icon('search')}<input id="global-search" type="search" placeholder="Search 40 arcade games..." value="${esc(state.query)}" aria-label="Search the game library" /><kbd>⌘ K</kbd></label>
+    <label class="search-box">${icon('search')}<input id="global-search" type="search" placeholder="Search ${GAMES.length} arcade games..." value="${esc(state.query)}" aria-label="Search the game library" /><kbd>⌘ K</kbd></label>
     <div class="topbar-actions">
       <button class="icon-button theme-toggle" data-action="toggle-theme" aria-label="${themeLabel}" title="${themeLabel}">${icon(state.resolvedTheme === 'light' ? 'moon' : 'sun')}</button>
       <button class="icon-button notification-button" data-action="notifications" aria-label="Notifications">${icon('bell')}${unread ? `<i>${unread > 9 ? '9+' : unread}</i>` : ''}</button>

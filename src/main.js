@@ -27,3 +27,5 @@ import './styles/boards.css';
 import './styles/modals.css';
 import './styles/fx.css';
 import './app.js';
+
+import './styles/expansion.css';

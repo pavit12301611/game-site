@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="theme-color" content="#080d14"><title>Apex Circuit — PSD Gaming</title><link rel="icon" href="/favicon.svg"></head>
+<body><main id="racing-app">
+<header class="race-header"><a href="/#/catalog" class="back-link">← PSD GAMING</a><span>ORIGINAL / BROWSER 3D</span><button id="sound" aria-pressed="false">Sound off</button></header>
+<div id="world" aria-label="3D racing circuit"></div>
+<section class="race-hud" aria-label="Race status"><div><small>LAP</small><b id="lap">1 <em>/ 3</em></b></div><div><small>RACE TIME</small><b id="timer">00:00.00</b></div><div><small>NEXT GATE</small><b id="gate">1 / 8</b></div><div><small>POSITION</small><b id="position">3 / 3</b></div></section>
+<div class="race-caption"><span class="live-dot"></span> APEX CIRCUIT <span>Single-player · 2 AI rivals</span></div>
+<div class="speed-panel"><b id="speed">0</b><span>KM/H</span><div id="speed-meter"></div></div>
+<div class="race-actions"><button id="camera">Camera: chase</button><button id="pause" disabled>Pause</button><button id="restart" disabled>Restart</button></div>
+<div id="announcement" role="status" aria-live="polite"></div>
+<section id="race-overlay" class="race-overlay"><div class="intro-card"><span class="eyebrow">PSD ORIGINAL · 001</span><h1>APEX<br><em>CIRCUIT.</em></h1><p>A real track. A real racing line.<br>Three laps to make your mark.</p><div class="race-specs"><span>3 LAPS</span><span>2 AI RIVALS</span><span>REAL-TIME 3D</span></div><p class="controls-copy"><kbd>W / ↑</kbd> Accelerate &nbsp; <kbd>S / ↓</kbd> Brake<br><kbd>A D / ← →</kbd> Steer &nbsp; <kbd>P</kbd> Pause &nbsp; <kbd>C</kbd> Camera</p><p class="track-tip">Follow the cyan gates around the circuit. Brake before turning; walls cost speed. On touch devices, use the pedals and steering buttons.</p><button id="start" class="start-button" disabled>Loading circuit…</button><small id="loading-note">Loading real WebGL geometry. No install needed.</small></div></section>
+<div class="touch-controls" aria-label="Driving controls"><div><button data-control="left" aria-label="Steer left">◀</button><button data-control="right" aria-label="Steer right">▶</button></div><div><button data-control="brake" class="brake">BRAKE</button><button data-control="throttle" class="gas">GAS</button></div></div>
+</main><script type="module" src="/src/racing.js"></script></body></html>
