@@ -4,6 +4,10 @@ export const FAVORITES_STORAGE_KEY = 'psd-favorite-games';
 export const RECENT_STORAGE_KEY = 'psd-recent-games';
 export const SOUND_STORAGE_KEY = 'psd-sound-enabled';
 export const DISPLAY_NAME_STORAGE_KEY = 'psd-display-name';
+export const KNOWN_ROOMS_STORAGE_KEY = 'psd-known-rooms';
+/** Every room automatically expires and is deleted 1 hour after creation. */
+export const ROOM_TTL_MS = 60 * 60 * 1000;
+export const EXPIRED_ROOM_MESSAGE = 'This room expired after 1 hour and was automatically deleted.';
 
 /**
  * Normalizes arbitrary text (such as a Google displayName or email prefix)
@@ -214,4 +218,153 @@ export function recordRecentGameId(recent = [], gameId = '', validIds = null, ma
   const next = [id, ...recent.filter((item) => item !== id)].slice(0, maxItems);
   if (storage) saveStoredGameIds(storage, RECENT_STORAGE_KEY, next);
   return next;
+}
+
+/**
+ * Converts a Firestore Timestamp, { seconds, nanoseconds }, Date, number or date string into ms.
+ * @param {any} value
+ * @returns {number | null}
+ */
+export function timestampToMillis(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value.toMillis === 'function') {
+    const ms = value.toMillis();
+    return Number.isFinite(ms) ? ms : null;
+  }
+  if (typeof value.toDate === 'function') {
+    const date = value.toDate();
+    const ms = date instanceof Date ? date.getTime() : NaN;
+    return Number.isFinite(ms) ? ms : null;
+  }
+  if (typeof value.seconds === 'number') {
+    const nanos = typeof value.nanoseconds === 'number' ? value.nanoseconds : 0;
+    return value.seconds * 1000 + Math.floor(nanos / 1e6);
+  }
+  if (value instanceof Date) {
+    const ms = value.getTime();
+    return Number.isFinite(ms) ? ms : null;
+  }
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === 'string') {
+    const ms = Date.parse(value);
+    return Number.isFinite(ms) ? ms : null;
+  }
+  return null;
+}
+
+/**
+ * Returns the creation timestamp of a room (or invite) in milliseconds, falling back to updatedAt.
+ * @param {Record<string, any> | null | undefined} room
+ * @returns {number | null}
+ */
+export function roomCreatedAtMs(room) {
+  if (!room || typeof room !== 'object') return null;
+  return timestampToMillis(room.createdAt) ?? timestampToMillis(room.updatedAt);
+}
+
+/**
+ * Whether a room is at least 1 hour old (or `ttlMs` old) relative to `nowMs`.
+ * @param {Record<string, any> | null | undefined} room
+ * @param {number} [nowMs]
+ * @param {number} [ttlMs]
+ * @returns {boolean}
+ */
+export function isRoomExpired(room, nowMs = Date.now(), ttlMs = ROOM_TTL_MS) {
+  const createdMs = roomCreatedAtMs(room);
+  if (createdMs === null) return false;
+  return nowMs - createdMs >= ttlMs;
+}
+
+/**
+ * Milliseconds left before a room reaches its 1-hour expiry (`0` once expired, `null` if unknown).
+ * @param {Record<string, any> | null | undefined} room
+ * @param {number} [nowMs]
+ * @param {number} [ttlMs]
+ * @returns {number | null}
+ */
+export function roomRemainingMs(room, nowMs = Date.now(), ttlMs = ROOM_TTL_MS) {
+  const createdMs = roomCreatedAtMs(room);
+  if (createdMs === null) return null;
+  return Math.max(0, createdMs + ttlMs - nowMs);
+}
+
+/**
+ * @typedef {{ id: string, createdAtMs: number }} KnownRoomEntry
+ */
+
+/**
+ * Reads the list of room IDs this browser created or joined so they can be swept after 1 hour.
+ * @param { Pick<Storage, 'getItem'> | null | undefined } [storage]
+ * @param {number} [maxItems]
+ * @returns {KnownRoomEntry[]}
+ */
+export function loadKnownRooms(storage = globalThis.localStorage, maxItems = 50) {
+  try {
+    const raw = storage?.getItem?.(KNOWN_ROOMS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    /** @type {Set<string>} */
+    const seen = new Set();
+    /** @type {KnownRoomEntry[]} */
+    const entries = [];
+    for (const item of parsed) {
+      const id = String(item?.id || '').trim();
+      const createdAtMs = timestampToMillis(item?.createdAtMs);
+      if (!id || seen.has(id) || createdAtMs === null) continue;
+      seen.add(id);
+      entries.push({ id, createdAtMs });
+      if (entries.length >= maxItems) break;
+    }
+    return entries;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Saves the known-room list to localStorage.
+ * @param {KnownRoomEntry[]} entries
+ * @param { Pick<Storage, 'setItem'> | null | undefined } [storage]
+ * @param {number} [maxItems]
+ */
+export function saveKnownRooms(entries, storage = globalThis.localStorage, maxItems = 50) {
+  try {
+    const normalized = Array.isArray(entries) ? entries.slice(0, maxItems) : [];
+    storage?.setItem?.(KNOWN_ROOMS_STORAGE_KEY, JSON.stringify(normalized));
+  } catch {
+    // Storage is optional; ignore quota or privacy mode errors.
+  }
+}
+
+/**
+ * Splits known-room entries into expired (`>= ttlMs`) and still-active (`< ttlMs`), plus the delay
+ * until the next active room expires.
+ * @param {KnownRoomEntry[]} entries
+ * @param {number} [nowMs]
+ * @param {number} [ttlMs]
+ * @returns {{ expired: KnownRoomEntry[], active: KnownRoomEntry[], nextDelayMs: number | null }}
+ */
+export function partitionKnownRooms(entries = [], nowMs = Date.now(), ttlMs = ROOM_TTL_MS) {
+  /** @type {KnownRoomEntry[]} */
+  const expired = [];
+  /** @type {KnownRoomEntry[]} */
+  const active = [];
+  /** @type {number | null} */
+  let nextDelayMs = null;
+  for (const entry of entries) {
+    const id = String(entry?.id || '').trim();
+    const createdAtMs = timestampToMillis(entry?.createdAtMs);
+    if (!id || createdAtMs === null) continue;
+    const remaining = createdAtMs + ttlMs - nowMs;
+    if (remaining <= 0) {
+      expired.push({ id, createdAtMs });
+    } else {
+      active.push({ id, createdAtMs });
+      if (nextDelayMs === null || remaining < nextDelayMs) nextDelayMs = remaining;
+    }
+  }
+  return { expired, active, nextDelayMs };
 }

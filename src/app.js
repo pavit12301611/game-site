@@ -6,6 +6,7 @@ import {
 import {
   state,
   currentGame,
+  presenceNow,
 } from './state.js';
 import { boot } from './boot.js';
 import { runLiveCheck } from './diagnostics.js';
@@ -52,7 +53,10 @@ import {
   loadAdminData,
 } from './online/admin.js';
 import {
+  EXPIRED_ROOM_MESSAGE,
   createOnlineRoom,
+  expireActiveRoom,
+  isRoomExpired,
   leaveWaitingRoom,
   openRoomFromLink,
   startRoom,
@@ -340,19 +344,32 @@ async function resetCurrentGame() {
       return;
     }
     if (!state.room || !state.user) return;
+    if (isRoomExpired(state.room, presenceNow())) {
+      await expireActiveRoom(state.room.id, state.user.uid);
+      throw new Error(EXPIRED_ROOM_MESSAGE);
+    }
     if (state.room.hostUid !== state.user.uid) throw new Error('Only the room host can reset the game.');
     if (state.onlineActionsPending) throw new Error('Your last move is still syncing. The rematch will be ready in a moment.');
     const roomId = state.room.id;
     const resetSeed = `${roomId}:${Date.now()}`;
+    let expired = false;
     await runTransaction(store, async (transaction) => {
       const roomRef = doc(store, 'rooms', roomId);
       const snapshot = await transaction.get(roomRef);
       if (!snapshot.exists()) throw new Error('The room no longer exists.');
       const room = snapshot.data();
+      if (isRoomExpired(room, presenceNow())) {
+        expired = true;
+        return;
+      }
       const players = room.playerUids.map((uid) => ({ uid, name: room.playerNames?.[uid] || 'Player' }));
       const freshState = createInitialGameState(room.gameId, players, resetSeed);
       transaction.update(roomRef, { state: markOnlineReset(freshState, room.state), status: 'playing', winnerUid: null, updatedAt: serverTimestamp() });
     });
+    if (expired) {
+      await expireActiveRoom(roomId, state.user.uid);
+      throw new Error(EXPIRED_ROOM_MESSAGE);
+    }
     state.codeDraft = [0, 0, 0, 0];
   } catch (error) {
     showToast(friendlyError(error), 'warning');

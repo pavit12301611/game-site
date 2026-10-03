@@ -27,9 +27,11 @@ import {
 import { db, firebaseReady } from '../firebase.js';
 import { createInitialGameState } from '../catalog.js';
 import { friendlyError } from '../errors.js';
+import { isRoomExpired } from '../helpers.js';
 import { render } from '../render.js';
-import { state } from '../state.js';
+import { presenceNow, state } from '../state.js';
 import { showToast } from '../ui/toast.js';
+import { forgetKnownRoom } from './rooms.js';
 
 /**
  * `db` is null only when Firebase never started; every export below is guarded by `state.isAdmin`,
@@ -40,6 +42,34 @@ const store = /** @type {import('firebase/firestore').Firestore} */ (db);
 /** Every row the UI shows is the document plus its id. */
 function rowsOf(snapshot) {
   return /** @type {Array<Record<string, any>>} */ (snapshot.docs.map((item) => ({ id: item.id, ...item.data() })));
+}
+
+/**
+ * Delete rooms older than 1 hour (with their presence heartbeats) and any game invites pointing to
+ * them. Runs automatically whenever the admin dashboard loads.
+ * @param {Array<Record<string, any>>} expiredRooms
+ * @param {Array<Record<string, any>>} [expiredInvites]
+ */
+export async function purgeExpiredAdminRooms(expiredRooms, expiredInvites = []) {
+  await Promise.all(expiredRooms.map(async (room) => {
+    try {
+      forgetKnownRoom(room.id);
+      const presenceSnap = await getDocs(collection(store, 'rooms', room.id, 'presence'));
+      const batch = writeBatch(store);
+      for (const heartbeat of presenceSnap.docs) batch.delete(heartbeat.ref);
+      batch.delete(doc(store, 'rooms', room.id));
+      await batch.commit();
+    } catch (error) {
+      console.warn('[PSD-gaming] Expired room cleanup failed:', /** @type {any} */ (error)?.message);
+    }
+  }));
+  await Promise.all(expiredInvites.map(async (invite) => {
+    try {
+      await deleteDoc(doc(store, 'gameInvites', invite.id));
+    } catch (error) {
+      console.warn('[PSD-gaming] Expired game invite cleanup failed:', /** @type {any} */ (error)?.message);
+    }
+  }));
 }
 
 export async function loadAdminData() {
@@ -55,13 +85,24 @@ export async function loadAdminData() {
       getDocs(query(collection(store, 'friendRequests'), limit(300))),
       getDocs(query(collection(store, 'gameInvites'), limit(300))),
     ]);
+    const allRooms = rowsOf(roomsSnap);
+    const allInvites = rowsOf(invitesSnap);
+    const nowMs = presenceNow();
+    const expiredRooms = allRooms.filter((room) => isRoomExpired(room, nowMs));
+    const activeRooms = allRooms.filter((room) => !isRoomExpired(room, nowMs));
+    const expiredRoomIds = new Set(expiredRooms.map((room) => room.id));
+    const expiredInvites = allInvites.filter((invite) => expiredRoomIds.has(invite.roomId) || isRoomExpired(invite, nowMs));
+    const activeInvites = allInvites.filter((invite) => !expiredRoomIds.has(invite.roomId) && !isRoomExpired(invite, nowMs));
+    if (expiredRooms.length || expiredInvites.length) {
+      await purgeExpiredAdminRooms(expiredRooms, expiredInvites);
+    }
     state.adminData = {
-      rooms: rowsOf(roomsSnap),
+      rooms: activeRooms,
       profiles: rowsOf(profilesSnap),
       admins: rowsOf(adminsSnap),
       friendships: rowsOf(friendshipsSnap),
       requests: rowsOf(requestsSnap),
-      invites: rowsOf(invitesSnap),
+      invites: activeInvites,
       error: '',
     };
   } catch (error) {
@@ -91,6 +132,7 @@ async function runAdminAction(successMessage, task) {
  */
 export async function adminDeleteRoom(roomId) {
   await runAdminAction('Room and its heartbeats deleted.', async () => {
+    forgetKnownRoom(roomId);
     const presenceSnap = await getDocs(collection(store, 'rooms', roomId, 'presence'));
     const batch = writeBatch(store);
     for (const heartbeat of presenceSnap.docs) batch.delete(heartbeat.ref);

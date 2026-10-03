@@ -13,6 +13,19 @@ import { JSDOM } from 'jsdom';
 import { GAMES, applyGameAction, createInitialGameState } from '../src/catalog.js';
 
 let roomUpdateForMove;
+let ROOM_TTL_MS;
+let EXPIRED_ROOM_MESSAGE;
+let roomCreatedAtMs;
+let isRoomExpired;
+let roomRemainingMs;
+let rememberKnownRoom;
+let forgetKnownRoom;
+let loadKnownRooms;
+let partitionKnownRooms;
+let deleteExpiredRoom;
+let expireActiveRoom;
+let sweepExpiredKnownRooms;
+let appState;
 
 before(async () => {
   const dom = new JSDOM('<!doctype html><html><head><meta id="meta-theme-color" content=""></head><body><div id="app"></div></body></html>', {
@@ -28,7 +41,22 @@ before(async () => {
   define('localStorage', window.localStorage);
   define('location', window.location);
 
-  ({ roomUpdateForMove } = await import('../src/online/rooms.js'));
+  ({ state: appState } = await import('../src/state.js'));
+  ({
+    roomUpdateForMove,
+    ROOM_TTL_MS,
+    EXPIRED_ROOM_MESSAGE,
+    roomCreatedAtMs,
+    isRoomExpired,
+    roomRemainingMs,
+    rememberKnownRoom,
+    forgetKnownRoom,
+    loadKnownRooms,
+    partitionKnownRooms,
+    deleteExpiredRoom,
+    expireActiveRoom,
+    sweepExpiredKnownRooms,
+  } = await import('../src/online/rooms.js'));
 });
 
 test('a normal move writes the new state and a server clock', () => {
@@ -81,4 +109,94 @@ test('it never invents a match it was not told about', () => {
   for (const state of [{ phase: 'playing' }, {}, null, undefined]) {
     assert.equal(roomUpdateForMove(state).status, undefined);
   }
+});
+
+test('a room expires exactly 1 hour after createdAt across all Firestore timestamp shapes', () => {
+  const now = 1_700_000_000_000;
+  assert.equal(ROOM_TTL_MS, 60 * 60 * 1000);
+
+  const oneHourAgo = now - ROOM_TTL_MS;
+  const freshMs = now - ROOM_TTL_MS + 1;
+
+  for (const createdAt of [
+    { toMillis: () => oneHourAgo },
+    { toDate: () => new Date(oneHourAgo) },
+    { seconds: Math.floor(oneHourAgo / 1000), nanoseconds: (oneHourAgo % 1000) * 1e6 },
+    new Date(oneHourAgo),
+    oneHourAgo,
+    new Date(oneHourAgo).toISOString(),
+  ]) {
+    assert.equal(roomCreatedAtMs({ createdAt }), oneHourAgo);
+    assert.equal(isRoomExpired({ createdAt }, now), true);
+    assert.equal(roomRemainingMs({ createdAt }, now), 0);
+  }
+
+  assert.equal(isRoomExpired({ createdAt: freshMs }, now), false);
+  assert.equal(roomRemainingMs({ createdAt: freshMs }, now), 1);
+  assert.equal(isRoomExpired({ createdAt: null }, now), false, 'a pending serverTimestamp write is not treated as expired');
+  assert.equal(roomRemainingMs({ createdAt: null }, now), null);
+});
+
+test('known rooms older than 1 hour are partitioned and automatically swept from Firestore and storage', async () => {
+  const storeMap = new Map();
+  const fakeStorage = {
+    getItem: (key) => storeMap.get(key) ?? null,
+    setItem: (key, value) => { storeMap.set(key, value); },
+  };
+  const now = 1_700_000_000_000;
+  rememberKnownRoom('room-old-1', now - ROOM_TTL_MS - 5_000, fakeStorage);
+  rememberKnownRoom('room-old-2', now - ROOM_TTL_MS, fakeStorage);
+  rememberKnownRoom('room-fresh', now - 15 * 60 * 1000, fakeStorage);
+
+  const partitioned = partitionKnownRooms(loadKnownRooms(fakeStorage), now);
+  assert.deepEqual(partitioned.expired.map((item) => item.id), ['room-old-2', 'room-old-1']);
+  assert.deepEqual(partitioned.active.map((item) => item.id), ['room-fresh']);
+  assert.equal(partitioned.nextDelayMs, 45 * 60 * 1000);
+
+  const deletedRooms = [];
+  const deletedPresence = [];
+  const swept = await sweepExpiredKnownRooms(now, {
+    storage: fakeStorage,
+    uid: 'uid-alice',
+    allowWithoutStore: true,
+    deleteRoomDoc: async (id) => { deletedRooms.push(id); },
+    deletePresenceDoc: async (id, uid) => { deletedPresence.push(`${id}:${uid}`); },
+  });
+
+  assert.deepEqual(swept, ['room-old-2', 'room-old-1']);
+  assert.deepEqual(deletedRooms, ['room-old-2', 'room-old-1']);
+  assert.deepEqual(deletedPresence, ['room-old-2:uid-alice', 'room-old-1:uid-alice']);
+  assert.deepEqual(loadKnownRooms(fakeStorage).map((item) => item.id), ['room-fresh']);
+
+  forgetKnownRoom('room-fresh', fakeStorage);
+  assert.deepEqual(loadKnownRooms(fakeStorage), []);
+});
+
+test('expiring the active room closes it, shows the 1-hour expiry message, and deletes it', async () => {
+  const deleted = [];
+  appState.roomId = 'room-live-expired';
+  appState.room = { id: 'room-live-expired', gameId: 'pixel-tac-toe', status: 'playing' };
+  appState.onlineActionsPending = 2;
+  appState.roomError = '';
+
+  await expireActiveRoom('room-live-expired', 'uid-alice', {
+    storage: null,
+    deleteRoomDoc: async (id) => { deleted.push(`room:${id}`); },
+    deletePresenceDoc: async (id, uid) => { deleted.push(`presence:${id}:${uid}`); },
+  });
+
+  assert.equal(appState.room, null);
+  assert.equal(appState.onlineActionsPending, 0);
+  assert.equal(appState.roomError, EXPIRED_ROOM_MESSAGE);
+  assert.deepEqual(deleted, ['presence:room-live-expired:uid-alice', 'room:room-live-expired']);
+
+  await deleteExpiredRoom('room-other-expired', 'uid-bob', {
+    storage: null,
+    deleteRoomDoc: async (id) => { deleted.push(`room:${id}`); },
+    deletePresenceDoc: async (id, uid) => { deleted.push(`presence:${id}:${uid}`); },
+  });
+  assert.deepEqual(deleted.slice(-2), ['presence:room-other-expired:uid-bob', 'room:room-other-expired']);
+
+  appState.roomId = null;
+  appState.roomError = '';
 });

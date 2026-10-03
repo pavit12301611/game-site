@@ -14,17 +14,42 @@
  * deliberate - the router imports this module, and a cycle would make the whole page fragile.
  */
 
-import { collection, doc, onSnapshot, runTransaction, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
+import { collection, deleteDoc, doc, onSnapshot, runTransaction, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase.js';
 import { createInitialGameState, getGame } from '../catalog.js';
 import { friendlyError } from '../errors.js';
 import { render } from '../render.js';
-import { state } from '../state.js';
+import { presenceNow, state } from '../state.js';
 import { playerDisplayName } from '../ui/players.js';
 import { ensureOnlineUser } from './session.js';
-import { deletePresenceIn, startPresence, stopPresence } from './presence.js';
+import { deletePresenceIn, presenceDocRef, startPresence, stopPresence } from './presence.js';
 import { roomAfterOnlineActions } from './action-sync.js';
-import { DISPLAY_NAME_STORAGE_KEY } from '../helpers.js';
+import {
+  DISPLAY_NAME_STORAGE_KEY,
+  EXPIRED_ROOM_MESSAGE,
+  KNOWN_ROOMS_STORAGE_KEY,
+  ROOM_TTL_MS,
+  isRoomExpired,
+  loadKnownRooms,
+  partitionKnownRooms,
+  roomCreatedAtMs,
+  roomRemainingMs,
+  saveKnownRooms,
+  timestampToMillis,
+} from '../helpers.js';
+
+export {
+  EXPIRED_ROOM_MESSAGE,
+  KNOWN_ROOMS_STORAGE_KEY,
+  ROOM_TTL_MS,
+  isRoomExpired,
+  loadKnownRooms,
+  partitionKnownRooms,
+  roomCreatedAtMs,
+  roomRemainingMs,
+  saveKnownRooms,
+  timestampToMillis,
+};
 
 /**
  * `db` is null only when Firebase never started (missing or invalid config). Everything in this
@@ -40,6 +65,176 @@ let stopRoom = emptyUnsubscribe;
 /** Which room id a join is in flight for, so a double navigation cannot open it twice. */
 let roomOpening = '';
 let actionSequence = 0;
+/** @type {ReturnType<typeof setTimeout> | null} */
+let roomExpiryTimer = null;
+/** @type {ReturnType<typeof setTimeout> | null} */
+let knownRoomsSweepTimer = null;
+
+function clearActiveRoomExpiryTimer() {
+  if (roomExpiryTimer !== null) {
+    clearTimeout(roomExpiryTimer);
+    roomExpiryTimer = null;
+  }
+}
+
+function clearKnownRoomsSweepTimer() {
+  if (knownRoomsSweepTimer !== null) {
+    clearTimeout(knownRoomsSweepTimer);
+    knownRoomsSweepTimer = null;
+  }
+}
+
+/**
+ * Record a room ID this browser created or joined so it can be automatically deleted after 1 hour,
+ * even if the player leaves the room or reloads the page.
+ * @param {string} roomId
+ * @param {number | null} [createdAtMs]
+ * @param {Pick<Storage, 'getItem' | 'setItem'> | null} [storage]
+ */
+export function rememberKnownRoom(roomId, createdAtMs = presenceNow(), storage = globalThis.localStorage) {
+  const cleanId = String(roomId || '').trim();
+  if (!cleanId) return;
+  const resolvedMs = timestampToMillis(createdAtMs) ?? presenceNow();
+  const existing = loadKnownRooms(storage);
+  const previous = existing.find((entry) => entry.id === cleanId);
+  const entryMs = previous ? Math.min(previous.createdAtMs, resolvedMs) : resolvedMs;
+  const next = [{ id: cleanId, createdAtMs: entryMs }, ...existing.filter((entry) => entry.id !== cleanId)];
+  saveKnownRooms(next, storage);
+  if (storage === globalThis.localStorage) scheduleKnownRoomsSweep();
+}
+
+/**
+ * Remove a room ID from the known-rooms list once it has been deleted.
+ * @param {string} roomId
+ * @param {Pick<Storage, 'getItem' | 'setItem'> | null} [storage]
+ */
+export function forgetKnownRoom(roomId, storage = globalThis.localStorage) {
+  const cleanId = String(roomId || '').trim();
+  if (!cleanId) return;
+  const existing = loadKnownRooms(storage);
+  if (!existing.some((entry) => entry.id === cleanId)) return;
+  saveKnownRooms(existing.filter((entry) => entry.id !== cleanId), storage);
+}
+
+/**
+ * Delete an expired room document (and the caller's presence heartbeat) from Firestore.
+ * Best-effort so a missing room, offline browser, or slight clock skew never causes an unhandled rejection.
+ * @param {string} roomId
+ * @param {string} [uid]
+ * @param {{
+ *   deleteRoomDoc?: (id: string) => Promise<unknown>,
+ *   deletePresenceDoc?: (id: string, memberUid: string) => Promise<unknown>,
+ *   storage?: Pick<Storage, 'getItem' | 'setItem'> | null,
+ * }} [deps]
+ */
+export async function deleteExpiredRoom(roomId, uid = state.user?.uid, deps = {}) {
+  const cleanId = String(roomId || '').trim();
+  if (!cleanId) return;
+  const storage = deps.storage === undefined ? globalThis.localStorage : deps.storage;
+  forgetKnownRoom(cleanId, storage);
+  const deletePresenceDoc = deps.deletePresenceDoc
+    || ((id, memberUid) => (store ? deleteDoc(presenceDocRef(id, memberUid)) : Promise.resolve()));
+  const deleteRoomDoc = deps.deleteRoomDoc
+    || ((id) => (store ? deleteDoc(doc(store, 'rooms', id)) : Promise.resolve()));
+  if (uid) {
+    await Promise.resolve().then(() => deletePresenceDoc(cleanId, uid)).catch(emptyUnsubscribe);
+  }
+  await Promise.resolve().then(() => deleteRoomDoc(cleanId)).catch(emptyUnsubscribe);
+}
+
+/**
+ * Close the currently open room because its 1-hour lifetime has elapsed, and delete it in Firestore.
+ * @param {string} roomId
+ * @param {string} [uid]
+ * @param {Parameters<typeof deleteExpiredRoom>[2]} [deps]
+ */
+export async function expireActiveRoom(roomId, uid = state.user?.uid, deps = {}) {
+  clearActiveRoomExpiryTimer();
+  if (state.roomId === roomId) {
+    stopPresence({ markLeft: false });
+    stopRoom();
+    stopRoom = emptyUnsubscribe;
+    if (activeActions?.roomId === roomId) activeActions = null;
+    state.room = null;
+    state.onlineActionsPending = 0;
+    state.roomError = EXPIRED_ROOM_MESSAGE;
+    render();
+  }
+  await deleteExpiredRoom(roomId, uid, deps);
+}
+
+/**
+ * Schedule automatic deletion for the currently open room at `createdAt + 1 hour`.
+ * @param {Record<string, any>} room
+ * @param {string} uid
+ */
+function scheduleActiveRoomExpiry(room, uid) {
+  clearActiveRoomExpiryTimer();
+  const remainingMs = roomRemainingMs(room, presenceNow());
+  if (remainingMs === null) return;
+  roomExpiryTimer = setTimeout(() => {
+    roomExpiryTimer = null;
+    if (state.roomId === room.id) void expireActiveRoom(room.id, uid);
+  }, remainingMs);
+}
+
+function scheduleKnownRoomsSweep(nowMs = presenceNow()) {
+  clearKnownRoomsSweepTimer();
+  if (!store || !state.user) return;
+  const { expired, nextDelayMs } = partitionKnownRooms(loadKnownRooms(), nowMs);
+  if (expired.length) {
+    knownRoomsSweepTimer = setTimeout(() => {
+      knownRoomsSweepTimer = null;
+      void sweepExpiredKnownRooms();
+    }, 0);
+    return;
+  }
+  if (nextDelayMs !== null) {
+    knownRoomsSweepTimer = setTimeout(() => {
+      knownRoomsSweepTimer = null;
+      void sweepExpiredKnownRooms();
+    }, nextDelayMs + 50);
+  }
+}
+
+/**
+ * Delete every tracked room whose age has reached 1 hour, and schedule the next check if any
+ * younger rooms are still tracked.
+ * @param {number} [nowMs]
+ * @param {{
+ *   storage?: Pick<Storage, 'getItem' | 'setItem'> | null,
+ *   uid?: string,
+ *   allowWithoutStore?: boolean,
+ *   deleteRoomDoc?: (id: string) => Promise<unknown>,
+ *   deletePresenceDoc?: (id: string, memberUid: string) => Promise<unknown>,
+ * }} [deps]
+ */
+export async function sweepExpiredKnownRooms(nowMs = presenceNow(), deps = {}) {
+  clearKnownRoomsSweepTimer();
+  const storage = deps.storage === undefined ? globalThis.localStorage : deps.storage;
+  const uid = deps.uid !== undefined ? deps.uid : state.user?.uid;
+  if (!deps.allowWithoutStore && (!store || !uid)) return [];
+  const entries = loadKnownRooms(storage);
+  if (!entries.length) return [];
+  const { expired, active, nextDelayMs } = partitionKnownRooms(entries, nowMs);
+  if (expired.length) {
+    saveKnownRooms(active, storage);
+    for (const entry of expired) {
+      if (state.roomId === entry.id) {
+        await expireActiveRoom(entry.id, uid, deps);
+      } else {
+        await deleteExpiredRoom(entry.id, uid, deps);
+      }
+    }
+  }
+  if (storage === globalThis.localStorage && nextDelayMs !== null && (store || deps.allowWithoutStore)) {
+    knownRoomsSweepTimer = setTimeout(() => {
+      knownRoomsSweepTimer = null;
+      void sweepExpiredKnownRooms();
+    }, nextDelayMs + 50);
+  }
+  return expired.map((entry) => entry.id);
+}
 
 /**
  * One queue per room visit. Only one transaction from this browser runs at a time; actions pressed
@@ -107,16 +302,25 @@ async function flushOnlineActions(context) {
 
   const roomRef = doc(store, 'rooms', context.roomId);
   let newestRoom = context.authoritativeRoom;
+  let expired = false;
   try {
     const committedRoom = await runTransaction(store, async (transaction) => {
       const snapshot = await transaction.get(roomRef);
       if (!snapshot.exists()) throw new Error('The room was closed.');
       const room = { id: snapshot.id, ...snapshot.data() };
+      if (isRoomExpired(room, presenceNow())) {
+        expired = true;
+        return room;
+      }
       newestRoom = room;
       const result = roomAfterOnlineActions(room, context.uid, batch);
       if (result.appliedIds.length) transaction.update(roomRef, roomUpdateForMove(result.room.state));
       return result.room;
     });
+    if (expired) {
+      await expireActiveRoom(context.roomId, context.uid);
+      throw new Error(EXPIRED_ROOM_MESSAGE);
+    }
     context.authoritativeRoom = committedRoom;
     const sent = new Set(batch);
     context.pending = context.pending.filter((entry) => !sent.has(entry));
@@ -125,7 +329,7 @@ async function flushOnlineActions(context) {
   } catch (error) {
     // Roll back only the rejected optimistic inputs. When the transaction managed to read a newer
     // server room before rejecting, use it immediately instead of waiting for another snapshot.
-    if (newestRoom) context.authoritativeRoom = newestRoom;
+    if (newestRoom && !expired) context.authoritativeRoom = newestRoom;
     const failed = new Set(batch);
     context.pending = context.pending.filter((entry) => !failed.has(entry));
     projectPendingActions(context);
@@ -142,6 +346,7 @@ async function flushOnlineActions(context) {
  * @param {string} uid  the member listening; only members may write presence (firestore.rules)
  */
 export function subscribeToRoom(roomId, uid) {
+  clearActiveRoomExpiryTimer();
   stopRoom();
   state.roomId = roomId;
   state.roomError = '';
@@ -154,12 +359,23 @@ export function subscribeToRoom(roomId, uid) {
   stopRoom = onSnapshot(doc(store, 'rooms', roomId), (snapshot) => {
     if (!isActiveContext(context)) return;
     if (!snapshot.exists()) {
+      clearActiveRoomExpiryTimer();
+      forgetKnownRoom(roomId);
       context.authoritativeRoom = null;
       state.room = null;
       state.onlineActionsPending = 0;
       state.roomError = 'This invite room no longer exists.';
     } else {
-      context.authoritativeRoom = { id: snapshot.id, ...snapshot.data() };
+      const data = snapshot.data({ serverTimestamps: 'estimate' }) ?? snapshot.data();
+      const room = { id: snapshot.id, ...data };
+      const nowMs = presenceNow();
+      if (isRoomExpired(room, nowMs)) {
+        void expireActiveRoom(roomId, uid);
+        return;
+      }
+      rememberKnownRoom(roomId, roomCreatedAtMs(room) ?? nowMs);
+      scheduleActiveRoomExpiry(room, uid);
+      context.authoritativeRoom = room;
       state.roomError = '';
       projectPendingActions(context, false);
       if (state.room?.gameId && !getGame(state.room.gameId)) state.roomError = 'This room points to a game that is not in the catalog.';
@@ -178,10 +394,18 @@ export async function openRoomFromLink(roomId) {
   try {
     const user = await ensureOnlineUser();
     const roomRef = doc(store, 'rooms', roomId);
+    let expired = false;
+    /** @type {number | null} */
+    let createdAtMs = null;
     await runTransaction(store, async (transaction) => {
       const snapshot = await transaction.get(roomRef);
       if (!snapshot.exists()) throw new Error('This invite link is invalid or has expired.');
       const room = snapshot.data();
+      if (isRoomExpired(room, presenceNow())) {
+        expired = true;
+        return;
+      }
+      createdAtMs = roomCreatedAtMs(room);
       const uids = room.playerUids || [];
       if (uids.includes(user.uid)) return;
       if (room.status !== 'waiting') throw new Error('This match has already started. Ask the host for a new room.');
@@ -198,6 +422,11 @@ export async function openRoomFromLink(roomId) {
         updatedAt: serverTimestamp(),
       });
     });
+    if (expired) {
+      await deleteExpiredRoom(roomId, user.uid);
+      throw new Error(EXPIRED_ROOM_MESSAGE);
+    }
+    rememberKnownRoom(roomId, createdAtMs ?? presenceNow());
     subscribeToRoom(roomId, user.uid);
   } catch (error) {
     state.roomError = friendlyError(error);
@@ -236,6 +465,7 @@ export async function createOnlineRoom(gameId, maxPlayers = 2, friend = null, ch
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
+  rememberKnownRoom(roomRef.id, presenceNow());
   if (friend?.uid) {
     const inviteRef = doc(collection(store, 'gameInvites'));
     await setDoc(inviteRef, {
@@ -269,19 +499,30 @@ export async function leaveWaitingRoom() {
   const user = state.user;
   if (!room || !user || room.status !== 'waiting') return;
   const roomRef = doc(store, 'rooms', room.id);
+  let deletedRoom = false;
   // Stop the heartbeat first (without a "left" write: the seat itself goes away below), and take
   // the heartbeat document with you in the same transaction, so a deleted room leaves no litter.
   stopPresence({ markLeft: false });
   await runTransaction(store, async (transaction) => {
     const snapshot = await transaction.get(roomRef);
-    if (!snapshot.exists()) return;
+    if (!snapshot.exists()) {
+      deletedRoom = true;
+      return;
+    }
     const current = snapshot.data();
+    if (isRoomExpired(current, presenceNow())) {
+      deletePresenceIn(transaction, room.id, user.uid);
+      transaction.delete(roomRef);
+      deletedRoom = true;
+      return;
+    }
     if (current.status !== 'waiting') return;
     const uids = (current.playerUids || []).filter((uid) => uid !== user.uid);
     if (uids.length === (current.playerUids || []).length) return; // you were not in it
     deletePresenceIn(transaction, room.id, user.uid);
     if (!uids.length) {
       transaction.delete(roomRef);
+      deletedRoom = true;
       return;
     }
     const playerNames = { ...(current.playerNames || {}) };
@@ -294,10 +535,15 @@ export async function leaveWaitingRoom() {
       updatedAt: serverTimestamp(),
     });
   });
+  if (deletedRoom) forgetKnownRoom(room.id);
 }
 
 export async function startRoom() {
   if (!state.room || !state.user) return;
+  if (isRoomExpired(state.room, presenceNow())) {
+    await expireActiveRoom(state.room.id, state.user.uid);
+    throw new Error(EXPIRED_ROOM_MESSAGE);
+  }
   if (state.room.hostUid !== state.user.uid) throw new Error('Only the host can start this room.');
   if ((state.room.playerUids || []).length < 2) throw new Error('Invite at least one friend before starting.');
   await updateDoc(doc(store, 'rooms', state.room.id), { status: 'playing', updatedAt: serverTimestamp() });
@@ -329,6 +575,10 @@ export function roomUpdateForMove(nextState) {
  */
 export function doOnlineAction(action) {
   if (!state.room || !state.user) throw new Error('Join a room before making a move.');
+  if (isRoomExpired(state.room, presenceNow())) {
+    void expireActiveRoom(state.room.id, state.user.uid);
+    throw new Error(EXPIRED_ROOM_MESSAGE);
+  }
   const context = activeActions;
   if (!context || context.roomId !== state.room.id || context.uid !== state.user.uid) {
     throw new Error('The room is still connecting. Try that move again.');
@@ -353,6 +603,7 @@ export function doOnlineAction(action) {
 }
 
 export function stopActiveRoom() {
+  clearActiveRoomExpiryTimer();
   stopPresence({ markLeft: true });
   stopRoom();
   stopRoom = emptyUnsubscribe;
