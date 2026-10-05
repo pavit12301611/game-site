@@ -1,9 +1,17 @@
 /**
- * The game catalog: the list of playable games plus the artwork and how-to-play copy for each.
+ * The game catalog: the shared game list plus the artwork and how-to-play copy for each entry.
  *
- * *Game rules live in src/engines/*.js.* This file only describes the games; `createInitialGameState`
- * and `applyGameAction` are re-exported from the engine registry so callers (src/main.js, tests)
- * keep one stable import for the whole game API.
+ * *The list of games itself lives in shared/games.js*, because the trusted backend validates the
+ * same catalog (game ids, engine names and rule options) and must not import anything
+ * browser-facing. This file adds what only the browser needs:
+ *
+ *   - one generated photograph per game (public/images/games/<id>.webp) and the alt text
+ *   - the guide text shown in the "How to play" panel, derived from the engine and its options so a
+ *     rule change cannot silently leave the instructions behind
+ *
+ * *Game rules live in src/engines/*.js.* `createInitialGameState` and `applyGameAction` are
+ * re-exported from the engine registry so callers (src/main.js, tests) keep one stable import for
+ * the whole game API.
  */
 import {
   applyGameAction as applyEngineAction,
@@ -11,62 +19,15 @@ import {
   engineIds,
 } from './engines/index.js';
 import { memoryCardIcon } from './engines/memory.js';
-import { QUIZ_QUESTIONS, getQuizQuestion } from './engines/quiz.js';
+import { CATEGORIES, GAMES, getGame } from '../shared/games.js';
+import { practiceBankFor } from '../shared/content/quiz-practice.js';
 
 /** @typedef {import('./types.js').Game} Game */
 /** @typedef {import('./types.js').Player} Player */
 /** @typedef {import('./types.js').GameState} GameState */
 /** @typedef {import('./types.js').Action} Action */
 
-export const CATEGORIES = ['All games', 'Arcade', 'Party', 'Strategy', 'Puzzle'];
-
-export const GAMES = [
-  { id: 'pixel-tac-toe', title: 'Pixel Tic-Tac-Toe', category: 'Strategy', engine: 'line', icon: '✕', accent: 'blue', blurb: 'The tiny-board classic, now with a third seat.', options: { size: 3, connect: 3 } },
-  { id: 'neon-gomoku', title: 'Neon Gomoku', category: 'Strategy', engine: 'line', icon: '◎', accent: 'violet', blurb: 'Line up five on a glowing big board.', options: { size: 9, connect: 5 } },
-  { id: 'connect-four', title: 'Connect Four', category: 'Strategy', engine: 'drop', icon: '●', accent: 'orange', blurb: 'Drop a disc. Block a friend. Make four.', options: { cols: 7, rows: 6, connect: 4 } },
-  { id: 'five-in-row', title: 'Five in a Row', category: 'Strategy', engine: 'drop', icon: '▦', accent: 'pink', blurb: 'A roomier drop-board with a five-piece goal.', options: { cols: 8, rows: 7, connect: 5 } },
-  { id: 'memory-match', title: 'Memory Match', category: 'Puzzle', engine: 'memory', icon: '▧', accent: 'cyan', blurb: 'Flip, remember, and claim the most pairs.', options: { pairs: 6 } },
-  { id: 'neon-pairs', title: 'Neon Pairs', category: 'Puzzle', engine: 'memory', icon: '✦', accent: 'violet', blurb: 'A bright, quick-fire test of your memory.', options: { pairs: 8 } },
-  { id: 'emoji-flip', title: 'Emoji Flip', category: 'Party', engine: 'memory', icon: '☺', accent: 'pink', blurb: 'Find the matching faces before your friends.', options: { pairs: 6 } },
-  { id: 'arcade-pairs', title: 'Arcade Pairs', category: 'Puzzle', engine: 'memory', icon: '▣', accent: 'orange', blurb: 'Collect pixel pairs in a three-player shuffle.', options: { pairs: 8 } },
-  { id: 'pixel-tap', title: 'Pixel Tap Sprint', category: 'Arcade', engine: 'race', icon: '↗', accent: 'blue', blurb: 'Mash the boost button. First to the finish wins.', options: { target: 16 } },
-  { id: 'button-masher', title: 'Button Masher', category: 'Party', engine: 'race', icon: '⌁', accent: 'orange', blurb: 'A no-mercy button race for up to three players.', options: { target: 20 } },
-  { id: 'turbo-charge', title: 'Turbo Charge', category: 'Arcade', engine: 'race', icon: 'ϟ', accent: 'cyan', blurb: 'Build a charge bar with every well-timed tap.', options: { target: 18 } },
-  { id: 'reaction-rush', title: 'Reaction Rush', category: 'Party', engine: 'race', icon: '◉', accent: 'pink', blurb: 'Race your friends to a full combo.', options: { target: 15 } },
-  { id: 'spacebar-showdown', title: 'Spacebar Showdown', category: 'Arcade', engine: 'race', icon: '▱', accent: 'violet', blurb: 'One key, one goal: out-click the whole lobby.', options: { target: 22 } },
-  { id: 'bug-blaster', title: 'Bug Blaster', category: 'Arcade', engine: 'race', icon: '✣', accent: 'green', blurb: 'Zap the score meter before the timer runs out.', options: { target: 18 } },
-  { id: 'rock-paper-scissors', title: 'Rock Paper Scissors', category: 'Party', engine: 'rps', icon: '✊', accent: 'orange', blurb: 'The timeless three-way showdown, best of five.', options: { target: 3, mode: 'rps' } },
-  { id: 'laser-duel', title: 'Laser Duel', category: 'Arcade', engine: 'rps', icon: '⌁', accent: 'pink', blurb: 'Read the room and land a winning beam.', options: { target: 3, mode: 'rps' } },
-  { id: 'coin-flip-clash', title: 'Coin Flip Clash', category: 'Party', engine: 'rps', icon: '◉', accent: 'gold', blurb: 'Call your side, then see who got lucky.', options: { target: 3, mode: 'coin' } },
-  { id: 'dice-duel', title: 'Dice Duel', category: 'Party', engine: 'rps', icon: '⚄', accent: 'cyan', blurb: 'Roll high, talk big, and take the round.', options: { target: 3, mode: 'dice' } },
-  { id: 'retro-trivia', title: 'Retro Trivia', category: 'Party', engine: 'quiz', icon: '?', accent: 'violet', blurb: 'Arcade-flavoured questions for the whole crew.', options: { rounds: 5 } },
-  { id: 'emoji-decode', title: 'Emoji Decode', category: 'Party', engine: 'quiz', icon: '☺', accent: 'pink', blurb: 'Decode the clue before another player does.', options: { rounds: 5 } },
-  { id: 'arcade-facts', title: 'Arcade Facts', category: 'Puzzle', engine: 'quiz', icon: '▣', accent: 'cyan', blurb: 'Put your old-school game knowledge to work.', options: { rounds: 5 } },
-  { id: 'pixel-pop-quiz', title: 'Pixel Pop Quiz', category: 'Party', engine: 'quiz', icon: '✦', accent: 'orange', blurb: 'Five quick questions. One very smug winner.', options: { rounds: 5 } },
-  { id: 'movie-mayhem', title: 'Movie Mayhem', category: 'Party', engine: 'quiz', icon: '▶', accent: 'pink', blurb: 'Guess the big-screen classics from a tiny clue.', options: { rounds: 5 } },
-  { id: 'word-scramble', title: 'Word Scramble', category: 'Puzzle', engine: 'quiz', icon: 'Aa', accent: 'green', blurb: 'Pick the right word before the round moves on.', options: { rounds: 5 } },
-  { id: 'number-chase', title: 'Number Chase', category: 'Puzzle', engine: 'quiz', icon: '#', accent: 'blue', blurb: 'Quick logic questions, no calculator needed.', options: { rounds: 5 } },
-  { id: 'brain-busters', title: 'Brain Busters', category: 'Puzzle', engine: 'quiz', icon: '⌘', accent: 'violet', blurb: 'Short riddles for long-running rivalries.', options: { rounds: 5 } },
-  { id: 'eight-bit-riddles', title: '8-Bit Riddles', category: 'Puzzle', engine: 'quiz', icon: '◈', accent: 'cyan', blurb: 'A few pixel-sized clues with big-brain answers.', options: { rounds: 5 } },
-  { id: 'retro-rewind', title: 'Retro Rewind', category: 'Party', engine: 'quiz', icon: '↶', accent: 'gold', blurb: 'A nostalgic quiz night in five fast rounds.', options: { rounds: 5 } },
-  { id: 'maze-runner', title: 'Maze Runner', category: 'Arcade', engine: 'maze', icon: '⌗', accent: 'green', blurb: 'Find the exit first in a shared little maze.', options: { width: 7, height: 7 } },
-  { id: 'neon-labyrinth', title: 'Neon Labyrinth', category: 'Puzzle', engine: 'maze', icon: '╳', accent: 'violet', blurb: 'Take the clean route through the glowing grid.', options: { width: 7, height: 7 } },
-  { id: 'byte-escape', title: 'Byte Escape', category: 'Arcade', engine: 'maze', icon: '↗', accent: 'cyan', blurb: 'A tiny escape race that fits in a browser tab.', options: { width: 7, height: 7 } },
-  { id: 'star-runner', title: 'Star Runner', category: 'Arcade', engine: 'maze', icon: '✦', accent: 'gold', blurb: 'Dash between the blocks and tag the star gate.', options: { width: 7, height: 7 } },
-  { id: 'sea-battle', title: 'Sea Battle', category: 'Strategy', engine: 'battle', icon: '▤', accent: 'blue', blurb: 'Take turns calling shots on your rivals’ fleets.', options: { board: 6, fleet: 4 } },
-  { id: 'pixel-fleet', title: 'Pixel Fleet', category: 'Strategy', engine: 'battle', icon: '▥', accent: 'cyan', blurb: 'A compact, turn-based fleet hunt for 2–3.', options: { board: 6, fleet: 4 } },
-  { id: 'alien-skirmish', title: 'Alien Skirmish', category: 'Arcade', engine: 'battle', icon: '✣', accent: 'green', blurb: 'Scout, aim, and clear every rival’s pixel base.', options: { board: 6, fleet: 4 } },
-  { id: 'pong-rally', title: 'Pong Rally', category: 'Arcade', engine: 'rally', icon: '▰', accent: 'cyan', blurb: 'Trade volleys and be first to seven clean hits.', options: { target: 7 } },
-  { id: 'paddle-wars', title: 'Paddle Wars', category: 'Party', engine: 'rally', icon: '▱', accent: 'pink', blurb: 'Choose a lane, return the volley, win the rally.', options: { target: 7 } },
-  { id: 'air-hockey', title: 'Air Hockey', category: 'Party', engine: 'rally', icon: '◉', accent: 'blue', blurb: 'A turn-by-turn table duel with a quick puck.', options: { target: 7 } },
-  { id: 'codebreaker', title: 'Codebreaker', category: 'Puzzle', engine: 'code', icon: '⌗', accent: 'green', blurb: 'Crack the hidden four-digit sequence in turns.', options: { digits: 4, maxGuesses: 10 } },
-  { id: 'mastermind', title: 'Mastermind', category: 'Puzzle', engine: 'code', icon: '▦', accent: 'violet', blurb: 'Read the hints, beat the clock, break the code.', options: { digits: 4, maxGuesses: 10 } },
-];
-
-/** @param {string} gameId @returns {Game | null} */
-export function getGame(gameId) {
-  return GAMES.find((game) => game.id === gameId) ?? null;
-}
+export { CATEGORIES, GAMES, getGame };
 
 /**
  * @param {string | Game} gameOrId
@@ -103,7 +64,10 @@ export function applyGameAction(gameOrId, currentState, uid, action, players) {
   return applyEngineAction(game, currentState, uid, action, players);
 }
 
-export { engineIds, QUIZ_QUESTIONS, getQuizQuestion };
+export { engineIds };
+
+/** Re-exported so callers can name the practice bank explicitly when they need it. */
+export { practiceBankFor as getPracticeQuizBank };
 
 /** @param {number} index @returns {string} the symbol printed on a revealed memory card. */
 export function getMemoryCardIcon(index) {
@@ -229,11 +193,18 @@ export function getGameArtwork(gameOrId) {
   return { ...(own || CATEGORY_ARTWORK[game.category] || CATEGORY_ARTWORK.Arcade), engineLabel };
 }
 
-/** How-to-play copy shown in the game stage and the game modal. */
+/**
+ * How-to-play copy shown in the game stage and the game modal.
+ *
+ * Every line is derived from the same options the engine reads, so the instructions cannot drift
+ * away from the rules: a game whose board size, lane count or tap tempo changes gets new copy the
+ * same render. tests/catalog-integrity.test.js checks the resulting text against the options.
+ */
 export function getGameGuide(gameOrId) {
   const game = typeof gameOrId === 'string' ? getGame(gameOrId) : gameOrId;
   if (!game) return null;
   const opts = game.options || {};
+  const pace = Number(opts.tapGapMs) || 0;
 
   switch (game.engine) {
     case 'line':
@@ -254,85 +225,97 @@ export function getGameGuide(gameOrId) {
       };
     case 'memory':
       return {
-        mode: `${opts.pairs} Pairs (${opts.pairs * 2} Cards)`,
-        goal: 'Uncover and collect the most matching symbol pairs by the time the deck is cleared.',
+        mode: `${opts.pairs} Pairs (${opts.pairs * 2} Cards)${opts.openPairs ? `, ${opts.openPairs} Started Face-up` : ''}`,
+        goal: `Uncover and collect the most matching symbol pairs${opts.openPairs ? ` from the ${opts.pairs - opts.openPairs} pairs still in play` : ' by the time the deck is cleared'}.`,
         controls: 'Click or tap two face-down (?) cards on your turn to reveal them.',
-        rules: 'Scoring a match awards +1 point and grants an immediate bonus turn! Mismatches pass the turn.',
+        rules: opts.matchKeepsTurn === false
+          ? 'Scoring a match awards +1 point, then the turn passes on. Mismatches also pass the turn. Highest pair count wins.'
+          : 'Scoring a match awards +1 point and grants an immediate bonus turn! Mismatches pass the turn.',
         shortcut: 'Tap / Click 2 cards',
       };
     case 'race':
       return {
-        mode: `First to ${opts.target} Boosts`,
+        mode: `First to ${opts.target} Boosts${pace ? ` (one accepted tap every ${pace} ms)` : ' (no tap limit)'}`,
         goal: `Sprint ahead of the lobby and be the first player to fill your meter to ${opts.target}.`,
-        controls: 'Click or tap the BOOST button rapidly, or press the Spacebar on your keyboard.',
-        rules: 'Simultaneous real-time race—no turns! Every tap adds +1 boost to your lane.',
+        controls: 'Click or tap the BOOST button repeatedly, or press the Spacebar on your keyboard.',
+        rules: pace
+          ? `Real-time race with a tempo: taps closer together than ${pace} ms do not score, so a steady rhythm beats hammering.`
+          : 'Simultaneous real-time race — no turns and no tempo limit on taps. Every tap adds +1 boost.',
         shortcut: 'Spacebar or Tap BOOST',
       };
     case 'rps':
       if (opts.mode === 'coin') {
         return {
-          mode: `Best-of Coin Clash (First to ${opts.target})`,
-          goal: `Be the first player to score ${opts.target} round points by calling the coin flip.`,
-          controls: 'Click or tap Heads or Tails to lock in your secret call for the round.',
-          rules: 'Reveals once all players lock in. A sole correct caller wins +1 point for the round.',
+          mode: `Coin Clash (first to ${opts.target})`,
+          goal: `Be the first player to score ${opts.target} round points by calling the coin correctly.`,
+          controls: 'Click or tap Heads or Tails to lock in your hidden call for the round.',
+          rules: 'The flip is fixed for the round by the room, not per player. A sole correct caller scores +1; matching callers nobody scores.',
           shortcut: 'Tap Heads / Tails',
         };
       }
       if (opts.mode === 'dice') {
         return {
-          mode: `High-Roll Duel (First to ${opts.target})`,
+          mode: `High-Roll Duel (first to ${opts.target})`,
           goal: `Reach ${opts.target} points by locking in the highest die face in each showdown.`,
           controls: 'Click or tap a die value (1–6) to lock in your roll for the round.',
-          rules: 'Choices reveal simultaneously once everyone locks in. An uncontested high roll scores +1 point.',
+          rules: 'Picks reveal simultaneously. A sole highest roll scores +1; a tie scores nobody.',
           shortcut: 'Tap Roll 1–6',
         };
       }
       return {
-        mode: `Simultaneous Duel (First to ${opts.target})`,
+        mode: `Hidden Picks (first to ${opts.target} rounds)`,
         goal: `Outread your opponents and be the first to win ${opts.target} rounds.`,
         controls: 'Click or tap Rock (✊), Paper (✋), or Scissors (✌) to lock in your hidden move.',
-        rules: 'Rock beats Scissors, Scissors beats Paper, Paper beats Rock. Reveals when all players lock in.',
+        rules: 'Rock beats Scissors, Scissors beats Paper, Paper beats Rock. Picks are revealed only when everyone has locked in.',
         shortcut: 'Tap Rock / Paper / Scissors',
       };
-    case 'quiz':
+    case 'quiz': {
+      const kindCopy = {
+        emoji: 'Read the emoji clue, then pick the meaning that fits.',
+        scramble: 'Each round shows scrambled letters — pick the word they spell.',
+        riddle: 'Each round is a short riddle from this arcade’s own collection.',
+        number: 'Each round is an arithmetic or sequence puzzle with numeric answers.',
+        trivia: 'Each round is a multiple-choice question on the game’s own subject.',
+      };
       return {
-        mode: `${opts.rounds}-Round Trivia Showdown`,
-        goal: `Score the most correct answers across ${opts.rounds} fast-paced questions.`,
-        controls: 'Click or tap answer choice A, B, C, or D, then press Next question once all answers reveal.',
-        rules: 'Everyone answers each question before results reveal. Each correct pick earns +1 point.',
+        mode: `${opts.rounds}-Round Quiz (its own ${opts.rounds >= 6 ? 'large' : 'curated'} question set)`,
+        goal: `Score the most correct answers across ${opts.rounds} questions. Every round comes from this game's own bank, not a shared one.`,
+        controls: 'Click or tap answer choice A, B, C, or D (or press 1–4 / A–D), then press Next question once everyone has answered.',
+        rules: `${kindCopy[firstQuizKind(game.id)] || kindCopy.trivia} Everyone answers before the answers and scores are revealed; each correct pick is +1 point.`,
         shortcut: 'Tap A / B / C / D',
       };
+    }
     case 'maze':
       return {
-        mode: `${opts.width}×${opts.height} Labyrinth Race`,
+        mode: `${opts.width}×${opts.height} ${layoutLabel(opts.layout)}`,
         goal: 'Navigate around the walls and be the first player to tag the glowing star gate (✦).',
         controls: 'Use the on-screen directional buttons (↑ ← ↓ →) or your keyboard Arrow keys.',
-        rules: 'Simultaneous movement—no turn waiting! Dark tiles are solid walls.',
+        rules: 'Simultaneous movement — no turn waiting. Every starting tile can reach the star, and the step counter shows who took the shorter route.',
         shortcut: 'Arrow keys ↑ ← ↓ →',
       };
     case 'battle':
       return {
-        mode: `${opts.board}×${opts.board} Radar (${opts.fleet} Fleet Units)`,
-        goal: `Locate and sink all ${opts.fleet} hidden fleet cells on every rival's radar grid.`,
+        mode: `${opts.board}×${opts.board} Radar, ${opts.fleet} Fleet Cells Each`,
+        goal: `Find and hit all ${opts.fleet} hidden fleet cells on every rival's radar before they clear yours.`,
         controls: 'Select a rival under FIRE AT, then click or tap an untargeted radar square on your turn.',
-        rules: 'Turns rotate after each shot. Direct hits mark ✹ and misses mark ·.',
+        rules: 'Turns rotate after each shot. Hits (✹) and misses (·) are published by the server; only you can see your own fleet on the "Your waters" map.',
         shortcut: 'Select target + Tap cell',
       };
     case 'rally':
       return {
-        mode: `Court Rally (First to ${opts.target})`,
+        mode: `Court Rally, ${opts.lanes} Lanes (first to ${opts.target})`,
         goal: `Trade clean volleys and be the first player to reach ${opts.target} points.`,
-        controls: 'On your turn, click or tap UP (↗), CENTER (→), or DOWN (↘) to return the puck.',
-        rules: 'Players alternate volleys in turn order until one player hits the target score.',
-        shortcut: 'Tap UP / CENTER / DOWN',
+        controls: `On your turn, click or tap one of the ${opts.lanes} return lanes (keys 1–${opts.lanes}).`,
+        rules: `Every volley scores the returning player a point, so the rally alternates. More lanes means more guessing for your rival.`,
+        shortcut: 'Tap lane buttons',
       };
     case 'code':
       return {
-        mode: `${opts.digits}-Digit Cipher (${opts.maxGuesses} Max Guesses)`,
-        goal: `Crack the secret ${opts.digits}-digit code (digits 0–5) before the ${opts.maxGuesses}-guess limit runs out.`,
-        controls: 'Click or tap each digit slot to cycle 0–5, then press Try code on your turn.',
-        rules: 'EXACT = right digit in the right position; NEAR = right digit in a different position.',
-        shortcut: 'Cycle digits 0–5 + Try code',
+        mode: `${opts.digits}-Digit Cipher, digits 0–${opts.symbols - 1} (${opts.maxGuesses} Max Guesses)`,
+        goal: `Crack the secret ${opts.digits}-digit code before the ${opts.maxGuesses}-guess limit runs out.`,
+        controls: `Click or tap each digit slot to cycle 0–${opts.symbols - 1}, then press Try code on your turn.`,
+        rules: 'EXACT = right digit in the right position; NEAR = right digit in a different position. The code is only revealed once the round is over.',
+        shortcut: `Cycle digits 0–${opts.symbols - 1} + Try code`,
       };
     default:
       return {
@@ -343,4 +326,14 @@ export function getGameGuide(gameOrId) {
         shortcut: 'Tap / Click',
       };
   }
+}
+
+/** The question kind of a quiz game, read from the shipped warm-up bank (first item). */
+function firstQuizKind(gameId) {
+  return practiceBankFor(gameId)[0]?.kind || 'trivia';
+}
+
+/** A human name for a maze layout option. */
+function layoutLabel(layout) {
+  return { classic: 'Classic Hedge Maze', spiral: 'Spiral Labyrinth', pillars: 'Pillar Circuit', zigzag: 'Zigzag Run' }[layout] || 'Labyrinth Race';
 }

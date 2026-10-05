@@ -3,15 +3,17 @@ import {
   createInitialGameState,
   getGame,
 } from './catalog.js';
+import { DEFAULT_CODE_DRAFT } from './state.js';
 import {
   state,
   currentGame,
-  presenceNow,
+  currentGameState,
 } from './state.js';
 import { boot } from './boot.js';
 import { runLiveCheck } from './diagnostics.js';
 import { scheduleCpuMove, sendGameAction, startCpuRaceLoop, startPractice } from './cpu.js';
 import {
+  deleteAccountNow,
   handleGoogleSignIn,
   processGoogleRedirect,
   refreshAccount,
@@ -36,10 +38,13 @@ import {
   routeFromHash,
 } from './router.js';
 import {
+  blockPlayer,
   joinGameInvite,
+  reportProblem,
   requestFriendSearch,
   respondToFriend,
   sendFriendRequest,
+  unblockPlayer,
 } from './social.js';
 import {
   adminDeleteFriendRequest,
@@ -53,15 +58,14 @@ import {
   loadAdminData,
 } from './online/admin.js';
 import {
-  EXPIRED_ROOM_MESSAGE,
+  claimHost,
   createOnlineRoom,
-  expireActiveRoom,
-  isRoomExpired,
+  joinRoomByCode,
   leaveWaitingRoom,
   openRoomFromLink,
+  rematchRoom,
   startRoom,
 } from './online/rooms.js';
-import { markOnlineReset } from './online/action-sync.js';
 import { showToast } from './ui/toast.js';
 import { setupError } from './connection.js';
 import {
@@ -70,7 +74,6 @@ import {
 } from './views/pages.js';
 import {
   auth,
-  db,
   firebaseReady,
 } from './firebase.js';
 
@@ -85,11 +88,6 @@ import {
   DISPLAY_NAME_STORAGE_KEY,
   suggestUsername,
 } from './helpers.js';
-import {
-  doc,
-  runTransaction,
-  serverTimestamp,
-} from 'firebase/firestore';
 
 /**
  * `auth` and `db` are null only when Firebase never started. Every use below sits behind a
@@ -97,7 +95,6 @@ import {
  * so these casts state what those guards already guarantee (the same pattern as src/accounts.js).
  */
 const authInstance = /** @type {import('firebase/auth').Auth} */ (auth);
-const store = /** @type {import('firebase/firestore').Firestore} */ (db);
 
 function routeBackToCatalog() {
   window.clearTimeout(state.cpuTimer);
@@ -125,6 +122,49 @@ async function handleUsernameSetupSubmit(form) {
   state.modal = null;
   render();
   showToast(`Welcome, @${username}. Friend features are ready.`);
+}
+
+/**
+ * Join with a room code instead of a link.
+ *
+ * The code is looked up by the backend against `rooms.code`; the browser never queries the rooms
+ * collection, so a code cannot be used to enumerate rooms, only to open one you were given.
+ */
+async function handleJoinCodeSubmit(form) {
+  const code = String(new FormData(form).get('code') || '').trim();
+  await joinRoomByCode(code);
+  showToast('Room found. Settling you in…');
+}
+
+/** Send a report and say plainly what happens next (nothing automatic — the operator reads it). */
+async function handleReportSubmit(form) {
+  const formData = new FormData(form);
+  const modal = state.modal?.type === 'report' ? state.modal : {};
+  const result = await reportProblem({
+    kind: String(formData.get('kind') || 'other'),
+    message: String(formData.get('message') || ''),
+    targetUid: modal.targetUid || '',
+    roomId: modal.roomId || '',
+  });
+  state.modal = null;
+  render();
+  showToast(`Report ${String(result?.reportId || '').slice(0, 6)} stored for the operator. They read reports by hand; nothing was sent to the other player.`, 'success');
+}
+
+/**
+ * Delete the account through the backend. A stale sign-in is a normal outcome, not a failure: the
+ * backend refuses with `recent-login-required`, and the player is asked to sign in again instead of
+ * being told something that did not happen.
+ */
+async function handleDeleteAccount() {
+  const result = await deleteAccountNow();
+  const removed = [
+    result?.friendships ? `${result.friendships} friendship${result.friendships === 1 ? '' : 's'}` : '',
+    result?.invites ? `${result.invites} invite${result.invites === 1 ? '' : 's'}` : '',
+    result?.rooms ? `${result.rooms} room seat${result.rooms === 1 ? '' : 's'}` : '',
+  ].filter(Boolean);
+  navigate('home');
+  showToast(removed.length ? `Account deleted. Also removed: ${removed.join(', ')}.` : 'Account deleted.', 'success');
 }
 
 function handleSettingsSubmit(form) {
@@ -220,10 +260,50 @@ function handleClick(event) {
   if (action === 'toggle-favorite') { toggleFavorite(gameId); return; }
   if (action === 'open-game') { recordRecentGame(gameId); modalOpen({ type: 'game', gameId }); return; }
   if (action === 'filter-category') { state.category = category; if (state.page !== 'catalog') { navigate('catalog'); return; } render(); return; }
-  if (action === 'clear-filters') { state.query = ''; state.category = 'All games'; render(); return; }
+  if (action === 'clear-filters') {
+    state.query = '';
+    state.category = 'All games';
+    state.filters = { duration: 'Any length', difficulty: 'Any difficulty', input: 'Any input' };
+    render();
+    return;
+  }
   if (action === 'quick-play') { const game = GAMES[Math.floor(Math.random() * GAMES.length)]; recordRecentGame(game.id); modalOpen({ type: 'game', gameId: game.id }); return; }
   if (action === 'quick-room') { openRoomModal(GAMES[0].id); return; }
   if (action === 'open-friends') { navigate('friends'); return; }
+  if (action === 'open-report') {
+    modalOpen({
+      type: 'report',
+      kind: 'other',
+      targetUid: roomId ? '' : uid || '',
+      targetName: actionButton.dataset.name || '',
+      roomId: roomId || state.room?.id || '',
+    });
+    return;
+  }
+  if (action === 'block-player') {
+    const blockedUid = adminArg(uid);
+    const name = actionButton.dataset.name || 'this player';
+    openAdminConfirm('Block this player?', `${name} disappears from your search results, and their requests and invites are refused and cleared. You can unblock them from the friends page.`, 'Block player', () => blockPlayer(blockedUid));
+    return;
+  }
+  if (action === 'unblock-player') { void unblockPlayer(adminArg(uid)).catch((error) => showToast(friendlyError(error), 'warning')); return; }
+  if (action === 'open-delete-account') {
+    openAdminConfirm(
+      'Delete this account?',
+      'This deletes your profile, releases your username, removes your friendships, requests, invites and presence, and deletes the Firebase sign-in. Rooms still in play are left for the other players and expire on their own. This cannot be undone.',
+      'Delete my account',
+      () => handleDeleteAccount().catch((error) => {
+        if (/** @type {any} */ (error)?.code === 'recent-login-required') {
+          state.authError = friendlyError(error);
+          modalOpen({ type: 'auth', mode: 'login' });
+          showToast('Sign in again, then delete within 10 minutes.', 'warning');
+          return;
+        }
+        throw error;
+      }),
+    );
+    return;
+  }
   if (action === 'show-setup') {
     if (!state.liveCheck?.running) state.liveCheck = null; // never show the result of an earlier, possibly outdated, check
     modalOpen({ type: 'setup' });
@@ -235,6 +315,12 @@ function handleClick(event) {
   if (action === 'copy-room-link') { void copyRoomLink(); return; }
   if (action === 'share-room-link') { void shareRoomLink(); return; }
   if (action === 'start-room') { void startRoom().catch((error) => showToast(friendlyError(error), 'warning')); return; }
+  if (action === 'claim-host') {
+    void claimHost()
+      .then((changed) => { if (changed) showToast('You are the host now. Start when everyone is ready.'); })
+      .catch((error) => showToast(friendlyError(error), 'warning'));
+    return;
+  }
   if (action === 'retry-room') { const route = parseHash(); state.roomError = ''; state.room = null; state.roomId = null; if (route.id) void openRoomFromLink(route.id); return; }
   if (action === 'leave-session') { routeBackToCatalog(); return; }
   if (action === 'play-again') { void resetCurrentGame(); return; }
@@ -249,8 +335,19 @@ function handleClick(event) {
   if (action === 'battle-target') { state.selectedBattleTarget = uid; render(); return; }
   if (action === 'battle-fire') { void sendGameAction({ type: 'fire', targetUid: state.selectedBattleTarget, index: Number(index) }); return; }
   if (action === 'rally-hit') { void sendGameAction({ lane: Number(lane) }); return; }
-  if (action === 'code-digit') { const digitIndex = Number(index); state.codeDraft[digitIndex] = (state.codeDraft[digitIndex] + 1) % 6; render(); return; }
-  if (action === 'code-submit') { void sendGameAction({ guess: [...state.codeDraft] }); state.codeDraft = [0, 0, 0, 0]; return; }
+  if (action === 'code-digit') {
+    const digitIndex = Number(index);
+    const symbols = Number(currentGameState()?.symbols) || 6;
+    state.codeDraft[digitIndex] = (state.codeDraft[digitIndex] + 1) % symbols;
+    render();
+    return;
+  }
+  if (action === 'code-submit') {
+    const digits = Number(currentGameState()?.digits) || 4;
+    void sendGameAction({ guess: state.codeDraft.slice(0, digits) });
+    state.codeDraft = [...DEFAULT_CODE_DRAFT];
+    return;
+  }
   if (action === 'open-auth') { modalOpen({ type: 'auth', mode: 'login' }); return; }
   if (action === 'open-username-setup') { modalOpen({ type: 'username', suggestion: suggestUsername(state.user?.displayName, state.user?.email) }); return; }
   if (action === 'google-sign-in') {
@@ -271,7 +368,7 @@ function handleClick(event) {
     return;
   }
   if (action === 'notifications') { modalOpen({ type: 'notifications' }); return; }
-  if (action === 'send-friend-request') { void sendFriendRequest(uid, actionButton.dataset.name).catch((error) => showToast(friendlyError(error), 'warning')); return; }
+  if (action === 'send-friend-request') { void sendFriendRequest(actionButton.dataset.name).catch((error) => showToast(friendlyError(error), 'warning')); void uid; return; }
   if (action === 'accept-friend' || action === 'decline-friend') { void respondToFriend(requestId, action === 'accept-friend').catch((error) => showToast(friendlyError(error), 'warning')); return; }
   if (action === 'join-game-invite') { void joinGameInvite(inviteId, roomId).catch((error) => showToast(friendlyError(error), 'warning')); return; }
   if (action === 'challenge-friend') {
@@ -297,7 +394,7 @@ function handleClick(event) {
     return;
   }
   if (action === 'admin-remove-player') {
-    openAdminConfirm('Remove this player?', `@${adminArg(actionButton.dataset.name)}'s profile is deleted and their username is freed for anyone to claim. Their admin flag (if any) goes too. Their sign-in itself stays, but they become a plain guest.`, 'Remove player', () => adminRemovePlayer(adminArg(uid), adminArg(actionButton.dataset.username)));
+    openAdminConfirm('Remove this player?', `@${adminArg(actionButton.dataset.name)}'s profile is deleted and their username is freed for anyone to claim. Their admin flag (if any) goes too. Their sign-in itself stays, but they become a plain guest.`, 'Remove player', () => adminRemovePlayer(adminArg(uid)));
     return;
   }
   if (action === 'admin-delete-friendship') {
@@ -338,39 +435,17 @@ async function resetCurrentGame() {
       const game = getGame(state.local.gameId);
       if (!game) throw new Error('This game is no longer in the catalog.');
       state.local.gameState = createInitialGameState(game, state.local.players, `${state.local.seed}:again:${Date.now()}`);
-      state.codeDraft = [0, 0, 0, 0];
+      state.codeDraft = [...DEFAULT_CODE_DRAFT];
       render();
       if (game.engine === 'race') startCpuRaceLoop(); else scheduleCpuMove();
       return;
     }
     if (!state.room || !state.user) return;
-    if (isRoomExpired(state.room, presenceNow())) {
-      await expireActiveRoom(state.room.id, state.user.uid);
-      throw new Error(EXPIRED_ROOM_MESSAGE);
-    }
-    if (state.room.hostUid !== state.user.uid) throw new Error('Only the room host can reset the game.');
+    // The backend re-checks the host, the room's status and its lifetime, and deals a fresh state
+    // (with a fresh seed) that keeps the optimistic-action revisions monotonic.
     if (state.onlineActionsPending) throw new Error('Your last move is still syncing. The rematch will be ready in a moment.');
-    const roomId = state.room.id;
-    const resetSeed = `${roomId}:${Date.now()}`;
-    let expired = false;
-    await runTransaction(store, async (transaction) => {
-      const roomRef = doc(store, 'rooms', roomId);
-      const snapshot = await transaction.get(roomRef);
-      if (!snapshot.exists()) throw new Error('The room no longer exists.');
-      const room = snapshot.data();
-      if (isRoomExpired(room, presenceNow())) {
-        expired = true;
-        return;
-      }
-      const players = room.playerUids.map((uid) => ({ uid, name: room.playerNames?.[uid] || 'Player' }));
-      const freshState = createInitialGameState(room.gameId, players, resetSeed);
-      transaction.update(roomRef, { state: markOnlineReset(freshState, room.state), status: 'playing', winnerUid: null, updatedAt: serverTimestamp() });
-    });
-    if (expired) {
-      await expireActiveRoom(roomId, state.user.uid);
-      throw new Error(EXPIRED_ROOM_MESSAGE);
-    }
-    state.codeDraft = [0, 0, 0, 0];
+    await rematchRoom();
+    state.codeDraft = [...DEFAULT_CODE_DRAFT];
   } catch (error) {
     showToast(friendlyError(error), 'warning');
   }
@@ -400,6 +475,8 @@ function handleSubmit(event) {
   else if (type === 'admin-grant') task = handleAdminGrantSubmit(form);
   else if (type === 'settings') { handleSettingsSubmit(form); if (submitButton) submitButton.disabled = false; return; }
   else if (type === 'friend-search') { requestFriendSearch(form); if (submitButton) submitButton.disabled = false; return; }
+  else if (type === 'join-code') task = handleJoinCodeSubmit(form);
+  else if (type === 'report') task = handleReportSubmit(form);
   Promise.resolve(task).catch((error) => {
     if (type === 'auth') reportAuthError(error, { method: 'password' });
     else showToast(friendlyError(error), 'warning');
@@ -422,6 +499,38 @@ function handleInput(event) {
   }
 }
 
+/** The shelf filters: select changes repaint the grid and the count without a full re-render. */
+function handleFilterChange(event) {
+  const select = event.target.closest('select[data-filter]');
+  if (!select) return;
+  const key = select.dataset.filter;
+  if (key !== 'duration' && key !== 'difficulty' && key !== 'input') return;
+  state.filters = { ...state.filters, [key]: select.value };
+  render();
+}
+
+/**
+ * Arrow keys inside the admin tablist move the selection, as a `role="tablist"` promises.
+ * Returns true when the key was consumed.
+ */
+function handleTabKeys(event) {
+  const tab = event.target?.closest?.('[role="tab"][data-action="admin-tab"]');
+  if (!tab || event.altKey || event.ctrlKey || event.metaKey) return false;
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return false;
+  const tabs = /** @type {HTMLElement[]} */ ([...document.querySelectorAll('[role="tab"][data-action="admin-tab"]')]);
+  const index = tabs.indexOf(/** @type {HTMLElement} */ (tab));
+  if (index === -1 || !tabs.length) return false;
+  const next = event.key === 'Home' ? 0
+    : event.key === 'End' ? tabs.length - 1
+      : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+  const tabId = tabs[next]?.dataset.tab;
+  if (!tabId) return false;
+  state.adminTab = tabId;
+  render();
+  /** @type {HTMLElement | null} */ (document.querySelector(`[role="tab"][data-tab="${tabId}"]`))?.focus();
+  return true;
+}
+
 function handleKeydown(event) {
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
     event.preventDefault();
@@ -431,17 +540,18 @@ function handleKeydown(event) {
     return;
   }
   if (event.key === 'Escape' && state.modal) { modalClose(); return; }
+  if (!state.modal && handleTabKeys(event)) { event.preventDefault(); return; }
   if (state.modal && trapDialogTab(event)) return;
   if (!state.modal && !event.altKey && !event.ctrlKey && !event.metaKey && handleBoardArrows(event)) { event.preventDefault(); return; }
   if (state.page === 'game' && !state.modal && !event.altKey && !event.ctrlKey && !event.metaKey && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName ?? '')) {
-    // Number and letter keys answer a quiz (1-4 or A-D) or pick a rally lane (1-3); they press the same buttons a tap would.
+    // Number and letter keys answer a quiz (1-4 or A-D) or pick a rally lane (1-5); they press the same buttons a tap would.
     const engine = currentGame()?.engine;
     const digit = /^[1-4]$/.test(event.key) ? Number(event.key) - 1 : 'abcd'.indexOf(event.key.toLowerCase());
     if (engine === 'quiz' && event.key.length === 1 && digit >= 0) {
       const option = /** @type {HTMLButtonElement | undefined} */ ([...document.querySelectorAll('.quiz-option')][digit]);
       if (option && !option.disabled) { event.preventDefault(); option.click(); return; }
     }
-    if (engine === 'rally' && /^[1-3]$/.test(event.key)) {
+    if (engine === 'rally' && /^[1-5]$/.test(event.key)) {
       const lane = /** @type {HTMLButtonElement | null} */ (document.querySelector(`[data-action="rally-hit"][data-lane="${Number(event.key) - 1}"]`));
       if (lane && !lane.disabled) { event.preventDefault(); lane.click(); return; }
     }
@@ -463,8 +573,17 @@ function attachAppEvents() {
   appRoot.addEventListener('click', handleClick);
   appRoot.addEventListener('submit', handleSubmit);
   appRoot.addEventListener('input', handleInput);
+  appRoot.addEventListener('change', handleFilterChange);
   window.addEventListener('keydown', handleKeydown);
   window.addEventListener('hashchange', routeFromHash);
+  // Broken artwork must never leave a hole: the capture phase sees the image's error event, marks the
+  // <img> and the CSS shows a labelled placeholder instead. (Inline onerror is blocked by the CSP.)
+  window.addEventListener('error', (event) => {
+    const image = /** @type {HTMLImageElement | null} */ (event.target);
+    if (!image || image.tagName !== 'IMG' || image.dataset.broken) return;
+    image.dataset.broken = '1';
+    image.classList.add('is-broken');
+  }, true);
 }
 
 attachAppEvents();

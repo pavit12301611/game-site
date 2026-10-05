@@ -113,9 +113,14 @@ test('every Firestore collection the app touches has a rule', () => {
     }
   };
   walk(`${root}src`);
-  // A floor so the scan cannot silently match nothing if the call style ever changes.
-  for (const known of ['admins', 'profiles', 'usernames', 'friendRequests', 'friendships', 'gameInvites', 'rooms']) {
+  // A floor so the scan cannot silently match nothing if the call style ever changes. `usernames`,
+  // `blocks`, `reports` and `rateLimits` are deliberately absent: the browser no longer touches
+  // them at all (they belong to the trusted backend), and the rules still describe every one.
+  for (const known of ['admins', 'profiles', 'friendRequests', 'friendships', 'gameInvites', 'rooms']) {
     assert.ok(used.has(known), `expected src/ to use the "${known}" collection`);
+  }
+  for (const backendOnly of ['usernames', 'blocks', 'reports', 'rateLimits', 'secrets', 'views']) {
+    assert.ok(code.includes(`match /${backendOnly}/{`), `${backendOnly} must still be described in firestore.rules`);
   }
   const uncovered = [...used].filter((name) => !code.includes(`match /${name}/{`));
   assert.deepEqual(uncovered, [], 'collections used by src/ but missing from firestore.rules (Firestore denies them by default)');
@@ -155,44 +160,73 @@ test('admin flags: owners read theirs, admins manage access, and nobody mints a 
   assert.match(isAdmin, /\.data\.admin == true/);
 });
 
-test('rooms: unlistable except for admins, and a missing room reads as "not found" instead of permission-denied', () => {
+test('rooms: unlistable, member-readable, and a missing room reads as "not found"', () => {
   const statements = ownStatements('rooms');
   const get = statements.find(({ methods }) => methods.length === 1 && methods[0] === 'get');
   assert.ok(get, 'rooms needs a dedicated get rule');
   assert.match(get.condition, /resource == null/, 'reading a room that does not exist must not throw permission-denied');
-  assert.match(get.condition, /resource\.data\.status == 'waiting'/);
-  assert.match(get.condition, /isRoomMember\(resource\.data\)/);
-  assert.match(get.condition, /isExpiredRoom\(resource\.data\)/, 'expired rooms can be read by link visitors so they can be auto-deleted');
+  assert.match(get.condition, /isRoomMember\(resource\.data\)/, 'members read their own room');
+  assert.match(get.condition, /isAdmin\(\)/, 'the admin studio reads any room');
+  assert.doesNotMatch(get.condition, /status == 'waiting'/, 'a waiting room is not public: joining goes through the backend');
   const list = statements.find(({ methods }) => methods.includes('list'));
   assert.equal(list?.condition, 'isAdmin()', 'only admins may list rooms');
 });
 
-test('rooms older than 1 hour cannot be updated by players and may be deleted by any signed-in user', () => {
-  assert.match(code, /function isExpiredRoom\(room\)\s*\{\s*return room\.createdAt is timestamp\s*&&\s*request\.time >= room\.createdAt \+ duration\.value\(1,\s*'h'\);\s*\}/);
-  const statements = ownStatements('rooms');
-  const update = statements.find(({ methods }) => methods.includes('update'));
-  assert.ok(update, 'rooms needs an update rule');
-  assert.match(update.condition, /!isExpiredRoom\(resource\.data\)/, 'players cannot join or move in a room older than 1 hour');
-  const remove = statements.find(({ methods }) => methods.includes('delete'));
-  assert.ok(remove, 'rooms needs a delete rule');
-  assert.match(remove.condition, /isExpiredRoom\(resource\.data\)/, 'any signed-in user may delete an expired room');
+test('no client can write a room, its secret state or its private views', () => {
+  const rooms = ownStatements('rooms').filter(({ methods }) => methods.some((method) => ['create', 'update', 'delete'].includes(method)));
+  assert.ok(rooms.length > 0, 'rooms must say what is denied, not stay silent');
+  for (const { methods, condition } of rooms) {
+    assert.equal(condition, 'false', `rooms ${methods.join(', ')} must be denied for every client: the trusted backend writes rooms`);
+  }
+  const secretStatements = allowStatements(matchBlock('secrets'));
+  assert.equal(secretStatements.length, 1, 'secrets have exactly one statement');
+  assert.deepEqual(secretStatements[0].methods.sort(), ['read', 'write'], 'secrets deny both halves for everyone, admins included');
+  assert.equal(secretStatements[0].condition, 'false');
+  const views = allowStatements(matchBlock('views'));
+  const viewRead = views.find(({ methods: m }) => m.includes('get'));
+  assert.match(viewRead.condition, /request\.auth\.uid == uid/, 'a player reads only their own private view');
+  for (const { methods, condition } of views.filter(({ methods: m }) => m.some((method) => ['create', 'update', 'delete'].includes(method)))) {
+    assert.equal(condition, 'false', `views ${methods.join(', ')} must be denied: only the backend writes them`);
+  }
 });
 
-test('friend requests and game invites return missing gets as not-found without broadening list access', () => {
+test('friend requests and game invites are participant-readable and never client-writable', () => {
   for (const name of ['friendRequests', 'gameInvites']) {
     const statements = allowStatements(matchBlock(name));
     const get = statements.find(({ methods }) => methods.length === 1 && methods[0] === 'get');
     assert.ok(get, `${name} needs a dedicated get rule`);
-    assert.match(get.condition, /resource == null/, `${name}: a missing invite should read as not-found`);
+    assert.match(get.condition, /resource == null/, `${name}: a missing document should read as not-found`);
     assert.match(get.condition, /resource\.data\.fromUid == request\.auth\.uid/);
     assert.match(get.condition, /resource\.data\.toUid == request\.auth\.uid/);
     const list = statements.find(({ methods }) => methods.length === 1 && methods[0] === 'list');
-    assert.equal(
-      list?.condition,
-      'signedIn() && (resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid) || isAdmin()',
-      `${name}: list access stays restricted to participants, plus the admin studio's moderation view`,
-    );
+    assert.match(list.condition, /resource\.data\.fromUid == request\.auth\.uid/, `${name}: a listener stays scoped to the caller`);
+    assert.match(list.condition, /isAdmin\(\)/);
+    const writes = statements.filter(({ methods }) => methods.some((method) => ['create', 'update'].includes(method)));
+    for (const { methods, condition } of writes) {
+      assert.equal(condition, 'false', `${name} ${methods.join(', ')} must be denied: the backend owns these writes`);
+    }
+    const remove = statements.find(({ methods }) => methods.includes('delete'));
+    assert.match(remove.condition, /isAdmin\(\)/, `${name}: only an admin may clean up a stale row from the studio`);
   }
+});
+
+test('blocks are private to their owner and reports are for the operator', () => {
+  const blocks = allowStatements(matchBlock('blocks'));
+  const read = blocks.find(({ methods }) => methods.includes('get'));
+  assert.match(read.condition, /resource\.data\.blockerUid/, 'only the person who blocked someone sees the row');
+  for (const { condition } of blocks.filter(({ methods }) => methods.some((method) => ['create', 'update'].includes(method)))) {
+    assert.equal(condition, 'false', 'blocking is a backend call (it also clears pending requests and invites)');
+  }
+  const reports = allowStatements(matchBlock('reports'));
+  for (const statement of reports) {
+    if (statement.condition === 'false') continue;
+    assert.match(statement.condition, /isAdmin\(\)/, 'reports are readable by the operator only');
+  }
+  assert.ok(reports.some(({ condition }) => condition === 'false'), 'no client writes reports');
+  const rateLimits = allowStatements(matchBlock('rateLimits'));
+  assert.equal(rateLimits.length, 1, 'rateLimits have exactly one statement');
+  assert.deepEqual(rateLimits[0].methods.sort(), ['read', 'write'], 'both halves of every rate-limit document are denied');
+  assert.equal(rateLimits[0].condition, 'false', 'rate-limit bookkeeping is invisible to clients');
 });
 
 test('friendships: members read their own, admins may read all (the admin dashboard counts them)', () => {
@@ -204,27 +238,35 @@ test('friendships: members read their own, admins may read all (the admin dashbo
   assert.ok(read.condition.indexOf('memberUids') < read.condition.indexOf('isAdmin()'), 'check membership before the billed admin lookup');
 });
 
-test('friendships, usernames and profiles stay immutable for players; deletion is an admin-only power', () => {
-  // Players can never rewrite history: friendship and username documents cannot be *updated* by
-  // anyone. Deleting profiles/usernames/friendships is what the admin studio's cleanup actions
-  // do, and those statements must be guarded by isAdmin() - never open to an ordinary player.
-  const denied = {
-    friendships: ['update'],
-    usernames: ['update'],
-  };
-  for (const [name, methods] of Object.entries(denied)) {
-    const blocked = allowStatements(matchBlock(name)).filter(({ condition }) => condition === 'false').flatMap((item) => item.methods);
-    for (const method of methods) assert.ok(blocked.includes(method), `${name}: ${method} must be denied for everyone`);
+test('profiles and usernames are backend-only: no client write survives at any privilege level', () => {
+  // Claiming a name, editing a profile and removing an account all moved into the trusted backend
+  // (`claimUsername`, `deleteAccount`, `adminRemovePlayer`). Nothing about a profile or a username
+  // reservation is client-writable, so a username cannot be renamed, spoofed or duplicated.
+  const profiles = allowStatements(matchBlock('profiles'));
+  const profileWrite = profiles.filter(({ methods }) => methods.some((method) => ['create', 'update', 'delete'].includes(method)));
+  assert.ok(profileWrite.length > 0, 'profiles must say that writes are denied');
+  for (const { methods, condition } of profileWrite) {
+    assert.equal(condition, 'false', `profiles ${methods.join(', ')} must be denied for every client`);
   }
-  const adminOnlyDeletes = { friendships: ['delete'], usernames: ['delete'], profiles: ['delete'] };
-  for (const [name, methods] of Object.entries(adminOnlyDeletes)) {
-    const statements = allowStatements(matchBlock(name));
-    for (const method of methods) {
-      const allowed = statements.filter(({ methods: m }) => m.includes(method));
-      assert.ok(allowed.length > 0, `${name}: ${method} may not be silently dropped (the admin studio needs it)`);
-      for (const statement of allowed) assert.match(statement.condition, /isAdmin\(\)/, `${name}: ${method} must require the admin flag`);
-    }
-  }
+  const profileRead = profiles.find(({ methods }) => methods.includes('get'));
+  assert.match(profileRead.condition, /request\.auth\.uid == uid/, 'you read your own profile');
+  assert.match(profileRead.condition, /isAdmin\(\)/, 'and an admin reads any (the dashboard lists players)');
+  const profileList = profiles.find(({ methods }) => methods.includes('list'));
+  assert.equal(profileList.condition, 'isAdmin()', 'only an admin may list profiles: the directory is not browsable');
+  const usernames = allowStatements(matchBlock('usernames'));
+  assert.equal(usernames.length, 1, 'usernames have exactly one statement');
+  assert.deepEqual(usernames[0].methods.sort(), ['read', 'write'], 'both halves of a reservation are closed');
+  assert.equal(usernames[0].condition, 'false', 'username reservations are server-only');
+});
+
+test('the player directory cannot be queried by anyone but an admin', () => {
+  // The old design let any signed-in client run `where('usernameLower', '==', …)` against
+  // `profiles`, which also allowed listing the collection. The rules now deny both, and friend
+  // search is the `lookupUser` callable instead (tested in functions/test/handlers.test.js).
+  const profileRead = allowStatements(matchBlock('profiles')).filter(({ methods }) => methods.includes('get'));
+  assert.equal(profileRead.length, 1, 'profiles have one get rule');
+  assert.doesNotMatch(profileRead[0].condition, /list/, 'get and list are separate rules with different audiences');
+  assert.match(matchBlock('usernames'), /allow read, write: if false;/);
 });
 
 test('presence: heartbeats live with the room, are written only by their owner and read only by members', () => {

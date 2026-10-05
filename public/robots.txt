@@ -1,2 +1,3 @@
 User-agent: *
 Allow: /
+Sitemap: https://psd-gaming.vercel.app/sitemap.xml

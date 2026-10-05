@@ -2,28 +2,36 @@
  * Private rooms: create one, open one from an invite link, sit in the lobby, start the match, and
  * make a move.
  *
- * A room is one Firestore document whose id *is* the invite; Firestore rules make rooms
- * un-listable, so the link is the only way in. Two rules shape the code below:
+ * The trusted backend owns the room. This module is the browser half:
  *
- * - A join is a transaction that re-reads the room, so two friends clicking the same link at the
- *   same moment cannot both take the last seat.
- * - A move is a transaction too (see `doOnlineAction`): the engine is applied to the state read
- *   inside the transaction, so concurrent turns can never silently overwrite each other.
+ * - **Reads** are live Firestore snapshots of the room document (members only, `firestore.rules`) plus
+ *   the player's own private view document for games with hidden information.
+ * - **Writes** are callable Cloud Functions (`./callables.js`): create, join, leave, start, claim the
+ *   host seat, move, rematch, invite. The rules deny the browser any write to a room, its secrets or
+ *   its views, so nothing below has to be trusted - and nothing below pretends to be authoritative.
+ * - **The local queue** still exists so a fast game feels immediate: a move is drawn optimistically
+ *   when the engine's public state is the whole story (line, drop, race, maze, rally), and hidden
+ *   games simply send and show the server's answer. `clientActionId` makes a retry safe, so a
+ *   dropped response can never apply a move twice.
  *
- * This module never imports the router: `createOnlineRoom` sets `location.hash` directly. That is
- * deliberate - the router imports this module, and a cycle would make the whole page fragile.
+ * Expiry is the backend's job too (a scheduled function purges expired rooms, their secrets, views
+ * and heartbeats every 15 minutes). This module only stops showing a room once it is over its hour,
+ * and forgets it locally.
  */
 
-import { collection, deleteDoc, doc, onSnapshot, runTransaction, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
+import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase.js';
-import { createInitialGameState, getGame } from '../catalog.js';
+import { getGame } from '../catalog.js';
 import { friendlyError } from '../errors.js';
+import { mergeView } from '../../shared/online/view.js';
 import { render } from '../render.js';
 import { presenceNow, state } from '../state.js';
 import { playerDisplayName } from '../ui/players.js';
 import { ensureOnlineUser } from './session.js';
-import { deletePresenceIn, presenceDocRef, startPresence, stopPresence } from './presence.js';
+import { callBackend } from './callables.js';
+import { startPresence, stopPresence } from './presence.js';
 import { roomAfterOnlineActions } from './action-sync.js';
+import { ROOM_CODE_LENGTH } from '../../shared/online/policy.js';
 import {
   DISPLAY_NAME_STORAGE_KEY,
   EXPIRED_ROOM_MESSAGE,
@@ -62,6 +70,7 @@ const store = /** @type {import('firebase/firestore').Firestore} */ (db);
 const emptyUnsubscribe = () => {};
 
 let stopRoom = emptyUnsubscribe;
+let stopPrivateView = emptyUnsubscribe;
 /** Which room id a join is in flight for, so a double navigation cannot open it twice. */
 let roomOpening = '';
 let actionSequence = 0;
@@ -85,8 +94,9 @@ function clearKnownRoomsSweepTimer() {
 }
 
 /**
- * Record a room ID this browser created or joined so it can be automatically deleted after 1 hour,
- * even if the player leaves the room or reloads the page.
+ * Record a room ID this browser created or joined so this browser can stop showing it after its
+ * hour, even if the player reloads. (Deleting the documents is the backend's job; this list is only
+ * about what this tab keeps in memory and localStorage.)
  * @param {string} roomId
  * @param {number | null} [createdAtMs]
  * @param {Pick<Storage, 'getItem' | 'setItem'> | null} [storage]
@@ -104,7 +114,7 @@ export function rememberKnownRoom(roomId, createdAtMs = presenceNow(), storage =
 }
 
 /**
- * Remove a room ID from the known-rooms list once it has been deleted.
+ * Remove a room ID from the known-rooms list.
  * @param {string} roomId
  * @param {Pick<Storage, 'getItem' | 'setItem'> | null} [storage]
  */
@@ -117,70 +127,61 @@ export function forgetKnownRoom(roomId, storage = globalThis.localStorage) {
 }
 
 /**
- * Delete an expired room document (and the caller's presence heartbeat) from Firestore.
- * Best-effort so a missing room, offline browser, or slight clock skew never causes an unhandled rejection.
+ * Stop tracking an expired room. Deletion is the backend's job (the scheduled `cleanupExpired`
+ * function deletes the room, its secret state, its private views and its heartbeats every 15
+ * minutes); a browser must not be the only thing that cleans up, which is exactly what this module
+ * used to rely on.
  * @param {string} roomId
- * @param {string} [uid]
- * @param {{
- *   deleteRoomDoc?: (id: string) => Promise<unknown>,
- *   deletePresenceDoc?: (id: string, memberUid: string) => Promise<unknown>,
- *   storage?: Pick<Storage, 'getItem' | 'setItem'> | null,
- * }} [deps]
+ * @param {Pick<Storage, 'getItem' | 'setItem'> | null} [storage]
  */
-export async function deleteExpiredRoom(roomId, uid = state.user?.uid, deps = {}) {
+export async function deleteExpiredRoom(roomId, storage = globalThis.localStorage) {
   const cleanId = String(roomId || '').trim();
-  if (!cleanId) return;
-  const storage = deps.storage === undefined ? globalThis.localStorage : deps.storage;
+  if (!cleanId) return { roomId: '', forgotten: false };
   forgetKnownRoom(cleanId, storage);
-  const deletePresenceDoc = deps.deletePresenceDoc
-    || ((id, memberUid) => (store ? deleteDoc(presenceDocRef(id, memberUid)) : Promise.resolve()));
-  const deleteRoomDoc = deps.deleteRoomDoc
-    || ((id) => (store ? deleteDoc(doc(store, 'rooms', id)) : Promise.resolve()));
-  if (uid) {
-    await Promise.resolve().then(() => deletePresenceDoc(cleanId, uid)).catch(emptyUnsubscribe);
-  }
-  await Promise.resolve().then(() => deleteRoomDoc(cleanId)).catch(emptyUnsubscribe);
+  return { roomId: cleanId, forgotten: true, deletedByBackend: true };
 }
 
 /**
- * Close the currently open room because its 1-hour lifetime has elapsed, and delete it in Firestore.
+ * Close the currently open room because its 1-hour lifetime has elapsed. The room itself is deleted
+ * by the backend's scheduled cleanup; here we stop showing it and stop the heartbeat.
  * @param {string} roomId
- * @param {string} [uid]
- * @param {Parameters<typeof deleteExpiredRoom>[2]} [deps]
+ * @param {Pick<Storage, 'getItem' | 'setItem'> | null} [storage]
  */
-export async function expireActiveRoom(roomId, uid = state.user?.uid, deps = {}) {
+export async function expireActiveRoom(roomId, storage = globalThis.localStorage) {
   clearActiveRoomExpiryTimer();
   if (state.roomId === roomId) {
     stopPresence({ markLeft: false });
     stopRoom();
     stopRoom = emptyUnsubscribe;
+    stopPrivateView();
+    stopPrivateView = emptyUnsubscribe;
     if (activeActions?.roomId === roomId) activeActions = null;
     state.room = null;
     state.onlineActionsPending = 0;
     state.roomError = EXPIRED_ROOM_MESSAGE;
     render();
   }
-  await deleteExpiredRoom(roomId, uid, deps);
+  await deleteExpiredRoom(roomId, storage);
 }
 
 /**
- * Schedule automatic deletion for the currently open room at `createdAt + 1 hour`.
+ * Schedule forgetting the currently open room at `createdAt + 1 hour`. The document is deleted by
+ * the backend; this timer only decides when this tab stops treating it as live.
  * @param {Record<string, any>} room
- * @param {string} uid
  */
-function scheduleActiveRoomExpiry(room, uid) {
+function scheduleActiveRoomExpiry(room) {
   clearActiveRoomExpiryTimer();
   const remainingMs = roomRemainingMs(room, presenceNow());
   if (remainingMs === null) return;
   roomExpiryTimer = setTimeout(() => {
     roomExpiryTimer = null;
-    if (state.roomId === room.id) void expireActiveRoom(room.id, uid);
+    if (state.roomId === room.id) void expireActiveRoom(room.id);
   }, remainingMs);
 }
 
 function scheduleKnownRoomsSweep(nowMs = presenceNow()) {
   clearKnownRoomsSweepTimer();
-  if (!store || !state.user) return;
+  if (!state.user) return;
   const { expired, nextDelayMs } = partitionKnownRooms(loadKnownRooms(), nowMs);
   if (expired.length) {
     knownRoomsSweepTimer = setTimeout(() => {
@@ -198,36 +199,26 @@ function scheduleKnownRoomsSweep(nowMs = presenceNow()) {
 }
 
 /**
- * Delete every tracked room whose age has reached 1 hour, and schedule the next check if any
- * younger rooms are still tracked.
+ * Forget every tracked room whose age has reached 1 hour, and schedule the next check if any
+ * younger rooms are still tracked. No Firestore writes: the backend's cleanup owns deletion.
  * @param {number} [nowMs]
- * @param {{
- *   storage?: Pick<Storage, 'getItem' | 'setItem'> | null,
- *   uid?: string,
- *   allowWithoutStore?: boolean,
- *   deleteRoomDoc?: (id: string) => Promise<unknown>,
- *   deletePresenceDoc?: (id: string, memberUid: string) => Promise<unknown>,
- * }} [deps]
+ * @param {{ storage?: Pick<Storage, 'getItem' | 'setItem'> | null }} [deps]
+ * @returns {Promise<string[]>} the room ids that were forgotten
  */
 export async function sweepExpiredKnownRooms(nowMs = presenceNow(), deps = {}) {
   clearKnownRoomsSweepTimer();
   const storage = deps.storage === undefined ? globalThis.localStorage : deps.storage;
-  const uid = deps.uid !== undefined ? deps.uid : state.user?.uid;
-  if (!deps.allowWithoutStore && (!store || !uid)) return [];
   const entries = loadKnownRooms(storage);
   if (!entries.length) return [];
   const { expired, active, nextDelayMs } = partitionKnownRooms(entries, nowMs);
   if (expired.length) {
     saveKnownRooms(active, storage);
     for (const entry of expired) {
-      if (state.roomId === entry.id) {
-        await expireActiveRoom(entry.id, uid, deps);
-      } else {
-        await deleteExpiredRoom(entry.id, uid, deps);
-      }
+      if (state.roomId === entry.id) await expireActiveRoom(entry.id, storage);
+      else await deleteExpiredRoom(entry.id, storage);
     }
   }
-  if (storage === globalThis.localStorage && nextDelayMs !== null && (store || deps.allowWithoutStore)) {
+  if (storage === globalThis.localStorage && nextDelayMs !== null) {
     knownRoomsSweepTimer = setTimeout(() => {
       knownRoomsSweepTimer = null;
       void sweepExpiredKnownRooms();
@@ -237,9 +228,9 @@ export async function sweepExpiredKnownRooms(nowMs = presenceNow(), deps = {}) {
 }
 
 /**
- * One queue per room visit. Only one transaction from this browser runs at a time; actions pressed
- * while it is in flight become the next batch. That removes self-contention in fast games (a tap
- * race used to start one competing transaction per tap).
+ * One queue per room visit. Only one backend call from this browser runs at a time; actions pressed
+ * while it is in flight become the next batch. That keeps fast games from starting one callable per
+ * tap.
  * @typedef {{
  *   id: string,
  *   action: Record<string, any>,
@@ -250,7 +241,8 @@ export async function sweepExpiredKnownRooms(nowMs = presenceNow(), deps = {}) {
  * @typedef {{
  *   roomId: string,
  *   uid: string,
- *   authoritativeRoom: Record<string, any> | null,
+ *   publicRoom: Record<string, any> | null,
+ *   privateState: Record<string, any> | null,
  *   pending: PendingAction[],
  *   processing: boolean,
  * }} ActionContext
@@ -259,7 +251,7 @@ export async function sweepExpiredKnownRooms(nowMs = presenceNow(), deps = {}) {
 /** @type {ActionContext | null} */
 let activeActions = null;
 
-/** A short, unique id used to make replay around a snapshot/commit boundary idempotent. */
+/** A short, unique id used to make a retried move idempotent on the server. */
 function nextActionId(uid) {
   actionSequence += 1;
   const randomId = globalThis.crypto?.randomUUID?.();
@@ -272,19 +264,34 @@ function isActiveContext(context) {
 }
 
 /**
- * Draw the last server room plus every input that is still on its way. If a remote move made one
- * of those inputs invalid, leave it out; its transaction will reject it with the useful error.
+ * The room as this player should see it: the public document plus their own private fields (Sea
+ * Battle's `myShips`). Hidden state stays hidden; the merge only ever adds the caller's own view.
+ * @param {ActionContext} context
+ */
+function mergedRoom(context) {
+  const room = context.publicRoom;
+  if (!room) return null;
+  return { ...room, state: mergeView(room.state, context.privateState) };
+}
+
+/**
+ * Draw the last server room plus every input that is still on its way. A hidden-information move
+ * cannot be drawn locally (the client does not have the opponent's state), so it simply waits for
+ * the server's answer.
  * @param {ActionContext} context
  * @param {boolean} [paint]
  */
 function projectPendingActions(context, paint = true) {
-  if (!isActiveContext(context) || !context.authoritativeRoom) return;
-  let projected = context.authoritativeRoom;
+  if (!isActiveContext(context)) return;
+  /** @type {Record<string, any> | null} */
+  let projected = mergedRoom(context);
   for (const entry of context.pending) {
+    if (!projected) break;
     try {
       projected = roomAfterOnlineActions(projected, context.uid, [entry]).room;
     } catch {
-      // The authoritative transaction decides the error. A stale optimistic frame must not win.
+      // Either the move needs state this client does not have (hidden games) or a remote move made
+      // the optimistic frame invalid. The server decides; a stale frame must not win.
     }
   }
   state.room = projected;
@@ -292,66 +299,71 @@ function projectPendingActions(context, paint = true) {
   if (paint) render();
 }
 
-/** @param {ActionContext} context */
+/**
+ * Send queued moves to the backend, one at a time, in order.
+ *
+ * The backend is the authority: it re-checks membership, room status, lifetime, turn order, the
+ * action shape and tap tempo against the stored state, and answers with the new public state (and
+ * this player's private view). A failed move is removed from the queue and its promise rejects with
+ * a sentence the caller can show.
+ * @param {ActionContext} context
+ */
 async function flushOnlineActions(context) {
   if (context.processing) return;
-  const batch = context.pending.filter((entry) => entry.status === 'queued');
-  if (!batch.length) return;
   context.processing = true;
-  for (const entry of batch) entry.status = 'sending';
-
-  const roomRef = doc(store, 'rooms', context.roomId);
-  let newestRoom = context.authoritativeRoom;
-  let expired = false;
   try {
-    const committedRoom = await runTransaction(store, async (transaction) => {
-      const snapshot = await transaction.get(roomRef);
-      if (!snapshot.exists()) throw new Error('The room was closed.');
-      const room = { id: snapshot.id, ...snapshot.data() };
-      if (isRoomExpired(room, presenceNow())) {
-        expired = true;
-        return room;
+    for (;;) {
+      const entry = context.pending.find((item) => item.status === 'queued');
+      if (!entry) break;
+      entry.status = 'sending';
+      try {
+        const payload = await callBackend('playMove', {
+          roomId: context.roomId,
+          action: entry.action,
+          clientActionId: entry.id,
+        });
+        if (payload?.publicState) {
+          context.publicRoom = {
+            ...(context.publicRoom || {}),
+            id: payload.roomId,
+            status: payload.status,
+            gameId: payload.gameId,
+            playerUids: payload.playerUids,
+            hostUid: payload.hostUid,
+            state: payload.publicState,
+          };
+          context.privateState = payload.privateState ?? null;
+        }
+        context.pending = context.pending.filter((item) => item !== entry);
+        projectPendingActions(context);
+        entry.resolve();
+      } catch (error) {
+        context.pending = context.pending.filter((item) => item !== entry);
+        projectPendingActions(context);
+        entry.reject(error);
       }
-      newestRoom = room;
-      const result = roomAfterOnlineActions(room, context.uid, batch);
-      if (result.appliedIds.length) transaction.update(roomRef, roomUpdateForMove(result.room.state));
-      return result.room;
-    });
-    if (expired) {
-      await expireActiveRoom(context.roomId, context.uid);
-      throw new Error(EXPIRED_ROOM_MESSAGE);
     }
-    context.authoritativeRoom = committedRoom;
-    const sent = new Set(batch);
-    context.pending = context.pending.filter((entry) => !sent.has(entry));
-    projectPendingActions(context);
-    for (const entry of batch) entry.resolve();
-  } catch (error) {
-    // Roll back only the rejected optimistic inputs. When the transaction managed to read a newer
-    // server room before rejecting, use it immediately instead of waiting for another snapshot.
-    if (newestRoom && !expired) context.authoritativeRoom = newestRoom;
-    const failed = new Set(batch);
-    context.pending = context.pending.filter((entry) => !failed.has(entry));
-    projectPendingActions(context);
-    for (const entry of batch) entry.reject(error);
   } finally {
     context.processing = false;
-    if (context.pending.some((entry) => entry.status === 'queued')) void flushOnlineActions(context);
   }
 }
 
 /**
  * Listen to a room you are a member of, and start saying "I am here" in it.
+ *
+ * Two snapshots: the room (public state, rules allow members only) and, for games with hidden
+ * information, this player's own `views/{uid}` document.
  * @param {string} roomId
- * @param {string} uid  the member listening; only members may write presence (firestore.rules)
+ * @param {string} uid
  */
 export function subscribeToRoom(roomId, uid) {
   clearActiveRoomExpiryTimer();
   stopRoom();
+  stopPrivateView();
   state.roomId = roomId;
   state.roomError = '';
   if (!activeActions || activeActions.roomId !== roomId || activeActions.uid !== uid) {
-    activeActions = { roomId, uid, authoritativeRoom: null, pending: [], processing: false };
+    activeActions = { roomId, uid, publicRoom: null, privateState: null, pending: [], processing: false };
     state.onlineActionsPending = 0;
   }
   const context = activeActions;
@@ -361,7 +373,7 @@ export function subscribeToRoom(roomId, uid) {
     if (!snapshot.exists()) {
       clearActiveRoomExpiryTimer();
       forgetKnownRoom(roomId);
-      context.authoritativeRoom = null;
+      context.publicRoom = null;
       state.room = null;
       state.onlineActionsPending = 0;
       state.roomError = 'This invite room no longer exists.';
@@ -370,12 +382,12 @@ export function subscribeToRoom(roomId, uid) {
       const room = { id: snapshot.id, ...data };
       const nowMs = presenceNow();
       if (isRoomExpired(room, nowMs)) {
-        void expireActiveRoom(roomId, uid);
+        void expireActiveRoom(roomId);
         return;
       }
       rememberKnownRoom(roomId, roomCreatedAtMs(room) ?? nowMs);
-      scheduleActiveRoomExpiry(room, uid);
-      context.authoritativeRoom = room;
+      scheduleActiveRoomExpiry(room);
+      context.publicRoom = room;
       state.roomError = '';
       projectPendingActions(context, false);
       if (state.room?.gameId && !getGame(state.room.gameId)) state.roomError = 'This room points to a game that is not in the catalog.';
@@ -386,49 +398,42 @@ export function subscribeToRoom(roomId, uid) {
     state.roomError = friendlyError(error);
     render();
   });
+  stopPrivateView = onSnapshot(doc(store, 'rooms', roomId, 'views', uid), (snapshot) => {
+    if (!isActiveContext(context)) return;
+    context.privateState = snapshot.exists() ? snapshot.data() : null;
+    projectPendingActions(context);
+  }, () => {
+    // A missing or unreadable private view is not fatal: the game simply draws without it.
+    context.privateState = null;
+  });
 }
 
-export async function openRoomFromLink(roomId) {
-  if (roomOpening === roomId || state.roomId === roomId && state.room) return;
+/**
+ * Join a room from an invite link (or a typed code) through the backend, then listen to it.
+ *
+ * Joining is one validated call: the backend re-reads the room, checks its status, lifetime and
+ * seats, gives the seat a name, rebuilds the state for the new player list and writes it with the
+ * secret half. A running match only accepts a player who was already in it (a resume).
+ * @param {string} roomId
+ * @param {string} [code] the 7-character code the host read out, when there is no full link
+ */
+export async function openRoomFromLink(roomId, code = '') {
+  if (roomOpening === roomId || (state.roomId === roomId && state.room)) return;
   roomOpening = roomId;
   try {
     const user = await ensureOnlineUser();
-    const roomRef = doc(store, 'rooms', roomId);
-    let expired = false;
-    /** @type {number | null} */
-    let createdAtMs = null;
-    await runTransaction(store, async (transaction) => {
-      const snapshot = await transaction.get(roomRef);
-      if (!snapshot.exists()) throw new Error('This invite link is invalid or has expired.');
-      const room = snapshot.data();
-      if (isRoomExpired(room, presenceNow())) {
-        expired = true;
-        return;
-      }
-      createdAtMs = roomCreatedAtMs(room);
-      const uids = room.playerUids || [];
-      if (uids.includes(user.uid)) return;
-      if (room.status !== 'waiting') throw new Error('This match has already started. Ask the host for a new room.');
-      if (uids.length >= room.maxPlayers) throw new Error('This room is full. Ask the host for another invite.');
-      if (room.status === 'finished') throw new Error('This match is over. Ask the host for a fresh invite link.');
-      const name = playerDisplayName(user);
-      const nextUids = [...uids, user.uid];
-      const nextNames = { ...(room.playerNames || {}), [user.uid]: name };
-      const nextPlayers = nextUids.map((uid, index) => ({ uid, name: nextNames[uid] || `Player ${index + 1}` }));
-      transaction.update(roomRef, {
-        playerUids: nextUids,
-        playerNames: nextNames,
-        state: createInitialGameState(room.gameId, nextPlayers, room.id),
-        updatedAt: serverTimestamp(),
-      });
+    const payload = await callBackend('joinRoom', {
+      ...(roomId ? { roomId } : {}),
+      ...(code ? { code } : {}),
+      displayName: playerDisplayName(user),
     });
-    if (expired) {
-      await deleteExpiredRoom(roomId, user.uid);
-      throw new Error(EXPIRED_ROOM_MESSAGE);
-    }
-    rememberKnownRoom(roomId, createdAtMs ?? presenceNow());
-    subscribeToRoom(roomId, user.uid);
+    if (payload?.roomId) rememberKnownRoom(payload.roomId, timestampToMillis(payload.createdAt) ?? presenceNow());
+    subscribeToRoom(payload.roomId, user.uid);
   } catch (error) {
+    const id = String(roomId || code || '').trim();
+    if (id && ['room-not-found', 'room-expired', 'room-finished', 'room-started', 'room-full', 'code-ambiguous'].includes(/** @type {any} */ (error)?.code)) {
+      forgetKnownRoom(id);
+    }
     state.roomError = friendlyError(error);
     render();
   } finally {
@@ -437,6 +442,30 @@ export async function openRoomFromLink(roomId) {
 }
 
 /**
+ * Join with the 7-character room code instead of a link.
+ *
+ * `rooms.code` is only stored on the room document (members-only) and the lookup runs on the
+ * backend, so a code opens exactly the room it was printed for and the browser never queries the
+ * rooms collection. Codes and links are equivalent secrets: whoever has one gets in.
+ * @param {string} rawCode
+ */
+export async function joinRoomByCode(rawCode) {
+  const code = String(rawCode || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (code.length !== ROOM_CODE_LENGTH) throw new Error(`Room codes are exactly ${ROOM_CODE_LENGTH} characters — copy the one next to the invite link.`);
+  const user = await ensureOnlineUser();
+  const payload = await callBackend('joinRoom', { code, displayName: playerDisplayName(user) });
+  if (!payload?.roomId) throw new Error('That room code did not lead to a room. Ask the host for a fresh link.');
+  rememberKnownRoom(payload.roomId, timestampToMillis(payload.createdAt) ?? presenceNow());
+  state.local = null;
+  state.page = 'room';
+  state.roomError = '';
+  if (location.hash !== `#/room/${payload.roomId}`) location.hash = `#/room/${payload.roomId}`;
+  subscribeToRoom(payload.roomId, user.uid);
+  return payload.roomId;
+}
+
+/**
+ * Create a room through the backend, optionally inviting a friend in the same gesture.
  * @param {string} gameId
  * @param {number} [maxPlayers]
  * @param {{ uid?: string, name?: string, friendshipId?: string } | null} [friend]
@@ -450,133 +479,77 @@ export async function createOnlineRoom(gameId, maxPlayers = 2, friend = null, ch
   const name = chosenName.trim().slice(0, 20) || playerDisplayName(user);
   state.displayName = name;
   localStorage.setItem(DISPLAY_NAME_STORAGE_KEY, name);
-  const roomRef = doc(collection(store, 'rooms'));
-  const initialPlayers = [{ uid: user.uid, name }];
-  const gameState = createInitialGameState(game, initialPlayers, roomRef.id);
-  await setDoc(roomRef, {
-    hostUid: user.uid,
-    hostName: name,
-    gameId,
-    playerUids: [user.uid],
-    playerNames: { [user.uid]: name },
-    maxPlayers: Number(maxPlayers),
-    status: 'waiting',
-    state: gameState,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  });
-  rememberKnownRoom(roomRef.id, presenceNow());
+  const payload = await callBackend('createRoom', { gameId, maxPlayers: Number(maxPlayers), displayName: name });
+  rememberKnownRoom(payload.roomId, presenceNow());
   if (friend?.uid) {
-    const inviteRef = doc(collection(store, 'gameInvites'));
-    await setDoc(inviteRef, {
-      fromUid: user.uid,
-      toUid: friend.uid,
-      fromName: name,
-      toName: friend.name,
-      friendshipId: friend.friendshipId,
-      roomId: roomRef.id,
-      gameId,
-      status: 'pending',
-      createdAt: serverTimestamp(),
+    // A friend invite is a separate, validated call; a failure must not lose the room.
+    await callBackend('createGameInvite', { roomId: payload.roomId, toUid: friend.uid }).catch((error) => {
+      console.warn('[PSD-gaming] Game invite was not sent:', /** @type {any} */ (error)?.message);
     });
   }
   state.local = null;
   state.page = 'room';
   state.roomError = '';
-  if (location.hash !== `#/room/${roomRef.id}`) location.hash = `#/room/${roomRef.id}`;
-  subscribeToRoom(roomRef.id, user.uid);
+  if (location.hash !== `#/room/${payload.roomId}`) location.hash = `#/room/${payload.roomId}`;
+  subscribeToRoom(payload.roomId, user.uid);
 }
 
 /**
- * Give your seat back.
+ * Give your seat back in a waiting lobby.
  *
  * Only while the room is still waiting: once a match has started the seats are part of the match,
  * and leaving means walking away from the game, not un-joining it. If you were the last person in
- * the room, the empty room is deleted instead of being left behind as litter.
+ * the room, the backend deletes it instead of leaving it behind as litter.
  */
 export async function leaveWaitingRoom() {
   const room = state.room;
   const user = state.user;
   if (!room || !user || room.status !== 'waiting') return;
-  const roomRef = doc(store, 'rooms', room.id);
-  let deletedRoom = false;
-  // Stop the heartbeat first (without a "left" write: the seat itself goes away below), and take
-  // the heartbeat document with you in the same transaction, so a deleted room leaves no litter.
   stopPresence({ markLeft: false });
-  await runTransaction(store, async (transaction) => {
-    const snapshot = await transaction.get(roomRef);
-    if (!snapshot.exists()) {
-      deletedRoom = true;
-      return;
-    }
-    const current = snapshot.data();
-    if (isRoomExpired(current, presenceNow())) {
-      deletePresenceIn(transaction, room.id, user.uid);
-      transaction.delete(roomRef);
-      deletedRoom = true;
-      return;
-    }
-    if (current.status !== 'waiting') return;
-    const uids = (current.playerUids || []).filter((uid) => uid !== user.uid);
-    if (uids.length === (current.playerUids || []).length) return; // you were not in it
-    deletePresenceIn(transaction, room.id, user.uid);
-    if (!uids.length) {
-      transaction.delete(roomRef);
-      deletedRoom = true;
-      return;
-    }
-    const playerNames = { ...(current.playerNames || {}) };
-    delete playerNames[user.uid];
-    const players = uids.map((uid) => ({ uid, name: playerNames[uid] || 'Player' }));
-    transaction.update(roomRef, {
-      playerUids: uids,
-      playerNames,
-      state: createInitialGameState(current.gameId, players, room.id),
-      updatedAt: serverTimestamp(),
-    });
-  });
-  if (deletedRoom) forgetKnownRoom(room.id);
+  const result = await callBackend('leaveRoom', { roomId: room.id });
+  if (result?.deleted) forgetKnownRoom(room.id);
 }
 
+/** Start the match. The backend checks that you are the host and that at least two seats are taken. */
 export async function startRoom() {
   if (!state.room || !state.user) return;
-  if (isRoomExpired(state.room, presenceNow())) {
-    await expireActiveRoom(state.room.id, state.user.uid);
-    throw new Error(EXPIRED_ROOM_MESSAGE);
-  }
-  if (state.room.hostUid !== state.user.uid) throw new Error('Only the host can start this room.');
-  if ((state.room.playerUids || []).length < 2) throw new Error('Invite at least one friend before starting.');
-  await updateDoc(doc(store, 'rooms', state.room.id), { status: 'playing', updatedAt: serverTimestamp() });
+  await callBackend('startRoom', { roomId: state.room.id });
 }
 
 /**
- * What a move writes back to the room.
+ * Take over the lobby when the host has gone.
  *
- * Usually it is only the new game state. When that state says the match is over the room closes
- * too, so the lobby, the admin list and anyone opening the link later see a finished match instead
- * of one that looks abandoned mid-play. (firestore.rules allows `playing -> finished` only when the
- * state written in the same update is finished, which is exactly this.)
- *
- * @param {Record<string, any>} nextState the state the engine produced
- * @returns {Record<string, any>} the fields to update
+ * The backend decides whether the host really is away (it reads the heartbeat); the button only
+ * asks. Returns whether the host seat actually moved.
+ * @returns {Promise<boolean>}
  */
-export function roomUpdateForMove(nextState) {
-  if (nextState?.phase !== 'finished') return { state: nextState, updatedAt: serverTimestamp() };
-  return { state: nextState, status: 'finished', winnerUid: nextState.winnerUid ?? null, updatedAt: serverTimestamp() };
+export async function claimHost() {
+  if (!state.room || !state.user) return false;
+  const result = await callBackend('claimHost', { roomId: state.room.id });
+  return Boolean(result?.changed);
+}
+
+/** Reset a finished match for everyone. Host only, enforced by the backend. */
+export async function rematchRoom() {
+  if (!state.room || !state.user) return;
+  await callBackend('rematch', { roomId: state.room.id });
 }
 
 /**
- * Draw an online input now, then reconcile it through the room transaction in the background.
+ * Draw an online input now when that is safe, then send it to the backend.
  *
  * This intentionally is not an `async function`: validation and the optimistic frame happen before
  * a Promise is returned, so callers can play feedback at press time rather than after network RTT.
+ * Games whose public state is the whole story (line, drop, race, maze, rally) get an instant frame;
+ * hidden-information games cannot be projected locally and simply show a pending hint until the
+ * server answers.
  * @param {Record<string, any>} action
  * @returns {Promise<void>}
  */
 export function doOnlineAction(action) {
   if (!state.room || !state.user) throw new Error('Join a room before making a move.');
   if (isRoomExpired(state.room, presenceNow())) {
-    void expireActiveRoom(state.room.id, state.user.uid);
+    void expireActiveRoom(state.room.id);
     throw new Error(EXPIRED_ROOM_MESSAGE);
   }
   const context = activeActions;
@@ -584,18 +557,20 @@ export function doOnlineAction(action) {
     throw new Error('The room is still connecting. Try that move again.');
   }
 
-  const entryBase = {
-    id: nextActionId(context.uid),
-    action,
-  };
-  // Validate against everything already visible and produce the instant frame before enqueuing.
-  const preview = roomAfterOnlineActions(state.room, context.uid, [entryBase]).room;
+  const entryBase = { id: nextActionId(context.uid), action };
+  /** @type {Record<string, any> | null} */
+  let preview = null;
+  try {
+    preview = roomAfterOnlineActions(mergedRoom(context) ?? state.room, context.uid, [entryBase]).room;
+  } catch {
+    preview = null; // hidden state: the server's answer is the first frame the player sees
+  }
 
   return new Promise((resolve, reject) => {
     /** @type {PendingAction} */
     const entry = { ...entryBase, status: 'queued', resolve, reject };
     context.pending.push(entry);
-    state.room = preview;
+    if (preview) state.room = preview;
     state.onlineActionsPending = context.pending.length;
     render();
     void flushOnlineActions(context);
@@ -606,7 +581,9 @@ export function stopActiveRoom() {
   clearActiveRoomExpiryTimer();
   stopPresence({ markLeft: true });
   stopRoom();
+  stopPrivateView();
   stopRoom = emptyUnsubscribe;
+  stopPrivateView = emptyUnsubscribe;
   activeActions = null;
   state.room = null;
   state.roomId = null;

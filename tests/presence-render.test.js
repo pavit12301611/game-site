@@ -100,14 +100,17 @@ test('a guest waiting for an absent host is told so, and told what they can do',
   const now = Date.now();
   const away = renderHostWait(state.room, { [ALICE]: { kind: 'away', label: 'AWAY · 5 MIN', detail: 'Away for 5 min', awayForMs: 5 * 60_000 } });
   assert.match(away, /Waiting for <b>Alice<\/b> to start/);
-  assert.match(away, /Alice has been away for 5 min\. You can wait, or leave the room\./);
+  assert.match(away, /Alice has been away for 5 min\. Any player in the lobby can take over and start\./);
   assert.match(away, /class="host-wait is-away"/);
+  assert.match(away, /data-action="claim-host"/, 'an absent host can be replaced instead of stranding the lobby');
 
   const left = renderHostWait(state.room, { [ALICE]: { kind: 'left', label: 'LEFT THE ROOM', detail: 'Left the room', awayForMs: null } });
-  assert.match(left, /Alice left the room\. You can wait for them to come back, or leave\./);
+  assert.match(left, /Alice left the room\. Any player in the lobby can take over and start\./);
+  assert.match(left, /data-action="claim-host"/);
 
   const here = renderHostWait(state.room, { [ALICE]: { kind: 'here', label: 'IN THE ROOM', detail: '', awayForMs: null } });
   assert.doesNotMatch(here, /<em>/, 'nothing to add while the host is here');
+  assert.doesNotMatch(here, /data-action="claim-host"/, 'a present host cannot be replaced');
   assert.ok(now > 0);
 });
 

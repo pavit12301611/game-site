@@ -1,6 +1,11 @@
 /**
- * code engine — Mastermind. The secret sequence is generated from the room seed, so every client
- * deals the same code without ever sending it to the browser in plain sight.
+ * code engine — Mastermind. The secret sequence is generated from the room seed. In online play the
+ * generated state (including `secret`) is kept in a server-only document: clients receive the guess
+ * history with its EXACT/NEAR counts and only learn the code once `revealedSecret` is published at
+ * the end of the match.
+ *
+ * `symbols` is how many different digits the code may use, so Mastermind (four symbols, five slots,
+ * eight guesses) plays differently from Codebreaker (six symbols, four slots, ten guesses).
  * Games: Codebreaker, Mastermind.
  */
 
@@ -20,12 +25,14 @@ import { advanceTurn, assertPlaying, assertTurn, makeRandom, newBase } from './s
 export function createInitialState(game, players, seed) {
   const random = makeRandom(`${seed}:${game.id}:code`);
   const digits = game.options.digits;
-  const secret = Array.from({ length: digits }, () => Math.floor(random() * 6));
+  const symbols = Number(game.options.symbols) || 6;
+  const secret = Array.from({ length: digits }, () => Math.floor(random() * symbols));
   return {
     ...newBase(players),
     secret,
     guesses: [],
     digits,
+    symbols,
     maxGuesses: game.options.maxGuesses,
     turnIndex: 0,
   };
@@ -43,8 +50,9 @@ export function applyAction(game, state, uid, action, players) {
   assertPlaying(state);
   assertTurn(state, uid);
   const guess = Array.isArray(action.guess) ? action.guess.map(Number) : [];
-  if (guess.length !== state.digits || guess.some((digit) => !Number.isInteger(digit) || digit < 0 || digit > 5)) {
-    throw new Error('Enter a valid sequence of four digits.');
+  const symbols = state.symbols || 6;
+  if (guess.length !== state.digits || guess.some((digit) => !Number.isInteger(digit) || digit < 0 || digit >= symbols)) {
+    throw new Error(`Enter ${state.digits} digits from 0 to ${symbols - 1}.`);
   }
   const exact = guess.reduce((count, digit, index) => count + (digit === state.secret[index] ? 1 : 0), 0);
   const unmatchedSecret = [];
@@ -69,6 +77,7 @@ export function applyAction(game, state, uid, action, players) {
     state.phase = 'finished';
     state.winnerUid = uid;
     state.result = 'winner';
+    state.revealedSecret = [...state.secret];
   } else if (state.guesses.length >= state.maxGuesses) {
     state.phase = 'finished';
     state.result = 'draw';

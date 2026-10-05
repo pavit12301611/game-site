@@ -12,6 +12,10 @@ import { showToast } from './ui/toast.js';
 import { describeFirebaseError } from './firebase-errors.js';
 
 export function friendlyError(error, context = {}) {
+  // Errors from the trusted backend (`src/online/callables.js`) already carry a sentence written for
+  // the player, plus the backend's own code. Passing them through keeps that wording instead of
+  // guessing from an SDK code.
+  if (error?.playerFacing && typeof error.message === 'string' && error.message) return error.message;
   return describeFirebaseError(error, { online: navigator.onLine !== false, hostname: location.hostname, ...context });
 }
 

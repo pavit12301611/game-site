@@ -10,12 +10,12 @@
  * turns. `startCpuRaceLoop` is the one exception - tap races are real-time, so they tick.
  */
 
-import { applyGameAction, createInitialGameState, getGame, getQuizQuestion } from './catalog.js';
+import { applyGameAction, createInitialGameState, getGame } from './catalog.js';
 import { friendlyError } from './errors.js';
 import { recordRecentGame } from './ui/prefs.js';
 import { playUiTone } from './ui/sound.js';
 import { render } from './render.js';
-import { state } from './state.js';
+import { DEFAULT_CODE_DRAFT, state } from './state.js';
 import { showToast } from './ui/toast.js';
 import { doOnlineAction } from './online/rooms.js';
 
@@ -37,7 +37,7 @@ export function startPractice(gameId) {
   state.page = 'game';
   state.modal = null;
   state.selectedBattleTarget = 'local-cpu';
-  state.codeDraft = [0, 0, 0, 0];
+  state.codeDraft = [...DEFAULT_CODE_DRAFT];
   if (location.hash !== '#/game') location.hash = '#/game';
   render();
   if (game.engine === 'race') startCpuRaceLoop();
@@ -105,7 +105,9 @@ export function startCpuRaceLoop() {
   const loop = () => {
     if (!state.local || getGame(state.local.gameId)?.engine !== 'race' || state.local.gameState.phase !== 'playing') return;
     localMove('local-cpu', { type: 'tap' });
-    state.cpuTimer = window.setTimeout(loop, 690 + Math.random() * 500);
+    // The CPU plays at the same tempo the room enforces, so a slow-tempo game is not a free win.
+    const gap = Number(state.local.gameState.tapGapMs) || 0;
+    state.cpuTimer = window.setTimeout(loop, Math.max(gap, 0) + 380 + Math.random() * 420);
   };
   state.cpuTimer = window.setTimeout(loop, 850);
 }
@@ -137,9 +139,12 @@ export function chooseCpuAction(game, gameState, players) {
       return { choice };
     }
     case 'quiz': {
-      if (Object.hasOwn(gameState.answers, cpu.uid)) return null;
-      const question = getQuizQuestion(gameState.questionIndex);
-      return { answer: Math.random() > 0.3 ? question.answer : random(question.choices.length) };
+      if ((gameState.answeredUids || []).includes(cpu.uid)) return null;
+      // The CPU may read the answer key locally: it is dealing its own practice deck, not a rival's
+      // hidden state. It still misses on purpose some of the time to stay beatable.
+      const item = gameState.items?.[gameState.questionIndex];
+      if (!item) return null;
+      return { answer: Math.random() > 0.3 ? item.answer : random(item.choices.length) };
     }
     case 'maze': {
       const { x, y } = gameState.positions[cpu.uid];
@@ -159,9 +164,9 @@ export function chooseCpuAction(game, gameState, players) {
       return available.length ? { targetUid: target.uid, index: available[random(available.length)] } : null;
     }
     case 'rally':
-      return gameState.turnUid === cpu.uid ? { lane: random(3) } : null;
+      return gameState.turnUid === cpu.uid ? { lane: random(gameState.lanes || 3) } : null;
     case 'code':
-      return gameState.turnUid === cpu.uid ? { guess: Array.from({ length: gameState.digits }, () => random(6)) } : null;
+      return gameState.turnUid === cpu.uid ? { guess: Array.from({ length: gameState.digits }, () => random(gameState.symbols || 6)) } : null;
     default:
       return null;
   }

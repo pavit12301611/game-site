@@ -13,6 +13,9 @@
  * @property {string} icon        one-glyph sigil
  * @property {string} accent      colour token, e.g. "violet"
  * @property {string} blurb       one-line description
+ * @property {string} duration    shown duration label, e.g. "3 min"
+ * @property {string} difficulty  shown difficulty label: Easy | Medium | Hard
+ * @property {string} input       shown input style, e.g. "Tap or keys"
  * @property {Record<string, any>} options  engine settings (size, target, rounds, ...)
  */
 
@@ -45,7 +48,7 @@
 
 /**
  * @typedef {Object} Engine
- * @property {(game: Game, players: Player[], seed?: string) => GameState} createInitialState
+ * @property {(game: Game, players: Player[], seed?: string, deps?: Record<string, any>) => GameState} createInitialState
  * @property {(game: Game, state: GameState, uid: string, action: Action, players: Player[]) => GameState} applyAction
  */
 

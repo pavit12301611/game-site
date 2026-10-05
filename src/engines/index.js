@@ -44,10 +44,12 @@ export { assertPlaying, copy } from './shared.js';
  * @param {string} [seed]
  * @returns {GameState} a fresh, Firestore-safe game state
  */
-export function createInitialGameState(game, players, seed = 'psd') {
+export function createInitialGameState(game, players, seed = 'psd', deps = undefined) {
   const engine = getEngine(game.engine);
   if (!engine) throw new Error(`The ${game.engine} game mode is not available.`);
-  return engine.createInitialState(game, players, seed);
+  // `deps` is forwarded so the trusted backend can deal from a bank the browser never receives
+  // (quiz). Engines that have no use for it simply ignore the extra argument.
+  return engine.createInitialState(game, players, seed, deps);
 }
 
 /**

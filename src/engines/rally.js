@@ -1,6 +1,9 @@
 /**
  * rally engine — alternating volleys: pick a lane, score a point, first to the target wins.
- * Games: Pong Rally, Paddle Wars, Air Hockey.
+ * The number of return lanes is a rule, not a theme: two lanes (Paddle Wars) is a read-your-rival
+ * duel, five lanes (Air Hockey) is a guess with better odds for the server, three (Pong Rally)
+ * sits in between.
+ * Games: Pong Rally (7 points, 3 lanes), Paddle Wars (5 points, 2 lanes), Air Hockey (9 points, 5 lanes).
  */
 
 /** @typedef {import('../types.js').Game} Game */
@@ -31,7 +34,8 @@ export function applyAction(game, state, uid, action, players) {
   assertPlaying(state);
   assertTurn(state, uid);
   const lane = Number(action.lane);
-  if (!Number.isInteger(lane) || lane < 0 || lane > 2) throw new Error('Choose a volley lane.');
+  const lanes = state.lanes || 3;
+  if (!Number.isInteger(lane) || lane < 0 || lane >= lanes) throw new Error('Choose a volley lane.');
   const scoreMap = { ...state.scores, [uid]: (state.scores[uid] ?? 0) + 1 };
   state.scores = scoreMap;
   state.moves += 1;

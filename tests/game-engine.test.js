@@ -6,7 +6,6 @@ import {
   createInitialGameState,
   getGameArtwork,
   getGameGuide,
-  getQuizQuestion,
 } from '../src/catalog.js';
 
 const twoPlayers = [
@@ -104,7 +103,7 @@ test('simultaneous rock-paper-scissors resolves a round', () => {
 test('quiz scoring waits for every player and advances questions', () => {
   const game = GAMES.find((entry) => entry.id === 'retro-trivia');
   let state = createInitialGameState(game, twoPlayers);
-  const right = getQuizQuestion(0).answer;
+  const right = state.items[0].answer;
   state = applyGameAction(game, state, 'p1', { answer: right }, twoPlayers);
   assert.equal(state.lastRound, null);
   state = applyGameAction(game, state, 'p2', { answer: 0 }, twoPlayers);
@@ -113,6 +112,7 @@ test('quiz scoring waits for every player and advances questions', () => {
   state = applyGameAction(game, state, 'p2', { type: 'next' }, twoPlayers);
   assert.equal(state.questionIndex, 1);
   assert.deepEqual(state.answers, {});
+  assert.deepEqual(state.answeredUids, [], 'the answered list resets with the round');
 });
 
 test('memory deck has pairs and scores a matching pair', () => {

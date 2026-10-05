@@ -12,7 +12,7 @@
  */
 
 import { CATEGORIES, CATEGORY_ARTWORK, GAMES, HERO_ARTWORK, getGame, getGameArtwork, getGameGuide } from '../catalog.js';
-import { connection } from '../connection.js';
+import { connection, onlineUnavailableNote } from '../connection.js';
 import { firebaseReady, firebaseSetup } from '../firebase.js';
 import { isRoomExpired } from '../helpers.js';
 import { state, currentGame, currentGameState, currentPlayers, currentPresence, currentUid, presenceNow } from '../state.js';
@@ -38,7 +38,7 @@ export function renderGameCard(game, level = 3) {
 }
 
 export function renderGameGrid(games, level = 3) {
-  if (!games.length) return `<div class="empty-state"><div class="empty-icon">⌕</div><h3>No games found</h3><p>Try another name or switch the category filter.</p><button class="button button-outline" data-action="clear-filters">Clear filters</button></div>`;
+  if (!games.length) return `<div class="empty-state"><div class="empty-icon">⌕</div><h3>No games found</h3><p>Try another name, or reset the category and filters.</p><button class="button button-outline" data-action="clear-filters">Reset search and filters</button></div>`;
   return `<div class="game-grid">${games.map((game) => renderGameCard(game, level)).join('')}</div>`;
 }
 
@@ -53,10 +53,46 @@ export function renderPersonalShelves() {
   return `<section class="personal-shelves"><div class="personal-shelf-head"><div><div class="eyebrow">Your shortlist</div><h2>Keep the good ones close<span>.</span></h2><p>Favorites and recent games stay on this device, no extra account data required.</p></div><button class="text-button" data-action="navigate" data-page="catalog">Open the full shelf ${icon('arrow')}</button></div>${favoriteGames.length ? `<div class="personal-shelf"><div class="shelf-label"><span>★ FAVORITES</span><b>${favoriteGames.length}</b></div>${renderGameGrid(favoriteGames)}</div>` : ''}${recentGames.length ? `<div class="personal-shelf"><div class="shelf-label"><span>↺ RECENTLY PLAYED</span><b>${recentGames.length}</b></div>${renderGameGrid(recentGames)}</div>` : ''}</section>`;
 }
 
+/**
+ * The filter dimensions the shelf really has data for. `duration` is bucketed because a 5-minute
+ * game and a 6-minute game are the same promise to a player choosing what fits their evening.
+ */
+export const FILTERS = Object.freeze({
+  duration: Object.freeze([
+    { label: 'Any length', test: () => true },
+    { label: 'Under 5 min', test: (game) => Number.parseInt(game.duration, 10) < 5 },
+    { label: '5–8 min', test: (game) => { const minutes = Number.parseInt(game.duration, 10); return minutes >= 5 && minutes <= 8; } },
+    { label: '9 min and up', test: (game) => Number.parseInt(game.duration, 10) >= 9 },
+  ]),
+});
+
+/** Difficulty and input style come straight from the catalog, so the options can never drift. */
+export const DIFFICULTIES = ['Any difficulty', ...new Set(GAMES.map((game) => game.difficulty))];
+export const INPUT_STYLES = ['Any input', ...new Set(GAMES.map((game) => game.input))];
+
+/**
+ * The catalog after the search box, the category pills and the three real filters. Every game
+ * supports a 2- or 3-seat room and local practice, so "players" and "mode" are choices made when a
+ * room is created rather than per-game facts to filter on — the panel says so instead of pretending.
+ */
 export function filteredGames() {
   const term = state.query.trim().toLowerCase();
+  const filters = state.filters || {};
+  const durationRule = (FILTERS.duration.find((entry) => entry.label === filters.duration) || FILTERS.duration[0]).test;
   return GAMES.filter((game) => (state.category === 'All games' || game.category === state.category)
-    && (!term || `${game.title} ${game.category} ${game.blurb}`.toLowerCase().includes(term)));
+    && (!term || `${game.title} ${game.category} ${game.blurb}`.toLowerCase().includes(term))
+    && durationRule(game)
+    && (!filters.difficulty || filters.difficulty === 'Any difficulty' || game.difficulty === filters.difficulty)
+    && (!filters.input || filters.input === 'Any input' || game.input === filters.input));
+}
+
+/** True when anything narrows the shelf, so the empty state can offer the right reset. */
+export function filtersActive() {
+  const filters = state.filters || {};
+  return Boolean(state.query.trim()) || state.category !== 'All games'
+    || Boolean(filters.duration && filters.duration !== 'Any length')
+    || Boolean(filters.difficulty && filters.difficulty !== 'Any difficulty')
+    || Boolean(filters.input && filters.input !== 'Any input');
 }
 
 export function renderSetupCallout(conn = connection()) {
@@ -75,13 +111,20 @@ export function renderCategoryRow() {
 export function renderHome() {
   const featured = GAMES.slice(0, 6);
   const conn = connection();
-  return `<section class="hero-panel">
+  return `${state.routeNotice ? `<div class="notice-panel notice-warn" role="status">${icon('spark')}<div><b>No page called “${esc(state.routeNotice)}”.</b><p>You are on the arcade home. The library, friends and your rooms are one click away.</p></div><button class="text-button" data-action="navigate" data-page="catalog">Open the game library ${icon('arrow')}</button></div>` : ''}
+  <section class="hero-panel">
     ${artImage(HERO_ARTWORK, { className: 'hero-artwork', hero: true })}
     <div class="hero-copy"><div class="hero-kicker"><span class="live-pulse is-${conn.kind}"></span>${esc(conn.label)}<i>·</i> No downloads</div><p class="press-start" aria-hidden="true">▶ PRESS START</p><h1>Your arcade.<br><em>Everywhere.</em></h1><p>Forty bite-size retro games. Your people on the other side of the link. That’s the whole setup.</p><div class="hero-actions"><button class="button button-primary" data-action="navigate" data-page="catalog">Explore all 40 games ${icon('arrow')}</button><button class="button button-glass" data-action="open-friends">Play with friends ${icon('people')}</button></div><div class="hero-footnote">Made for <b>2–3 players</b> · works on laptops &amp; phones</div></div>
   </section>
   <div class="marquee" aria-hidden="true"><span>★ INSERT FRIENDS ★ PRESS START ★ 40 GAMES ★ 2–3 PLAYERS ★ NO DOWNLOADS ★ SHARE A LINK ★ HIGH SCORE IS WAITING ★</span></div>
   ${renderSetupCallout(conn)}
   <section class="stat-strip" aria-label="Arcade facts"><div><b>40</b><span>tiny game worlds</span></div><div><b>2–3</b><span>players per room</span></div><div><b>0</b><span>downloads required</span></div></section>
+  <section class="join-code-panel" aria-labelledby="join-code-title"><div><div class="eyebrow">Got a code instead of a link?</div><h2 id="join-code-title">Join a room by code<span>.</span></h2><p>Room codes are 7 characters and only work while the room is open. Anyone who has the code can join — links and codes are equivalent, so share them the same way.</p></div><form class="join-code-form" data-form="join-code"><label for="room-code-input">Room code</label><div class="join-code-row"><input id="room-code-input" name="code" type="text" inputmode="latin" autocomplete="off" spellcheck="false" maxlength="12" placeholder="ABCD234" ${conn.onlineFeatures ? '' : 'disabled'} required><button class="button button-primary" type="submit" ${conn.onlineFeatures ? '' : 'disabled'}>Join room ${icon('arrow')}</button></div>${conn.onlineFeatures ? '<small>Codes are not listed anywhere; the host has to send you one.</small>' : `<small class="join-code-off">${esc(onlineUnavailableNote(conn))}</small>`}</form></section>
+  <section class="first-run" aria-labelledby="first-run-title"><h2 id="first-run-title" class="first-run-title">Two ways to play<span>.</span></h2>
+    <div class="first-run-card is-practice"><span class="first-run-icon" aria-hidden="true">${icon('gamepad')}</span><div><b>Practice on this device</b><p>Open any game and press <b>Practice locally</b>. You play against a browser rival, one screen, no account, no Firebase project needed. Favorites and recent games stay in this browser.</p></div><button class="button button-outline" data-action="navigate" data-page="catalog">Pick a game ${icon('arrow')}</button></div>
+    <div class="first-run-card is-online"><span class="first-run-icon" aria-hidden="true">${icon('link')}</span><div><b>Play together online</b><p>Create a private room, then send the invite link or the 7-character room code. Friends join as guests in their browser; a username account adds a friends list and direct challenges.</p></div><button class="button button-primary" data-action="quick-room" ${conn.onlineFeatures ? '' : 'disabled'}>Create a room ${icon('arrow')}</button></div>
+    ${conn.onlineFeatures ? '' : `<p class="first-run-note">${esc(onlineUnavailableNote(conn))}</p>`}
+  </section>
   <section class="section-block featured-section"><div class="section-heading"><div><div class="eyebrow">Pick up and play</div><h2>Start with a classic<span>.</span></h2><p>Easy to learn. Hard to leave the lobby.</p></div><button class="text-button" data-action="navigate" data-page="catalog">Browse all 40 ${icon('arrow')}</button></div>${renderGameGrid(featured)}</section>
   ${renderCategoryRow()}
   ${renderPersonalShelves()}
@@ -93,6 +136,7 @@ export function renderCatalog() {
   const games = filteredGames();
   return `<section class="catalog-heading"><div><div class="eyebrow">Insert friends here</div><h1>The game shelf<span>.</span></h1><p>Every game runs in your browser and supports 2–3 players in a shared room.</p></div><button class="button button-primary" data-action="quick-room">${icon('link')} Create invite room</button></section>
     <div class="catalog-toolbar"><div class="filter-pills">${CATEGORIES.map((category) => `<button class="filter-pill ${state.category === category ? 'is-active' : ''}" data-action="filter-category" data-category="${esc(category)}">${esc(category)}${category === 'All games' ? `<i>${GAMES.length}</i>` : ''}</button>`).join('')}</div><span class="game-count">SHOWING <b>${games.length}</b> / ${GAMES.length}</span></div>
+    <div class="catalog-filters" aria-label="Filter the game shelf"><label>Length<select data-filter="duration" aria-label="Filter by round length">${FILTERS.duration.map(({ label }) => `<option value="${esc(label)}" ${state.filters?.duration === label ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select></label><label>Difficulty<select data-filter="difficulty" aria-label="Filter by difficulty">${DIFFICULTIES.map((label) => `<option value="${esc(label)}" ${state.filters?.difficulty === label ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select></label><label>Input<select data-filter="input" aria-label="Filter by input style">${INPUT_STYLES.map((label) => `<option value="${esc(label)}" ${state.filters?.input === label ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select></label>${filtersActive() ? '<button class="button button-quiet button-small" data-action="clear-filters">Reset filters</button>' : ''}<p class="catalog-filter-note">Every game works with 2 or 3 players and in local practice; choose those when you open a room. Games run 1–10 minutes.</p></div>
     <div id="catalog-grid">${renderGameGrid(games, 2)}</div>
     <div class="catalog-bottom"><span>Every room is private by invite link.</span><button class="text-button" data-action="show-setup">How online play works ${icon('arrow')}</button></div>`;
 }
@@ -122,7 +166,8 @@ export function renderFriends() {
       ${incoming.length || invites.length ? `<div class="invite-list">${incoming.map((request) => `<div class="invite-row"><span class="avatar avatar-purple">${esc((request.fromName || 'P').slice(0, 1).toUpperCase())}</span><div class="invite-row-copy"><b>@${esc(request.fromName || 'player')} wants to connect</b><small>Friend request · ${timeAgo(request.createdAt)}</small></div><button class="button button-primary button-small" data-action="accept-friend" data-request-id="${request.id}">Accept</button><button class="icon-button subtle" data-action="decline-friend" data-request-id="${request.id}" aria-label="Decline request">${icon('close')}</button></div>`).join('')}${invites.map((invite) => `<div class="invite-row"><span class="avatar avatar-cyan">${esc((invite.fromName || 'P').slice(0, 1).toUpperCase())}</span><div class="invite-row-copy"><b>${esc(invite.fromName || 'A friend')} invited you</b><small>${esc(getGame(invite.gameId)?.title || 'A game')} · ${timeAgo(invite.createdAt)}</small></div><button class="button button-primary button-small" data-action="join-game-invite" data-invite-id="${invite.id}" data-room-id="${esc(invite.roomId)}">Join ${icon('arrow')}</button></div>`).join('')}</div>` : `<div class="empty-inline"><span>✦</span><b>It’s quiet in here.</b><small>Friend requests and game invites will land here.</small></div>`}</section>
     </div>
     <section class="surface friends-list-panel"><div class="panel-heading"><div><span class="eyebrow">Your regulars</span><h2>Friends <i>${state.friends.length}</i></h2></div><button class="button button-outline button-small" data-action="navigate" data-page="catalog">Pick a game ${icon('arrow')}</button></div>
-      ${state.friends.length ? `<div class="friends-list">${state.friends.map((friend) => `<div class="friend-row"><span class="avatar avatar-${friendColor(friend.id)}">${esc(getFriendName(friend).slice(0, 1).toUpperCase())}</span><div class="friend-row-copy"><b>${esc(getFriendName(friend))}</b><small>Friends since ${dateLabel(friend.createdAt)}</small></div><span class="friend-status"><i></i> Ready</span><button class="button button-outline button-small" data-action="challenge-friend" data-uid="${esc(getFriendUid(friend))}" data-name="${esc(getFriendName(friend))}" data-friendship-id="${esc(friend.id)}">Challenge ${icon('arrow')}</button></div>`).join('')}</div>` : `<div class="empty-inline"><span>◎</span><b>No friends yet</b><small>Find them by username, or send a private game link from any game card.</small></div>`}
+      ${state.blocked.length ? `<div class="blocked-panel"><div class="panel-heading"><div><span class="eyebrow">Hidden from you</span><h2>Blocked players <i>${state.blocked.length}</i></h2></div><button class="text-button" data-action="open-report">Report a problem ${icon('arrow')}</button></div><p>Blocked players do not appear in your search results and cannot send you requests or invites. Unblocking does not restore anything that was cleared.</p><div class="blocked-list">${state.blocked.map((block) => `<div class="blocked-row"><span>${esc(shortUid(block.blockedUid))}</span><button class="button button-outline button-small" data-action="unblock-player" data-uid="${esc(block.blockedUid)}">Unblock</button></div>`).join('')}</div></div>` : ''}
+      ${state.friends.length ? `<div class="friends-list">${state.friends.map((friend) => `<div class="friend-row"><span class="avatar avatar-${friendColor(friend.id)}">${esc(getFriendName(friend).slice(0, 1).toUpperCase())}</span><div class="friend-row-copy"><b>${esc(getFriendName(friend))}</b><small>Friends since ${dateLabel(friend.createdAt)}</small></div><span class="friend-status"><i></i> Ready</span><span class="friend-row-actions"><button class="button button-outline button-small" data-action="challenge-friend" data-uid="${esc(getFriendUid(friend))}" data-name="${esc(getFriendName(friend))}" data-friendship-id="${esc(friend.id)}">Challenge ${icon('arrow')}</button><button class="icon-button subtle" data-action="block-player" data-uid="${esc(getFriendUid(friend))}" data-name="${esc(getFriendName(friend))}" aria-label="Block ${esc(getFriendName(friend))}" title="Block ${esc(getFriendName(friend))}">${icon('close')}</button></span></div>`).join('')}</div>` : `<div class="empty-inline"><span>◎</span><b>No friends yet</b><small>Find them by username, or send a private game link from any game card.</small></div>`}
     </section>`;
 }
 
@@ -274,7 +319,9 @@ export function renderAdmin() {
   if (!state.isAdmin) return `<section class="admin-denied"><span>${icon('shield')}</span><h1>Restricted area</h1><p>This Firebase account is not marked as an administrator.</p><button class="button button-primary" data-action="navigate" data-page="home">Back to the arcade</button></section>`;
   const data = state.adminData;
   const tab = ADMIN_TABS.some(([id]) => id === state.adminTab) ? state.adminTab : 'overview';
-  const tabs = ADMIN_TABS.map(([id, label]) => `<button class="filter-pill ${tab === id ? 'is-active' : ''}" data-action="admin-tab" data-tab="${id}">${label}</button>`).join('');
+  // A real tablist: each pill is a tab, owns its panel through aria-controls, and moves the
+  // selection with the arrow keys (src/app.js). Axe flagged the old markup for role=tablist with no tabs.
+  const tabs = ADMIN_TABS.map(([id, label]) => `<button class="filter-pill ${tab === id ? 'is-active' : ''}" role="tab" id="admin-tab-${id}" aria-selected="${tab === id}" aria-controls="admin-panel" data-action="admin-tab" data-tab="${id}">${label}</button>`).join('');
   const activeRooms = data?.rooms ? data.rooms.filter((room) => !isRoomExpired(room, presenceNow())) : [];
   let body;
   if (!data) body = `<div class="empty-inline"><b>Loading the control room…</b></div>`;
@@ -287,7 +334,7 @@ export function renderAdmin() {
   return `<section class="admin-heading"><div><div class="eyebrow">Private admin area · UID verified · god mode</div><h1>Arcade control<span>.</span></h1><p>Only accounts with <code>admins/{uid}.admin = true</code> can see this workspace - and Firestore re-checks the flag on every action.</p></div><button class="button button-outline" data-action="refresh-admin">${icon('spark')} Refresh data</button></section>
     <div class="filter-pills admin-tabs" role="tablist" aria-label="Admin sections">${tabs}</div>
     ${state.adminLoading && data && !data.error ? `<div class="admin-refreshing"><i></i> Syncing with Firestore…</div>` : ''}
-    ${body}`;
+    <div id="admin-panel" role="tabpanel" aria-labelledby="admin-tab-${tab}" tabindex="0">${body}</div>`;
 }
 
 export function renderRoom() {
@@ -308,19 +355,25 @@ export function renderRoom() {
 export function renderHostWait(room, presence) {
   const host = esc(room.hostName || 'the host');
   const verdict = presence[room.hostUid];
+  const canTakeOver = verdict?.kind === 'away' || verdict?.kind === 'left';
   const note = verdict?.kind === 'away'
-    ? `<em>${host} has been away for ${esc(formatAwayFor(verdict.awayForMs || 0))}. You can wait, or leave the room.</em>`
+    ? `<em>${host} has been away for ${esc(formatAwayFor(verdict.awayForMs || 0))}. Any player in the lobby can take over and start.</em>`
     : verdict?.kind === 'left'
-      ? `<em>${host} left the room. You can wait for them to come back, or leave.</em>`
+      ? `<em>${host} left the room. Any player in the lobby can take over and start.</em>`
       : '';
-  return `<span class="host-wait ${verdict ? `is-${verdict.kind}` : ''}">Waiting for <b>${host}</b> to start…${note}</span>`;
+  // The server decides whether the host really is away (it reads the heartbeat), so this button
+  // only asks; a lobby whose host is present is rejected with a sentence, not a takeover.
+  const takeOver = canTakeOver
+    ? `<button class="button button-glow" data-action="claim-host">${icon('shield')} Take over as host</button>`
+    : '';
+  return `<span class="host-wait ${verdict ? `is-${verdict.kind}` : ''}">Waiting for <b>${host}</b> to start…${note}</span>${takeOver}`;
 }
 
 export function renderLobby(game, room) {
   const players = currentPlayers();
   const presence = currentPresence();
   const isHost = state.user?.uid === room.hostUid;
-  return `<div class="lobby-topline"><button class="text-button" data-action="leave-room">${icon('exit')} Leave room</button><span class="room-code">Room <b>${esc(room.id.slice(0, 7).toUpperCase())}</b></span><span class="private-tag"><i></i> Private room</span></div>
+  return `<div class="lobby-topline"><button class="text-button" data-action="leave-room">${icon('exit')} Leave room</button><span class="room-code">Room <b>${esc((room.code || room.id.slice(0, 7)).toUpperCase())}</b> <i class="room-code-note" title="The host can share this code instead of the link">code</i></span><span class="private-tag"><i></i> Private room</span></div>
     <section class="lobby-hero"><div class="lobby-art art-${game.accent}">${artImage(getGameArtwork(game), { className: 'lobby-art-image', sizes: '(min-width: 900px) 50vw, 100vw' })}<div class="lobby-art-label">${esc(getGameArtwork(game).engineLabel)}</div></div><div class="lobby-copy"><div class="eyebrow">You’re in the right place</div><h1>${esc(game.title)}<span>.</span></h1><p>${esc(game.blurb)} Invite one or two people and the game is on.</p><div class="lobby-badges"><span>${icon('people')} 2–${room.maxPlayers} players</span><span>${icon('link')} Invite-only</span><span>${icon('gamepad')} Browser game</span></div><div class="lobby-actions"><button class="button button-primary" data-action="copy-room-link">${icon('copy')} Copy invite link</button><button class="button button-outline" data-action="share-room-link">${icon('link')} Share</button>${isHost ? `<button class="button button-glow" data-action="start-room" ${players.length < 2 ? 'disabled' : ''}>Start match ${icon('arrow')}</button>` : renderHostWait(room, presence)}</div><small class="lobby-hint">${players.length < 2 ? 'Share the link with at least one friend to unlock Start match.' : `All set. ${isHost ? 'Start when your crew is ready.' : 'The host can start the match now.'}`}</small></div></section>
     <section class="lobby-players"><div class="panel-heading"><div><span class="eyebrow">The lobby</span><h2>Players ready <i>${players.length} / ${room.maxPlayers}</i></h2></div><span class="lobby-live"><i></i> Link sharing on</span></div><div class="player-slot-grid">${Array.from({ length: room.maxPlayers }, (_, index) => players[index] ? `<article class="player-slot is-filled"><span class="slot-avatar slot-${index}">${esc(players[index].name.slice(0, 1).toUpperCase())}</span><span class="slot-label">Player ${index + 1}</span><b>${esc(players[index].name)}${players[index].uid === room.hostUid ? `<i class="host-chip">Host</i>` : ''}</b><small class="slot-presence is-${presence[players[index].uid]?.kind || 'unknown'}"><i></i> ${esc(presence[players[index].uid]?.label || 'IN THE ROOM')}</small></article>` : `<article class="player-slot is-empty"><span class="slot-avatar">+</span><span class="slot-label">Player ${index + 1}</span><b>Waiting for a friend</b><small>Share your invite link</small></article>`).join('')}</div></section>
     <section class="lobby-bottom"><div><b>Playing from different places?</b><span>That’s the point. Your moves sync to everyone in the room.</span></div><button class="text-button" data-action="copy-room-link">Copy link again ${icon('arrow')}</button></section>`;
@@ -343,9 +396,13 @@ export function renderGameScreen() {
   const turnPresence = gameState.turnUid ? presence[gameState.turnUid] : undefined;
   const turnNote = turnPresence?.kind === 'away' ? ` · away ${formatAwayFor(turnPresence.awayForMs || 0)}` : turnPresence?.kind === 'left' ? ' · left the room' : '';
   const pendingActions = state.local ? 0 : state.onlineActionsPending;
-  const syncLabel = pendingActions
-    ? `Applied instantly · syncing ${pendingActions} ${pendingActions === 1 ? 'move' : 'moves'}…`
-    : 'Instant moves · live sync ready';
+  // Offline is not a claim about queued work: while the browser has no connection, a move cannot be
+  // sent at all, and the screen says exactly that instead of promising a later sync.
+  const syncLabel = !state.online
+    ? 'Offline · moves will not be sent until the connection is back'
+    : pendingActions
+      ? `Applied instantly · syncing ${pendingActions} ${pendingActions === 1 ? 'move' : 'moves'}…`
+      : 'Instant moves · live sync ready';
   const statusText = gameState.phase === 'finished'
     ? gameState.winnerUid ? `${activeName(gameState.winnerUid, players)} takes the round` : 'That’s a draw'
     : isTurn ? 'Your move' : `${activeName(gameState.turnUid, players)} is up${turnNote}`;
@@ -353,8 +410,9 @@ export function renderGameScreen() {
     <div class="play-layout"><section class="game-stage surface"><div class="game-stage-heading" style="--stage-art:url('${esc(stageArt(game))}')"><div class="game-stage-title"><span class="game-mini-icon art-${game.accent}">${esc(game.icon)}</span><div><div class="eyebrow">${esc(game.category)} · Round ${gameState.round || gameState.questionIndex + 1 || 1}</div><h1>${esc(game.title)}</h1></div></div><div class="turn-chip ${gameState.phase === 'finished' ? 'is-finished' : ''}"><span></span>${esc(statusText)}</div></div>
       ${renderHowToPlay(game)}
       ${renderEngineBoard(game, gameState, players, me)}
-      <div class="stage-foot">${gameState.phase === 'finished' ? `<div class="result-banner ${gameState.winnerUid === me ? 'is-win' : ''}"><span class="result-mark">${gameState.winnerUid === me ? '✦' : gameState.winnerUid ? '◉' : '＝'}</span><div><b>${gameState.winnerUid ? (gameState.winnerUid === me ? 'Nice one — you win!' : `${esc(activeName(gameState.winnerUid, players))} wins this one.`) : 'A perfectly even match.'}</b><small>${gameState.result === 'draw' ? 'Run it back and settle the score.' : 'Well played. Fancy another round?'}</small></div><button class="button button-outline button-small" data-action="play-again" ${pendingActions ? 'disabled title="Finishing sync…"' : ''}>${pendingActions ? 'Syncing…' : 'Play again'} ${icon('arrow')}</button></div>` : `<div class="game-stage-footer"><span>${icon('spark')} ${esc(game.blurb)}</span>${state.local ? '<span>Moves apply instantly on this device</span>' : `<span class="move-sync ${pendingActions ? 'is-syncing' : ''}"><i></i>${esc(syncLabel)}</span>`}</div>`}</div>
+      <div class="stage-foot">${gameState.phase === 'finished' ? `<div class="result-banner ${gameState.winnerUid === me ? 'is-win' : ''}"><span class="result-mark">${gameState.winnerUid === me ? '✦' : gameState.winnerUid ? '◉' : '＝'}</span><div><b>${gameState.winnerUid ? (gameState.winnerUid === me ? 'Nice one — you win!' : `${esc(activeName(gameState.winnerUid, players))} wins this one.`) : 'A perfectly even match.'}</b><small>${gameState.result === 'draw' ? 'Run it back and settle the score.' : 'Well played. Fancy another round?'}</small></div><button class="button button-outline button-small" data-action="play-again" ${pendingActions ? 'disabled title="Finishing sync…"' : ''}>${pendingActions ? 'Syncing…' : 'Play again'} ${icon('arrow')}</button></div>` : `<div class="game-stage-footer"><span>${icon('spark')} ${esc(game.blurb)}</span>${state.local ? '<span>Moves apply instantly on this device</span>' : `<span class="move-sync ${pendingActions ? 'is-syncing' : ''} ${!state.online ? 'is-offline' : ''}" role="status"><i></i>${esc(syncLabel)}</span>`}</div>`}</div>
     </section><aside class="match-rail surface" aria-label="Match players"><div class="match-rail-heading"><div><span class="eyebrow">Match room</span><h2>The players</h2></div><span class="live-tag is-${state.local ? 'local' : state.online ? 'live' : 'offline'}"><i></i> ${state.local ? 'Local' : state.online ? 'Live' : 'Offline'}</span></div><div class="match-player-list">${players.map((player, index) => `<div class="match-player ${player.uid === me ? 'is-me' : ''} ${gameState.turnUid === player.uid ? 'is-turn' : ''} ${presence[player.uid] ? `is-${presence[player.uid].kind}` : ''}"><span class="match-player-avatar player-avatar-${index}">${player.uid === 'local-cpu' ? 'CPU' : esc(player.name.slice(0, 1).toUpperCase())}</span><span class="match-player-copy"><b>${esc(player.name)} ${player.uid === me ? '<i>You</i>' : ''}</b><small>${presence[player.uid]?.detail ? esc(presence[player.uid].detail) : gameState.turnUid === player.uid && gameState.phase !== 'finished' ? 'Playing now' : player.uid === state.room?.hostUid ? 'Room host' : 'In the match'}</small></span>${gameState.scores ? `<strong>${gameState.scores[player.uid] || 0}<small>pts</small></strong>` : gameState.turnUid === player.uid ? `<span class="player-turn-dot"></span>` : ''}</div>`).join('')}</div>
       ${state.local ? `<div class="rail-note"><span>${icon('spark')}</span><div><b>Just you and the browser.</b><small>Want a real rival? Create a room and send a link.</small></div></div><button class="button button-primary rail-main-button" data-action="quick-room">Invite a friend ${icon('arrow')}</button>` : `<div class="room-share-card"><span class="eyebrow">Bring in another player</span><p>Send the room link. They can join as a guest.</p><div class="room-share-actions"><button class="button button-outline" data-action="copy-room-link">${icon('copy')} Copy room link</button><button class="button button-quiet" data-action="share-room-link">${icon('link')} Share</button></div></div>`}
+      <button class="text-button" data-action="open-report" data-room-id="${esc(state.room?.id || '')}">Report a problem in this game</button>
       <button class="text-button rail-back" data-action="navigate" data-page="catalog">Back to game shelf ${icon('arrow')}</button></aside></div>`;
 }

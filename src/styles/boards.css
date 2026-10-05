@@ -260,7 +260,7 @@
 .court-puck { position: absolute; left: 30%; top: 40%; font-size: 28px; color: var(--bn-yellow); text-shadow: 0 0 14px var(--bn-yellow); }
 .court-center { position: relative; padding: 2px var(--sp-3); border-radius: var(--r-pill); background: rgb(4 20 26 / 0.8); font-size: var(--fs-2); font-weight: 700; letter-spacing: 0.08em; }
 .lane-label { color: var(--ink); font-weight: 600; text-align: center; }
-.lane-buttons { display: grid; gap: var(--sp-3); grid-template-columns: repeat(3, minmax(0, 1fr)); width: 100%; }
+.lane-buttons { display: grid; gap: var(--sp-3); grid-template-columns: repeat(var(--lanes, 3), minmax(0, 1fr)); width: 100%; }
 .lane-buttons button { display: grid; place-items: center; gap: 2px; min-height: 80px; border: 2px solid var(--control-edge); border-radius: var(--r-3); background: var(--surface-2); color: var(--ink); box-shadow: 0 5px 0 var(--line); transition: transform var(--dur-1), box-shadow var(--dur-1); }
 .lane-buttons button:not(:disabled):hover { border-color: var(--primary); transform: translateY(-2px); box-shadow: 0 7px 0 var(--line); }
 .lane-buttons button:active:not(:disabled) { transform: translateY(4px); box-shadow: none; }

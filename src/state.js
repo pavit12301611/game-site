@@ -17,16 +17,23 @@ import {
 import { GAMES, getGame } from './catalog.js';
 import { presenceVerdicts } from './presence-status.js';
 
+/** The starting digits of a code-breaking guess row; the real range comes from the game's `symbols`. */
+export const DEFAULT_CODE_DRAFT = Object.freeze([0, 0, 0, 0]);
+
 /**
+ * The shape is documented by the literal below. Individual fields get precise types as the modules
+ * that own them are extracted.
  * @type {Record<string, any>}
- *   The shape is documented by the literal below. Individual fields get precise types as the
- *   modules that own them are extracted in item 91.
  */
 export const state = {
   page: 'home',
+  /** Set when a hash route does not exist, so the recovery screen can say what happened. */
+  routeNotice: '',
   query: '',
   focusSearchAfterRoute: false,
   category: 'All games',
+  /** The real shelf filters: duration bucket, difficulty and input style (see views/pages.js). */
+  filters: { duration: 'Any length', difficulty: 'Any difficulty', input: 'Any input' },
   user: null,
   profile: null,
   isAdmin: false,
@@ -47,12 +54,14 @@ export const state = {
   friends: [],
   requests: [],
   invites: [],
+  /** Blocks this account created: { id, blockerUid, blockedUid, createdAtMs } (owner-readable only). */
+  blocked: [],
   adminData: null,
   adminLoading: false,
   /** Which admin studio section is open: overview | rooms | players | social | access. */
   adminTab: 'overview',
   selectedBattleTarget: '',
-  codeDraft: [0, 0, 0, 0],
+  codeDraft: [...DEFAULT_CODE_DRAFT],
   displayName: localStorage.getItem(DISPLAY_NAME_STORAGE_KEY) || '',
   themePreference: getStoredThemePreference(),
   resolvedTheme: resolveTheme(getStoredThemePreference(), window.matchMedia?.('(prefers-color-scheme: light)').matches ?? false),

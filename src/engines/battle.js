@@ -1,7 +1,12 @@
 /**
  * battle engine — turn-based fleet hunt. Each player fires at one rival board per turn and wins by
- * sinking every rival's fleet first. Shots are keyed `targetUid:index` per shooter.
- * Games: Sea Battle, Pixel Fleet, Alien Skirmish.
+ * sinking every rival's fleet first. Shots are keyed `targetUid:index` per shooter, and the result
+ * of every shot is written to `marks` (public) at the moment it happens — that is what the board
+ * renders, so a client never needs the opponent's `ships` list to draw it.
+ *
+ * `ships` is the hidden half of the state. In online play the trusted backend keeps it in a
+ * server-only document and each player's own fleet is exposed through their private view.
+ * Games: Sea Battle (6×6, 4 cells), Pixel Fleet (5×5, 3 cells), Alien Skirmish (7×7, 5 cells).
  */
 
 /** @typedef {import('../types.js').Game} Game */
@@ -30,7 +35,9 @@ export function createInitialState(game, players, seed) {
     ...newBase(players),
     boardSize,
     ships,
+    fleet: game.options.fleet,
     shots: Object.fromEntries(players.map((player) => [player.uid, []])),
+    marks: {},
     lastShot: null,
   };
 }
@@ -54,6 +61,7 @@ export function applyAction(game, state, uid, action, players) {
   if (state.shots[uid].includes(key)) throw new Error('You have already fired at that square.');
   state.shots[uid] = [...state.shots[uid], key];
   const hit = state.ships[targetUid].includes(index);
+  state.marks = { ...state.marks, [key]: hit ? 'hit' : 'miss' };
   state.lastShot = { shooterUid: uid, targetUid, index, hit };
   state.moves += 1;
   const allSunk = players.filter((player) => player.uid !== uid).every((opponent) =>

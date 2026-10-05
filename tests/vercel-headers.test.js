@@ -64,6 +64,11 @@ test('the CSP allows the Firebase endpoints the SDK talks to', () => {
     );
   }
   assert.match(CONNECT, /wss:\/\/\*\.firebaseio\.com/, 'Firestore also streams over a websocket');
+  assert.match(
+    CONNECT,
+    /https:\/\/\*\.cloudfunctions\.net/,
+    'every online mutation is a callable, which the SDK reaches at https://<region>-<project>.cloudfunctions.net',
+  );
   assert.match(CONNECT, /https:\/\/\*\.firebaseapp\.com/, 'the auth domain is used by redirect sign-in');
   assert.ok(!CONNECT.includes('http://'), 'connect-src must stay on https');
 });
