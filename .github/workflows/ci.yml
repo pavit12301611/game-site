@@ -44,7 +44,11 @@ jobs:
       - name: Install backend dependencies
         run: npm ci
         working-directory: functions
-      - name: The shared mirror is current
+      # functions/vendor is generated and gitignored, so a fresh checkout has no mirror at all:
+      # build it, then verify it matches shared/ and src/engines/ exactly.
+      - name: Mirror the shared modules for the backend
+        run: node scripts/sync-shared.mjs
+      - name: The shared mirror matches shared/ and src/engines/
         run: node scripts/sync-shared.mjs --check
       - name: Backend tests (handlers, rooms, cleanup)
         run: npm test

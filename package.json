@@ -9,6 +9,7 @@
     "emulators": "firebase emulators:start --only firestore,auth --project psd-gaming-local",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
+    "pretest": "node scripts/sync-shared.mjs",
     "test": "node --test",
     "lint": "eslint .",
     "typecheck": "tsc -p jsconfig.json",
