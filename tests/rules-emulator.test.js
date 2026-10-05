@@ -325,8 +325,12 @@ test('a block is private to the person who created it', async (t) => {
   await ruts.assertSucceeds(getDocs(query(collection(asUser(ALICE), 'blocks'), where('blockerUid', '==', ALICE))));
   await ruts.assertSucceeds(getDoc(doc(asUser(ALICE), 'blocks', `${ALICE}_${BOB}`)));
   await ruts.assertFails(getDoc(doc(asUser(BOB), 'blocks', `${ALICE}_${BOB}`)), 'the blocked player never sees the block');
-  await ruts.assertFails(getDocs(query(collection(asUser(BOB), 'blocks'), where('blockerUid', '==', BOB))), 'nor can they list a list they do not own');
   await ruts.assertFails(getDoc(doc(asUser(CAROL), 'blocks', `${ALICE}_${BOB}`)));
+  // Asking for *your own* blocks is always allowed and simply comes back empty when you have none;
+  // what the rules refuse is the unfiltered list, which would show everyone's blocks.
+  const ownBlocks = await getDocs(query(collection(asUser(BOB), 'blocks'), where('blockerUid', '==', BOB)));
+  assert.equal(ownBlocks.size, 0, 'the blocked player has no blocks of their own to see');
+  await ruts.assertFails(getDocs(collection(asUser(BOB), 'blocks')), 'and nobody lists the whole block collection');
 });
 
 test('no client writes requests, friendships, invites, blocks or reports', async (t) => {
