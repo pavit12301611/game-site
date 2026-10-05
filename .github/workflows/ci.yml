@@ -57,6 +57,9 @@ jobs:
   firestore-rules:
     name: Firestore rules (emulator)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v4
@@ -70,7 +73,25 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Run the rules against the emulator
-        run: npm run test:rules
+        id: rules
+        # pipefail keeps the emulator's exit code: without it, a failing suite would look green.
+        run: |
+          set -o pipefail
+          npm run test:rules 2>&1 | tee /tmp/rules.log
+      # The emulator log lives in an artifact blob nobody reads from the run list. When this job
+      # fails on a pull request, put the interesting part of the log where a reviewer already is.
+      - name: Explain the failure in the pull request
+        if: failure() && steps.rules.outcome == 'failure' && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "The Firestore rules job failed. Last lines of the emulator run:"
+            echo '```'
+            tail -c 3000 /tmp/rules.log
+            echo '```'
+          } > /tmp/rules-comment.md
+          gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/rules-comment.md || true
 
   audit:
     name: npm audit

@@ -212,7 +212,7 @@ test('a profile is not writable from a client, not even by its owner', async (t)
   await ruts.assertFails(setDoc(doc(alice, 'profiles', BOB), { uid: BOB, username: 'bob', usernameLower: 'bob', createdAtMs: 1 }));
 });
 
-test('an admin keeps the access the dashboard needs', async (t) => {
+test('an admin keeps the read access the dashboard needs, but profiles are backend-written', async (t) => {
   if (!ready(t)) return;
   await seed(async (db) => {
     await setDoc(doc(db, 'admins', ALICE), { admin: true });
@@ -221,8 +221,12 @@ test('an admin keeps the access the dashboard needs', async (t) => {
   const alice = asUser(ALICE);
   await ruts.assertSucceeds(getDocs(collection(alice, 'profiles')), 'the dashboard lists profiles');
   await ruts.assertSucceeds(getDoc(doc(alice, 'profiles', BOB)));
-  await ruts.assertSucceeds(deleteDoc(doc(alice, 'profiles', BOB)), 'the studio removes a profile');
-  await ruts.assertSucceeds(getDocs(collection(asUser(BOB), 'profiles')), 'and a player still cannot');
+  // Removing a player is `adminRemovePlayer`, which releases the username and deletes social data in
+  // the same transaction. A bare client delete would leave a reservation pointing at nothing, so the
+  // rules refuse it even for an admin.
+  await ruts.assertFails(deleteDoc(doc(alice, 'profiles', BOB)), 'the studio removes a player through the callable');
+  await ruts.assertFails(updateDoc(doc(alice, 'profiles', BOB), { username: 'bob2' }));
+  await ruts.assertFails(getDocs(collection(asUser(BOB), 'profiles')), 'and a player still cannot');
 });
 
 // ── Rooms: members read, nobody writes ──────────────────────────────────────────────────────────
@@ -254,7 +258,7 @@ test('no client can create, change, start, finish, rematch or delete a room', as
   await ruts.assertFails(updateDoc(doc(asUser(BOB), 'rooms', 'r1'), { playerUids: [ALICE, BOB] }), 'joining is a callable');
 });
 
-test('hidden game state and private views are unreadable, admin included', async (t) => {
+test('hidden game state stays on the server and a private view is readable only by its owner', async (t) => {
   if (!ready(t)) return;
   await seed(async (db) => {
     await setDoc(doc(db, 'admins', ALICE), { admin: true });
@@ -308,12 +312,31 @@ test('friend requests and invites are readable by their participants only', asyn
   await ruts.assertSucceeds(getDocs(query(collection(asUser(ALICE), 'friendships'), where('memberUids', 'array-contains', ALICE))));
   await ruts.assertFails(getDoc(doc(asUser(CAROL), 'friendRequests', `${ALICE}_${BOB}`)), 'a stranger cannot read someone’s inbox');
   await ruts.assertFails(getDocs(collection(asUser(CAROL), 'friendRequests')), 'nor list all requests');
-  await ruts.assertFails(getDocs(query(collection(asUser(CAROL), 'gameInvites'), where('toUid', '==', CAROL))), 'a stranger has no invites to read');
+  await ruts.assertSucceeds(getDocs(query(collection(asUser(CAROL), 'gameInvites'), where('toUid', '==', CAROL))), 'the app lists your own invites');
+  await ruts.assertFails(getDocs(collection(asUser(CAROL), 'gameInvites')), 'but nobody lists the whole invite collection');
+});
+
+test('a block is private to the person who created it', async (t) => {
+  if (!ready(t)) return;
+  await seed(async (db) => {
+    await setDoc(doc(db, 'blocks', `${ALICE}_${BOB}`), { blockerUid: ALICE, blockedUid: BOB, createdAtMs: 1 });
+  });
+  // This is exactly the query the friends page subscribes to.
+  await ruts.assertSucceeds(getDocs(query(collection(asUser(ALICE), 'blocks'), where('blockerUid', '==', ALICE))));
+  await ruts.assertSucceeds(getDoc(doc(asUser(ALICE), 'blocks', `${ALICE}_${BOB}`)));
+  await ruts.assertFails(getDoc(doc(asUser(BOB), 'blocks', `${ALICE}_${BOB}`)), 'the blocked player never sees the block');
+  await ruts.assertFails(getDocs(query(collection(asUser(BOB), 'blocks'), where('blockerUid', '==', BOB))), 'nor can they list a list they do not own');
+  await ruts.assertFails(getDoc(doc(asUser(CAROL), 'blocks', `${ALICE}_${BOB}`)));
 });
 
 test('no client writes requests, friendships, invites, blocks or reports', async (t) => {
   if (!ready(t)) return;
-  await seed(async (db) => { await claimBatch(db, BOB, 'bob').commit(); });
+  await seed(async (db) => {
+    await claimBatch(db, BOB, 'bob').commit();
+    // Seed a real pending request, so the refused update below is refused by the rules and not
+    // merely by the document being missing.
+    await setDoc(doc(db, 'friendRequests', `${ALICE}_${BOB}`), { fromUid: ALICE, toUid: BOB, fromName: 'a', toName: 'b', status: 'pending', createdAtMs: 1 });
+  });
   const alice = asUser(ALICE);
   await ruts.assertFails(setDoc(doc(alice, 'friendRequests', 'x'), { fromUid: ALICE, toUid: BOB, fromName: 'a', toName: 'b', status: 'pending', createdAt: ts() }));
   await ruts.assertFails(updateDoc(doc(alice, 'friendRequests', `${ALICE}_${BOB}`), { status: 'accepted' }));

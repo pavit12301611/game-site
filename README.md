@@ -217,7 +217,7 @@ The fonts are imported in `src/main.js`, so Vite hashes them into `dist/assets/`
 ## Tests and CI
 
 ```bash
-npm test             # 426 tests (408 run, 18 Firestore-emulator tests skip without Java); no network, no credentials
+npm test             # 427 tests (408 run, 19 Firestore-emulator tests skip without Java); no network, no credentials
 npm run lint         # ESLint 9, flat config, eslint:recommended
 npm run typecheck    # tsc --checkJs over every module under src/ (JSDoc types)
 npm run test:rules   # firestore.rules against the Firestore emulator (needs Java)
@@ -230,6 +230,7 @@ node scripts/sync-shared.mjs --check   # fails when the browser/functions mirror
 
 - `.github/workflows/ci.yml` runs `npm ci`, `npm test`, `npm run lint`, `npm run typecheck` and `npm run build` on every push and pull request; a `functions` job that installs the backend dependencies, checks the shared mirror and runs the backend suite; a `firestore-rules` job that installs Java and runs the emulator rules tests (which fail rather than skip when the emulator is expected); and an informational `npm audit` job.
 - `tests/catalog-integrity.test.js` reads the same options the engines read and fails when a card's copy, artwork, question bank or warm-up subset drifts away from the game's behaviour — including per-game question volume and a check that no quiz item names a real product.
+- `npm test`'s `pretest` step regenerates `functions/vendor` (a gitignored mirror of `shared/` and `src/engines/`), because the backend tests import it and a fresh checkout does not have it. The backend CI job builds the mirror and then verifies it with `--check`.
 - Current audit state: `npm run audit` (production) reports **0 vulnerabilities**; `npm run audit:dev` reports **11 advisories (4 moderate, 7 high)** that all sit inside `firebase-tools`' transitive tooling (`chokidar`/`braces`, the `proxy-agent` chain, `gaxios`→`uuid`, `@google-cloud/pubsub`) at the newest published `firebase-tools` 15.32.0, so no in-range fix exists and `npm audit fix --force` would only downgrade the CLI. They are dev-only, never in the bundle, and tracked for the next release of that tool.
 - `npm run audit` checks **what ships to the browser** (`--omit=dev`): the app has one runtime dependency, `firebase`. Advisories in the build and emulator tooling never reach a player, are not part of the deployed bundle, and are tracked by Dependabot instead, which opens grouped weekly pull requests - forcing them to block a release would only train everyone to ignore the job. The one production advisory found so far (`@firebase/firestore` pinning an old `@grpc/grpc-js`) is fixed with an npm `overrides` entry rather than by downgrading Firebase.
 - Dependabot (`.github/dependabot.yml`) opens one grouped pull request for patch and minor updates every week. Major upgrades, such as `firebase` 12 or `vite` 8, arrive alone so they can be reviewed and tested on their own.
