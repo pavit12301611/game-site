@@ -19,19 +19,16 @@ import {
   limit,
   orderBy,
   query,
-  runTransaction,
-  serverTimestamp,
   setDoc,
-  writeBatch,
 } from 'firebase/firestore';
 import { db, firebaseReady } from '../firebase.js';
-import { createInitialGameState } from '../catalog.js';
 import { friendlyError } from '../errors.js';
 import { isRoomExpired } from '../helpers.js';
 import { render } from '../render.js';
 import { presenceNow, state } from '../state.js';
 import { showToast } from '../ui/toast.js';
 import { forgetKnownRoom } from './rooms.js';
+import { callBackend } from './callables.js';
 
 /**
  * `db` is null only when Firebase never started; every export below is guarded by `state.isAdmin`,
@@ -48,26 +45,19 @@ function rowsOf(snapshot) {
  * Delete rooms older than 1 hour (with their presence heartbeats) and any game invites pointing to
  * them. Runs automatically whenever the admin dashboard loads.
  * @param {Array<Record<string, any>>} expiredRooms
- * @param {Array<Record<string, any>>} [expiredInvites]
  */
-export async function purgeExpiredAdminRooms(expiredRooms, expiredInvites = []) {
+export async function purgeExpiredAdminRooms(expiredRooms) {
+  // Deleting expired data is the backend's job (the scheduled `cleanupExpired` function removes
+  // rooms with their secrets, views and heartbeats, plus the invites that point at them, every
+  // 15 minutes). Opening the dashboard also asks the backend to close anything already past its
+  // hour, so an operator sees tidier numbers immediately. This is best-effort: a failure here must
+  // never break the dashboard.
   await Promise.all(expiredRooms.map(async (room) => {
     try {
       forgetKnownRoom(room.id);
-      const presenceSnap = await getDocs(collection(store, 'rooms', room.id, 'presence'));
-      const batch = writeBatch(store);
-      for (const heartbeat of presenceSnap.docs) batch.delete(heartbeat.ref);
-      batch.delete(doc(store, 'rooms', room.id));
-      await batch.commit();
+      await callBackend('adminRoomAction', { roomId: room.id, action: 'close' });
     } catch (error) {
       console.warn('[PSD-gaming] Expired room cleanup failed:', /** @type {any} */ (error)?.message);
-    }
-  }));
-  await Promise.all(expiredInvites.map(async (invite) => {
-    try {
-      await deleteDoc(doc(store, 'gameInvites', invite.id));
-    } catch (error) {
-      console.warn('[PSD-gaming] Expired game invite cleanup failed:', /** @type {any} */ (error)?.message);
     }
   }));
 }
@@ -91,11 +81,10 @@ export async function loadAdminData() {
     const expiredRooms = allRooms.filter((room) => isRoomExpired(room, nowMs));
     const activeRooms = allRooms.filter((room) => !isRoomExpired(room, nowMs));
     const expiredRoomIds = new Set(expiredRooms.map((room) => room.id));
-    const expiredInvites = allInvites.filter((invite) => expiredRoomIds.has(invite.roomId) || isRoomExpired(invite, nowMs));
     const activeInvites = allInvites.filter((invite) => !expiredRoomIds.has(invite.roomId) && !isRoomExpired(invite, nowMs));
-    if (expiredRooms.length || expiredInvites.length) {
-      await purgeExpiredAdminRooms(expiredRooms, expiredInvites);
-    }
+    // Expired invites are filtered out of the dashboard; deleting them (and the rooms they point
+    // at) is the scheduled backend cleanup's job, not a browser's.
+    if (expiredRooms.length) await purgeExpiredAdminRooms(expiredRooms);
     state.adminData = {
       rooms: activeRooms,
       profiles: rowsOf(profilesSnap),
@@ -131,73 +120,33 @@ async function runAdminAction(successMessage, task) {
  * @param {string} roomId
  */
 export async function adminDeleteRoom(roomId) {
-  await runAdminAction('Room and its heartbeats deleted.', async () => {
+  await runAdminAction('Room closed for everyone.', async () => {
     forgetKnownRoom(roomId);
-    const presenceSnap = await getDocs(collection(store, 'rooms', roomId, 'presence'));
-    const batch = writeBatch(store);
-    for (const heartbeat of presenceSnap.docs) batch.delete(heartbeat.ref);
-    batch.delete(doc(store, 'rooms', roomId));
-    await batch.commit();
+    await callBackend('adminRoomAction', { roomId, action: 'close' });
   });
 }
 
 /**
- * Kick any player out of a waiting lobby. The seat is released (hosting transfers if the host was
- * the one kicked), their heartbeat goes with them, and the lobby game state is rebuilt for the
- * remaining players - the same shape `leaveWaitingRoom` writes, just for someone else's uid.
+ * Kick any player out of a waiting lobby. The backend releases the seat, rebuilds the lobby state
+ * for the remaining players and transfers the host if the host was the one asked to leave.
  * @param {string} roomId
  * @param {string} uid
  */
 export async function adminKickPlayer(roomId, uid) {
   await runAdminAction('Player removed from the lobby.', async () => {
-    const roomRef = doc(store, 'rooms', roomId);
-    await runTransaction(store, async (transaction) => {
-      const snapshot = await transaction.get(roomRef);
-      if (!snapshot.exists()) throw new Error('That room no longer exists.');
-      const current = snapshot.data();
-      if (current.status !== 'waiting') throw new Error('Kicks work while the room is waiting. For a running match, delete the room.');
-      const currentUids = current.playerUids || [];
-      const uids = currentUids.filter((member) => member !== uid);
-      if (uids.length === currentUids.length) return; // they already left
-      transaction.delete(doc(store, 'rooms', roomId, 'presence', uid));
-      if (!uids.length) {
-        transaction.delete(roomRef);
-        return;
-      }
-      const playerNames = { ...(current.playerNames || {}) };
-      delete playerNames[uid];
-      const players = uids.map((member) => ({ uid: member, name: playerNames[member] || 'Player' }));
-      const update = {
-        playerUids: uids,
-        playerNames,
-        state: createInitialGameState(current.gameId, players, roomId),
-        updatedAt: serverTimestamp(),
-      };
-      // A kicked host cannot leave the room leader-less: the next seat becomes the host.
-      if (current.hostUid === uid) {
-        update.hostUid = uids[0];
-        update.hostName = playerNames[uids[0]] || 'Player';
-      }
-      transaction.update(roomRef, update);
-    });
+    await callBackend('adminRoomAction', { roomId, action: 'kick', uid });
   });
 }
 
 /**
- * Remove a player entirely: their profile, their claimed username (which frees the name), and -
- * unless they would lock the caller out - their admin flag. The Authentication record stays;
- * without a profile they can sign in but are a plain guest for friend features.
+ * Remove a player entirely: their profile and their claimed username (which frees the name) go in
+ * one backend call, and their admin flag goes with them unless that would lock the caller out.
+ * The Authentication record stays; without a profile they sign in as a plain guest.
  * @param {string} uid
- * @param {string} usernameLower
  */
-export async function adminRemovePlayer(uid, usernameLower) {
+export async function adminRemovePlayer(uid) {
   await runAdminAction('Player removed. Their username is free again.', async () => {
-    if (!/^[a-z0-9_]{3,18}$/.test(usernameLower || '')) throw new Error('This profile has no valid username to free.');
-    const batch = writeBatch(store);
-    batch.delete(doc(store, 'profiles', uid));
-    batch.delete(doc(store, 'usernames', usernameLower));
-    if (uid !== state.user?.uid) batch.delete(doc(store, 'admins', uid));
-    await batch.commit();
+    await callBackend('adminRemovePlayer', { uid });
   });
 }
 

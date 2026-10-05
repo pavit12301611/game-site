@@ -12,6 +12,7 @@ import { state } from '../state.js';
 import { esc, icon, renderBrand } from '../ui/html.js';
 import { renderModal } from './modals.js';
 import { renderAdmin, renderCatalog, renderFriends, renderGameScreen, renderHome, renderRoom } from './pages.js';
+import { renderPrivacy, renderSafety } from './legal.js';
 
 export function renderSidebar() {
   const conn = connection();
@@ -33,6 +34,9 @@ export function renderSidebar() {
       <p>One link is all it takes to meet at the arcade.</p>
       <button class="text-button" data-action="open-friends">Find your crew ${icon('arrow')}</button>
     </div>
+    <nav class="sidebar-legal" aria-label="Privacy and safety">
+      <button class="text-button" data-action="navigate" data-page="privacy">Privacy</button><i>·</i><button class="text-button" data-action="navigate" data-page="safety">Terms &amp; safety</button>
+    </nav>
     <div class="sidebar-bottom" title="${esc(conn.title)}">
       <div class="connection-dot is-${conn.kind}"></div><span>${esc(conn.label)}</span>
     </div>
@@ -65,7 +69,7 @@ export function renderMobileNav() {
 
 export function renderShell() {
   const conn = connection();
-  const pageNames = { home: 'Welcome back', catalog: 'Game library', friends: 'Your crew', admin: 'Admin studio', room: 'Private room', game: 'Now playing' };
+  const pageNames = { home: 'Welcome back', catalog: 'Game library', friends: 'Your crew', admin: 'Admin studio', room: 'Private room', game: 'Now playing', privacy: 'Privacy notice', safety: 'Terms & safety' };
   return `<div class="app-shell"><button class="button button-primary skip-link" data-action="skip-to-content">Skip to content</button>${renderSidebar()}<div class="main-column">${renderTopbar()}<aside class="page-context" aria-label="Page status"><span class="page-context-name">${pageNames[state.page] || 'Arcade'}</span><span class="network-status is-${conn.kind}" title="${esc(conn.title)}"><i></i><span>${esc(conn.shortLabel)}</span></span></aside><main class="page-content" id="page-content">${renderPage()}</main></div>${renderMobileNav()}</div>${state.modal ? renderModal() : ''}${state.toast ? `<div class="toast toast-${state.toast.kind}" role="status">${icon(state.toast.kind === 'success' ? 'check' : 'spark')}<span>${esc(state.toast.message)}</span></div>` : ''}`;
 }
 
@@ -76,6 +80,8 @@ export function renderPage() {
     case 'admin': return renderAdmin();
     case 'room': return renderRoom();
     case 'game': return renderGameScreen();
+    case 'privacy': return renderPrivacy();
+    case 'safety': return renderSafety();
     default: return renderHome();
   }
 }

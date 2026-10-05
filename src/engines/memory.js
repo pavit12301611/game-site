@@ -1,6 +1,10 @@
 /**
- * memory engine — flip two cards; a match scores and keeps the turn, a miss passes it on.
- * Games: Memory Match, Neon Pairs, Emoji Flip, Arcade Pairs.
+ * memory engine — flip two cards; a match scores, and whether it also keeps the turn is up to the
+ * room: Emoji Flip passes the turn on every match so three players keep swapping, the other decks
+ * award the usual bonus turn. Two decks also start with whole pairs already turned over
+ * (`openPairs`), which shrinks the contested deck instead of changing the deck size.
+ * Games: Memory Match (6 pairs), Neon Pairs (8 pairs), Emoji Flip (6 pairs, 2 open, no bonus turn),
+ * Arcade Pairs (8 pairs, 1 open).
  */
 
 /** @typedef {import('../types.js').Game} Game */
@@ -26,14 +30,24 @@ export function memoryCardIcon(index) {
  */
 export function createInitialState(game, players, seed) {
   const ids = players.map((player) => player.uid);
-  const pairs = Math.min(game.options.pairs, MEMORY_ICONS.length);
+  const pairs = Math.min(Number(game.options.pairs) || 6, MEMORY_ICONS.length);
   const icons = shuffled(MEMORY_ICONS, `${seed}:${game.id}`).slice(0, pairs);
   const cards = shuffled([...icons, ...icons], `${seed}:${game.id}:deck`);
+  // Whole pairs already face-up: they belong to nobody, so the contested deck is smaller.
+  const openPairs = Math.max(0, Math.min(Number(game.options.openPairs) || 0, pairs - 1));
+  const matched = [];
+  for (let pair = 0; pair < openPairs; pair += 1) {
+    const face = icons.filter((icon) => !matched.some((index) => cards[index] === icon))[0];
+    if (!face) break;
+    matched.push(cards.indexOf(face), cards.lastIndexOf(face));
+  }
   return {
     ...newBase(players, ids[0]),
     cards,
     opened: [],
-    matched: [],
+    matched,
+    openPairs,
+    matchKeepsTurn: game.options.matchKeepsTurn !== false,
     scores: scoresFor(ids),
     round: 1,
   };
@@ -65,6 +79,7 @@ export function applyAction(game, state, uid, action, players) {
       state.matched = [...state.matched, first, second];
       state.scores[uid] = (state.scores[uid] ?? 0) + 1;
       if (state.matched.length === state.cards.length) finishByScore(state, players, state.scores);
+      else if (!state.matchKeepsTurn) advanceTurn(state, players, uid);
     } else {
       advanceTurn(state, players, uid);
     }

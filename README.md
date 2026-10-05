@@ -2,6 +2,8 @@
 
 A lightweight, responsive browser arcade for laptops and phones. The shelf contains **40 original retro-style mini-games** with ten compact rulesets, local practice against a browser rival, private 2–3 player rooms, username friends, direct game invites, optional email accounts, guest play, and a UID-gated admin area.
 
+Online play is **server-authoritative**: every room mutation, friend request, invite, report and account deletion runs through callable Cloud Functions in [`functions/`](functions/) using the Firebase Admin SDK, and [`firestore.rules`](firestore.rules) denies browser writes to rooms, their secrets and private views, profiles, usernames and every social collection. Hidden state (the codebreaker code, fleet positions, quiz answer keys) never reaches a browser that should not see it. Local practice still works with no Firebase configuration at all.
+
 The games are original mini-games and variations, not bundled copyrighted ROMs or downloaded emulators. That keeps the app small, quick to load, and safe to deploy.
 
 ## Run it locally
@@ -80,21 +82,27 @@ Two things to know: the flag is **ignored by a production build** (`vite build`)
 | `src/errors.js` | Turns a Firebase error into a sentence a player can act on. |
 | `src/connection.js` | The single connection verdict (Firebase setup + browser online) every view shows. |
 | `src/accounts.js` | Guests, email/password, Google, the atomic username claim, the admin flag. |
-| `src/social.js` | Friend search, requests, the live friend/invite listeners. |
+| `src/social.js` | Friend search, requests, the live friend/invite/block listeners, reporting and blocking (all writes are callables). |
 | `src/cpu.js` | Local practice and the CPU opponent, using the same engines as online play. |
 | `src/diagnostics.js` | The setup dialog's "Run check" button. |
 | `src/online/session.js` | `ensureOnlineUser()`: guests are anonymous accounts, so a link never forces a sign-up. |
-| `src/online/rooms.js` | Create/join rooms and queue latency-compensated moves; Firestore transactions remain authoritative. |
+| `src/online/callables.js` | The one bridge to the backend: `httpsCallable` wrappers plus the error mapping that turns a missing deployment, a rate limit or a refused move into a sentence (see [docs/online-play.md](docs/online-play.md)). |
+| `src/online/rooms.js` | Create/join/leave/start/claim-host/rematch/move through the callables, plus the member-only room and private-view snapshots and the 1-hour countdown. |
 | `src/online/action-sync.js` | Pure optimistic-move replay, bounded idempotency markers, and rematch revision handling. |
 | `src/online/presence.js` | "Who is still in this room": your heartbeat in `rooms/{roomId}/presence/{uid}`, everyone else's read back (see below). |
 | `src/presence-status.js` | The pure half of presence: the here / away / left verdicts and the heartbeat loop, unit-tested with fake timers. |
 | `src/online/admin.js` | The admin studio's reads and privileged actions (delete/kick/grant/revoke - each one re-checks the flag server-side and refreshes the dashboard). |
-| `src/views/` | Pure "state in, HTML out": `shell`, `pages`, `modals`, `boards`, `fatal`. |
+| `src/views/` | Pure "state in, HTML out": `shell`, `pages`, `modals`, `boards`, `legal` (privacy and terms/safety), `fatal`. |
+| `src/seo.js` | Per-route title, description and social-preview tags (one HTML document, so `render()` applies them). |
+| `src/data-policy.js` | Re-exports the retention windows the privacy notice prints, from the same table the cleanup function uses. |
 | `src/ui/` | Small pieces: `html` (icons, escaping), `players`, `toast`, `theme`, `sound`, `prefs`, `links`. |
 | `src/engines/` | One module per game engine, with the catalog in `src/catalog.js`. |
 | `src/firebase*.js` | Config parsing, validation, initialization, error wording, emulator switch. |
-| `src/styles/` | The design system: `tokens`, `base`, `components`, `shell`, `home`, `rooms`, `boards`, `modals` (see below). |
+| `src/styles/` | The design system: `tokens`, `base`, `components`, `shell`, `home`, `rooms`, `boards`, `modals`, `legal` (see below). |
 | `src/a11y.js` | Live region, focus restore after a repaint, dialog focus and Tab trap, arrow keys in boards. |
+| `functions/` | The trusted backend: callable handlers with all the policy, the Admin-SDK store, the scheduled cleanup and its own test suite. |
+| `shared/online/retention.js` | The retention table: room, invite, request, rate-limit and report lifetimes, used by the cleanup function, the browser and the privacy notice. |
+| `docs/online-play.md` | Architecture, deploy runbook, billing, retention defaults and the staging smoke-test checklist. |
 | `docs/design-reboot.md` | The visual-reboot brief: audit, tokens with measured contrast, component list, per-game image brief and per-engine board spec. `tests/design-brief.test.js` recomputes its numbers. |
 
 Rules for contributing to this layout: views never write to state and never talk to Firebase;
@@ -112,19 +120,33 @@ is drawn anyway. The collaborators are passed in from `src/app.js`, which is wha
 a `ReferenceError` in that branch: two functions called in `src/app.js` without an import, which
 stopped the first paint on Vercel only - every local run has `firebaseReady === false`.
 
-### Fast online moves
+> **The backend is written, tested and not deployed by this repository.** `functions/` owns every
+> online mutation, the hidden state, the rate limits, account deletion and the expiry cleanup, and
+> its suite passes locally (`cd functions && npm test`, 36 tests). The browser talks to it only
+> through callables. **Nothing here has been deployed, and nothing here can be verified against a
+> live Firebase project**: callable Functions require the Blaze plan, `firebase deploy --only functions`,
+> and the rules published from [`firestore.rules`](firestore.rules). Until an operator does that, the
+> app says so honestly (a missing deployment reads as an actionable setup message, not a broken move).
+> Read [docs/online-play.md](docs/online-play.md) before touching a real project.
 
-Online input uses latency compensation: the same game engine that validates the authoritative move
-also draws it locally before the Firestore round trip finishes. Outstanding inputs are replayed over
-new room snapshots, and a bounded action-id history prevents a committed move from appearing twice.
-The UI shows `Applied instantly · syncing …` until the server acknowledges it. If the transaction is
-rejected (for example, another player already ended the match), only that optimistic input is rolled
-back and the normal player-facing error appears.
+### Fast online moves on top of a server-owned room
 
-Only one transaction per browser is in flight. Inputs made during it are committed together in the
-next transaction, which matters most for tap races and maze key repeats: they no longer create a pile
-of transactions that contend with each other. Transactions still re-read the room and remain the
-source of truth, so the faster feedback does not weaken concurrent-move safety.
+A move is one callable (`playMove`) carrying the action and a `clientActionId`. The backend checks
+identity, membership, room status and lifetime, whether it is really your turn, whether the action is
+legal for the engine, and the rate limit - then re-reads the room and writes the new revision, so two
+moves racing for the same turn cannot both win. The reply is the authoritative room payload.
+
+The client draws a move immediately only when the engine's public state is the whole story (line,
+drop, race, maze, rally). Games with hidden information (memory, duels, quiz, battle, code) simply
+send and then show the server's answer, because an optimistic frame there would be guesswork. A
+bounded action-id history makes a retry safe: a dropped response can never apply a move twice, and if
+the backend rejects the move only that optimistic frame is rolled back. The UI shows
+`Applied instantly · syncing …` while a call is in flight; the room itself stays a member-only
+snapshot, so the sync indicator is about latency, not authority.
+
+One call per browser is in flight; inputs made meanwhile are queued and sent as the next batch, which
+is what keeps tap races and maze key repeats from piling up calls. The backend - not the browser -
+decides what the room becomes.
 
 ### Presence: who is still in the room
 
@@ -141,15 +163,16 @@ Design notes, so nobody undoes them by accident:
 - The room re-renders only when a *verdict* changes, never on a heartbeat itself: a repaint every few seconds would reset the **How to play** panel and the scroll position mid-game. A timer re-checks the verdicts every 10 seconds, which is how a quiet player turns from "here" into "away" without any new data arriving.
 - Heartbeats are compared with the *server* clock (`lastSeenAt` must be `request.time`, see `firestore.rules`), and each client measures its own clock offset from its own acknowledged heartbeat. A laptop whose clock is a minute slow does not see everyone as away.
 - A hidden tab stops beating on purpose and beats the moment it is visible again, so coming back is noticed within a second.
-- Leaving a waiting room deletes your heartbeat in the same transaction that gives the seat back (or deletes the room), so a deleted room leaves no documents behind. Nobody can write anyone else's heartbeat, and only the room's members can read them.
+- Leaving a waiting room goes through the `leaveRoom` callable, which gives the seat back (or deletes the room) and removes your heartbeat in the same server-side step, so a deleted room leaves no documents behind. Nobody can write anyone else's heartbeat, and only the room's members can read them.
 - **Cost:** a visible member writes about 144 heartbeats per hour, and each write costs one rules `get` of the room document on top. On the free Spark plan (20 000 writes a day) that is roughly 140 player-hours of open rooms per day, far above what casual rooms use, but keep it in mind before shortening `HEARTBEAT_MS`.
-- If the deployed rules predate presence, the first heartbeat is denied: the app logs one `console.warn` with the fix (publish the latest `firestore.rules`) and turns presence off for that room. Rooms and moves keep working as before.
+- Presence is the one collection a browser still writes (`rooms/{id}/presence/{uid}`, your own document only, `hasOnly([...])`, server timestamp). If the deployed rules predate presence, the first heartbeat is denied: the app logs one `console.warn` with the fix (publish the latest `firestore.rules`) and turns presence off for that room. Rooms and moves keep working as before.
 
 ### Design system (`src/styles/*.css`)
 
-Eight small stylesheets, imported in this order by `src/main.js`: `tokens` (every value), `base` (reset, type,
+Nine small stylesheets, imported in this order by `src/main.js`: `tokens` (every value), `base` (reset, type,
 focus ring, `.sr-only`), `components` (buttons, chips, forms, cards), `shell` (sidebar, topbar, mobile nav),
-`home` (landing and catalog), `rooms` (lobby, game screen, friends, admin), `boards` (the ten game boards) and
+`home` (landing, catalog and the filter bar), `rooms` (lobby, game screen, friends, admin), `boards` (the ten game boards),
+`legal` (privacy/safety pages, the join-by-code panel, blocked lists and the report form), and
 `modals`. The full reasoning, with measured contrast for every token pair, is in `docs/design-reboot.md`.
 
 - **Tokens first.** Colours, sizes, spacing, radii, shadows and timings are custom properties in
@@ -194,14 +217,21 @@ The fonts are imported in `src/main.js`, so Vite hashes them into `dist/assets/`
 ## Tests and CI
 
 ```bash
-npm test            # unit tests: no network or Firebase credentials; emulator tests skip without Java
-npm run lint        # ESLint 9, flat config, eslint:recommended
-npm run typecheck   # tsc --checkJs over every module under src/ (JSDoc types)
-npm run test:rules  # firestore.rules against the Firestore emulator (needs Java)
-npm run audit       # npm audit --omit=dev --audit-level=high: only what ships to the browser
+npm test             # 427 tests (408 run, 19 Firestore-emulator tests skip without Java); no network, no credentials
+npm run lint         # ESLint 9, flat config, eslint:recommended
+npm run typecheck    # tsc --checkJs over every module under src/ (JSDoc types)
+npm run test:rules   # firestore.rules against the Firestore emulator (needs Java)
+npm run audit        # npm audit --omit=dev --audit-level=high: only what ships to the browser
+npm run audit:dev    # the full tree, including build tooling: informational, not a release gate
+
+cd functions && npm test   # the trusted backend (handlers, rooms, cleanup): no emulator, no Java
+node scripts/sync-shared.mjs --check   # fails when the browser/functions mirror is stale
 ```
 
-- `.github/workflows/ci.yml` runs `npm ci`, `npm test`, `npm run lint`, `npm run typecheck` and `npm run build` on every push and pull request, a `firestore-rules` job that installs Java and runs the emulator rules tests, and an informational `npm audit` job.
+- `.github/workflows/ci.yml` runs `npm ci`, `npm test`, `npm run lint`, `npm run typecheck` and `npm run build` on every push and pull request; a `functions` job that installs the backend dependencies, checks the shared mirror and runs the backend suite; a `firestore-rules` job that installs Java and runs the emulator rules tests (which fail rather than skip when the emulator is expected); and an informational `npm audit` job.
+- `tests/catalog-integrity.test.js` reads the same options the engines read and fails when a card's copy, artwork, question bank or warm-up subset drifts away from the game's behaviour — including per-game question volume and a check that no quiz item names a real product.
+- `npm test`'s `pretest` step regenerates `functions/vendor` (a gitignored mirror of `shared/` and `src/engines/`), because the backend tests import it and a fresh checkout does not have it. The backend CI job builds the mirror and then verifies it with `--check`.
+- Current audit state: `npm run audit` (production) reports **0 vulnerabilities**; `npm run audit:dev` reports **11 advisories (4 moderate, 7 high)** that all sit inside `firebase-tools`' transitive tooling (`chokidar`/`braces`, the `proxy-agent` chain, `gaxios`→`uuid`, `@google-cloud/pubsub`) at the newest published `firebase-tools` 15.32.0, so no in-range fix exists and `npm audit fix --force` would only downgrade the CLI. They are dev-only, never in the bundle, and tracked for the next release of that tool.
 - `npm run audit` checks **what ships to the browser** (`--omit=dev`): the app has one runtime dependency, `firebase`. Advisories in the build and emulator tooling never reach a player, are not part of the deployed bundle, and are tracked by Dependabot instead, which opens grouped weekly pull requests - forcing them to block a release would only train everyone to ignore the job. The one production advisory found so far (`@firebase/firestore` pinning an old `@grpc/grpc-js`) is fixed with an npm `overrides` entry rather than by downgrading Firebase.
 - Dependabot (`.github/dependabot.yml`) opens one grouped pull request for patch and minor updates every week. Major upgrades, such as `firebase` 12 or `vite` 8, arrive alone so they can be reviewed and tested on their own.
 - `tests/app-render.test.js` boots the real UI in jsdom with no Firebase configured and walks the local-practice flow. Its first test is the start-up contract: `.app-shell`, the sidebar brand and the hero are in `#app`, the recovery screen is not, and nothing was written to `console.error` while the app loaded.
@@ -209,6 +239,10 @@ npm run audit       # npm audit --omit=dev --audit-level=high: only what ships t
 - `tests/boot.test.js` runs the start-up sequence with stand-ins for Firebase and asserts that the page is painted exactly once in every failure mode.
 - `tests/presence-status.test.js` drives the presence verdicts and the heartbeat loop with fake timers (away after 60 s, hidden tabs pause, a failing beat is only a missed beat); `tests/presence-render.test.js` renders the lobby, the host-wait line and the match rail in jsdom with faked heartbeat documents and checks what each verdict looks like, including that a missing document reads exactly as before. The presence rules are executed by `tests/rules-emulator.test.js` (CI) and guarded structurally by `tests/firestore-rules.test.js`.
 - `tests/production-boot.test.js` is the one test that runs with `firebaseReady === true`: it builds the real bundle into a temporary directory with fake but well-formed `VITE_FIREBASE_*` values, loads it in jsdom with the network refused, and asserts that the shell is painted, that the sidebar says online rooms are ready (so the Firebase branch really ran), and that nothing was fetched, logged to `console.error` or left as an unhandled rejection. Against the pre-fix `src/app.js` it reports the two `ReferenceError`s the Vercel console showed. It adds a few seconds to `npm test`; that is the price of testing what actually ships.
+- `cd functions && npm test` runs the trusted backend suite (36 tests): policy for usernames, friendships, invites, rooms, rematch, host handoff, expiry, rate limits, blocks, reports, account deletion (including the last-admin refusal) and the idempotent scheduled cleanup.
+- `tests/axe.test.js` renders every route and every dialog in jsdom and runs axe-core against the WCAG 2.0/2.1 A and AA rule tags. Two rules are disabled on purpose and covered elsewhere: `color-contrast` (jsdom paints nothing; the real ratios are computed in `tests/design-brief.test.js`) and the page-level landmark rules (the suite scans one region of a document whose landmarks live in `index.html`). It found and fixed a real bug: the admin tabs claimed `role="tablist"` without any tabs.
+- `tests/legal-pages.test.js` keeps the privacy and safety pages honest: the retention numbers they print are compared against the shared table the cleanup function uses, the invite-link and not-cheat-proof limitations must be present, and no compliance or security claim is allowed.
+- `tests/catalog-filters.test.js` checks that every shelf filter matches real games, that the buckets partition the catalog, that only real catalog values are offered, and that the two dimensions that are room choices (player count, local/online) are explained rather than faked.
 - The game rules are locked by `tests/fixtures/engine-baseline.json`, which fingerprints every state of all 40 games and replays them on every run. If you change a rule on purpose, regenerate it with `node tests/fixtures/generate-engine-baseline.mjs` and say so in the pull request.
 
 ### Type checking is JSDoc, not a rewrite
@@ -322,7 +356,9 @@ Google sign-in (popup or redirect) only works on hosts Firebase knows about. On 
 2. Open the **Rules** tab.
 3. Replace the starter rules with the complete contents of this repository’s [`firestore.rules`](./firestore.rules) file, then click **Publish**.
 
-The rules keep room documents unlistable, limit rooms to their invite link, require Firebase Auth for writes, constrain joining to waiting rooms with open seats, let each member write only their own presence heartbeat under the room (and only members read them), and protect friend requests. Admin flags start console-managed: only the **first** one is created by hand, because `create`/writes on `admins/**` require the caller to already hold a flag. After that, flagged admins manage everything from the **Admin studio** - rooms (inspect, kick lobby members, delete with heartbeats), players (remove a profile and free its username), social data (unlink friends, delete stale requests and invites), and other admin flags - and Firestore re-checks `admins/{uid}.admin == true` on every one of those writes, so a forged client flag changes nothing. A link to a room that does not exist reads as "not found" (so players see *invite link is invalid or has expired* rather than a permission error). The rules intentionally do **not** make game outcomes cheat-proof: these are casual peer rooms, not ranked or prize games. For a competitive leaderboard, move authoritative game actions into Cloud Functions / a trusted server. Google accounts use the same authenticated UID checks and existing atomic `usernames`/`profiles` claim rules; no Firestore rule change is required for Google sign-in.
+The published rules are deliberately boring: **the browser cannot write anything except your own presence heartbeat under a room you are already in**. Rooms, their secrets and their private views, profiles, usernames, friend requests, friendships, invites, blocks, reports and rate-limit documents are all read-only to clients - callable Cloud Functions with the Admin SDK own those writes, which is what makes forged moves, illegal transitions and wrong-player actions impossible from a browser. Reads are scoped the same way: a member can read the room they are in, you can read your own private view and nobody else's, only the two participants (or an admin tidying up abuse) can read a request, invite or friendship, only you can read your blocks, and only the operator can read reports. `profiles` and `usernames` have no client `list` at all, so the player directory cannot be scraped; friend lookup is one exact username through the backend. Admin flags start console-managed: only the **first** one is created by hand. A link to a room that does not exist reads as "not found" (so players see *invite link is invalid or has expired* rather than a permission error).
+
+The rules also keep the app honest about what they cannot do: they do **not** make casual rooms cheat-proof, and they cannot stop someone with a working invite link or code from joining and passing it on. Ranked or prize play would need server-side anti-abuse work on top of the backend that already exists, and is not implemented. Google accounts use the same authenticated UID checks and the same atomic backend username claim; no rule change is required for Google sign-in.
 
 After you click **Publish**, check the rules against the real app once. It takes about two minutes and exercises every rule the game uses:
 
@@ -397,7 +433,9 @@ A new Google account needs its own `admins/{googleUid}` document if it should be
 - Open a game card, choose **Create online room**, select 2 or 3 seats, and send the generated invite link. A guest can join the link without creating an account. The host presses **Start match** when everyone is ready.
 - For username friends, both players create an account. Open **Friends → Add by username**, send a request, and have the other player accept it. Use **Challenge** to create a room and deliver an in-app direct invite.
 - Use a second browser profile or an incognito window to test another player. To test a three-player room, select **3 players** and join from two separate browser profiles.
-- The app supports browser-native share when available and always provides a copyable room link.
+- The app supports browser-native share when available, always provides a copyable room link, and shows the room's 7-character code. A player who was given the code can join from the home page with **Join a room by code** - the code is looked up on the backend, so room documents stay unlistable.
+- From **Friends** you can block a player (their requests and invites are refused and cleared) and unblock them again. **Report a problem** in the account menu, the settings dialog or the in-game rail stores a report for the operator; nothing is sent to the reported player and nothing is automatic.
+- **Self-service deletion** lives in the account menu. It deletes the profile, the username reservation, friendships, requests, invites, presence and the sign-in itself, and it refuses safely with an explanation (sign in again, or promote another admin first) rather than failing silently.
 
 ## Security headers (Vercel)
 
@@ -414,8 +452,12 @@ One deliberate `'unsafe-inline'` entry, and why:
   now live in the same-origin external `public/theme-preload.js`, so `script-src` does not need
   `'unsafe-inline'`.
 
-The CSP allows `https://*.googleapis.com`, `https://*.firebaseapp.com`, `https://*.firebaseio.com`
-(plus `wss://`) and `https://apis.google.com`, which is what Firebase Auth and Firestore need.
+The CSP allows `https://*.googleapis.com`, `https://*.cloudfunctions.net`, `https://*.firebaseapp.com`,
+`https://*.firebaseio.com` (plus `wss://`) and `https://apis.google.com`: Firebase Auth, Firestore and
+the callable endpoints the online backend runs on. The callable origin matters — the SDK reaches
+`https://<region>-<project>.cloudfunctions.net/<name>`, so a CSP without that wildcard blocks every
+online mutation with a console violation. `tests/vercel-headers.test.js` asserts it, which is how the
+omission was caught before a deploy.
 
 If a deployment ever loses Google sign-in or goes quiet on Firestore, open the browser console: a CSP
 violation names the exact directive and origin, and the fix is one word in `vercel.json` (then
@@ -446,9 +488,11 @@ Developer console: a missing or invalid config is always logged (`console.error`
 
 - **40 games:** Pixel Tic-Tac-Toe, Neon Gomoku, Connect Four, Five in a Row, Memory Match, Neon Pairs, Emoji Flip, Arcade Pairs, Pixel Tap Sprint, Button Masher, Turbo Charge, Reaction Rush, Spacebar Showdown, Bug Blaster, Rock Paper Scissors, Laser Duel, Coin Flip Clash, Dice Duel, Retro Trivia, Emoji Decode, Arcade Facts, Pixel Pop Quiz, Movie Mayhem, Word Scramble, Number Chase, Brain Busters, 8-Bit Riddles, Retro Rewind, Maze Runner, Neon Labyrinth, Byte Escape, Star Runner, Sea Battle, Pixel Fleet, Alien Skirmish, Pong Rally, Paddle Wars, Air Hockey, Codebreaker, and Mastermind.
 - **Ten lightweight shared engines:** line boards, drop boards, memory pairs, tap races, simultaneous duels, quiz rounds, maze races, hidden-grid battles, volley scoring, and codebreaking. Each engine is one module in `src/engines/` with its own unit tests; `src/catalog.js` holds the catalog, artwork and how-to-play copy. Each catalog entry can be opened, practiced locally, or used to create an online room.
-- **Firebase:** Auth (Anonymous + Email/Password + Google) and Cloud Firestore. Multiplayer moves use Firestore transactions so concurrent turns do not silently overwrite one another. Google popup/redirect handling, guest linking, first-login username setup, and friendly provider/network errors are included.
+- **Firebase:** Auth (Anonymous + Email/Password + Google), Cloud Firestore and callable Cloud Functions. Every online mutation goes through the backend, which validates identity, membership, room status and lifetime, turn order, legal moves and per-account rate limits; the browser can only read what it is a participant of, plus its own presence heartbeat. Hidden state (codebreaker code, fleets, quiz keys) lives in server-only documents. Google popup/redirect handling, guest linking, first-login username setup, and friendly provider/network errors are included.
 - **Setup diagnostics:** one honest connection status everywhere (**Online rooms ready**, **Offline · local play**, **Local practice mode**), a precise setup banner for a missing or invalid `VITE_FIREBASE_*` config, a build-time check that prints the same verdict in the Vercel build log (and refuses secrets), Firebase errors worded as instructions, and an in-app **Run check** for a deployed project.
 - **Local personalization:** Favorites, recently played games, theme preference, subtle sound preference, and guest display name live in localStorage; no extra Firebase collection is required.
+- **Privacy, safety and lifecycle:** a privacy notice and terms/safety page describe the real data flow (and label every operator-specific fact as a launch-checklist item), self-service account deletion removes a profile, its username reservation, friendships, requests, invites, presence, eligible rooms and the sign-in itself, blocking is immediate and unblockable, reports are stored for the operator with no automatic moderation, and a scheduled function cleans up expired rooms, hidden state, presence, invites, requests, rate limits and old reports. No analytics, no cookies, no third-party telemetry.
+- **Discovery and resilience:** the shelf filters by round length, difficulty and input style (player count and local/online are room choices, and the panel says so); rooms have a copyable link **and** a 7-character code that can be typed into **Join a room by code**; a lobby whose host has gone away can be taken over through a server-checked `claimHost`; presence, sync, refused moves, expired/full rooms and lost connectivity all say what happened; and broken artwork, unknown routes and a failed paint each have a visible recovery screen.
 - **Original artwork:** one optimized hero illustration and five reusable category/multiplayer covers live under `public/images/`. Cards use responsive `object-fit: cover`, lazy loading below the first shelf, and CSS artwork fallbacks if an image cannot load.
 - **Theme / accessibility:** an OS-aware light/dark theme toggle with persistence, visible keyboard focus, reduced-motion support, semantic controls, keyboard arrows in maze games, Space for tap races, and responsive layouts down to 320px wide. Every game screen includes a concise controls/rules panel generated from its engine.
 - **Admin:** `admins/{authUid}` with `admin: true`. The client hides the admin page unless the signed-in UID is approved, and Firestore rules enforce the actual gate on every read and write. The studio has five sections: **Overview** (live metrics + recent rooms), **Rooms** (kick lobby members, delete rooms with their heartbeats), **Players** (copy UIDs, grant/revoke admin, remove a player and free their username), **Social** (unlink friend pairs, delete stale friend requests and game invites) and **Access** (list admins, promote by UID, revoke - self-lockout is ruled out server-side). The first admin flag is always added by hand in the Firebase console; every later one can come from the studio itself.
@@ -457,12 +501,16 @@ Developer console: a missing or invalid config is always logged (`console.error`
 
 - The browser must allow JavaScript. Online features require a network connection and a configured Firebase project.
 - A room invite is a private-by-ID link, not a password-protected secret. Anyone holding it may join while it is waiting and has capacity. Do not put sensitive data in rooms.
-- Anonymous Firebase accounts can be cleaned up periodically from Firebase Console if you want to limit unused guest accounts. Linking a guest to Google is the preferred way to preserve a guest’s UID and identity.
+- Anonymous guest accounts are Firebase Auth users like any other. A signed-in account can delete itself in the app; for guests, linking to Google preserves the UID, and an operator can remove unused anonymous users from the Firebase console. A scheduled `cleanupExpired` function removes expired rooms, their secrets, views and heartbeats, stale invites and requests, and old rate-limit documents every 15 minutes, whether or not a browser is open.
+- The privacy notice and the terms/safety page are in the app at `#/privacy` and `#/safety` (and linked from the sidebar, the sign-in dialog, the account menu and settings). Everything on them describes this repository's real behaviour; the operator-specific facts (legal name, contact, jurisdiction, ages, retention changes) are printed as a labelled launch checklist instead of being invented, and the pages make no legal-compliance claim.
 - Live Google, popup/redirect, guest-linking, Firestore-permission, and room synchronization flows still need a smoke test in your deployed Firebase project. `npm test` covers helpers, catalog integrity, the pure game engines (including a state-by-state baseline of all 40 games), the rendered UI in jsdom (shell, catalog, search, practice match, dialogs, theme), the config parser/validator, the status logic, the emulator switch, the wording of Firebase errors (using the real SDK error classes), Firebase initialization with the real SDK (no network), the build-time check, and structural checks of `firestore.rules` (balanced syntax, a rule for every collection the app uses, nothing open to signed-out users, admin flags not client-writable). None of that needs Firebase credentials or an emulator, and none of it talks to a real Firebase project.
 
 The rules themselves are executed by `npm run test:rules`, which runs `firestore.rules` against the Firestore emulator (Java required) and covers profiles, usernames, rooms, joins, moves, presence heartbeats, friend requests, friendships and invites. CI runs it on every pull request; locally it is skipped with a clear message when no emulator is reachable. Under `firebase emulators:exec` (which sets `FIRESTORE_EMULATOR_HOST`) an unreachable emulator fails the suite instead, so the CI job can never pass because everything skipped. The setup dialog's **Run check** is the quickest way to smoke-test a real deployment.
 
 ## Known limits
 
-- Game outcomes are still client-reported in these casual rooms; moving authoritative outcome checks to trusted Cloud Functions is deferred until ranked or prize play is needed.
-- Hash/nonce migration for runtime inline styles is deferred; dynamic style attributes still require `style-src 'unsafe-inline'`.
+- **Casual, not cheat-proof.** Every online mutation, hidden state and room transition is server-validated, but a determined group can still collude, stall, share screens or sit on a room code. There is no ranked, prize or leaderboard play, and the app claims none.
+- **Nothing is deployed or verified against a live project.** Callable Functions need the Blaze plan, `firebase deploy --only functions` and the published rules; Google/OAuth, billing, cross-device behaviour and the Firebase-console steps can only be confirmed in the operator's own project. `docs/online-play.md` carries the runbook and the staging checklist.
+- **Reports are read by a human.** Blocking is immediate and local to the arcade; a report is only a stored message for the operator, with no automatic moderation and no uptime promise.
+- **Dev-tooling advisories are tracked, not hidden.** `npm audit` (production, `--omit=dev`) is clean; the full tree reports advisories inside `firebase-tools`' transitive dependencies, which are never shipped to a browser. They are listed in the Tests and CI section rather than fixed with a forced downgrade.
+- Hash/nonce migration for runtime inline styles is deferred; dynamic style attributes still require `style-src 'unsafe-inline'`. Colour contrast is measured from the token values in `tests/design-brief.test.js`; a real-browser pass is a staging-checklist item, because jsdom cannot paint.

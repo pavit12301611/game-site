@@ -150,3 +150,36 @@
 /* Narrow phones: uppercase display type is wide, so the headline steps down instead of clipping. */
 .hero-copy { min-width: 0; }
 @media (max-width: 420px) { .hero-copy h1 { font-size: 1.75rem; overflow-wrap: anywhere; } .hero-copy { padding: var(--sp-4); } }
+
+/* Filter bar: three selects plus an honest note about the two dimensions that are room choices. */
+.catalog-filters {
+  display: flex; flex-wrap: wrap; gap: var(--sp-3); align-items: center;
+  margin-top: var(--sp-4); padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--line); border-radius: var(--r-3); background: var(--surface-1);
+}
+.catalog-filters label { display: inline-flex; gap: var(--sp-2); align-items: center; color: var(--ink-subtle); font-size: var(--fs-2); text-transform: uppercase; letter-spacing: 0.06em; }
+.catalog-filters select {
+  padding: 9px 12px; border: 2px solid var(--line); border-radius: var(--r-2);
+  background: var(--surface-2); color: var(--ink); font: inherit; text-transform: none; letter-spacing: normal;
+}
+.catalog-filters select:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 2px; }
+.catalog-filter-note { flex: 1 1 260px; margin: 0; color: var(--ink-subtle); font-size: var(--fs-2); }
+
+/* First-run choice between local practice and online rooms. */
+.first-run { display: grid; gap: var(--sp-3); margin-top: var(--sp-5); }
+.first-run-title { font-size: var(--fs-5); }
+.first-run-card {
+  display: grid; gap: var(--sp-3); align-items: center;
+  padding: var(--sp-4); border: 2px solid var(--line); border-left-width: 8px; border-radius: var(--r-3);
+  background: var(--surface-1);
+}
+.first-run-card.is-practice { border-left-color: var(--neon-cyan); }
+.first-run-card.is-online { border-left-color: var(--neon-pink); }
+.first-run-card b { display: block; color: var(--ink); font-size: var(--fs-4); }
+.first-run-card p { color: var(--ink-muted); }
+.first-run-icon { display: grid; place-items: center; width: 44px; height: 44px; border-radius: var(--r-2); background: var(--surface-3); color: var(--neon-cyan); }
+.first-run-card.is-online .first-run-icon { color: var(--neon-pink); }
+.first-run-note { color: var(--warn); }
+@media (min-width: 760px) { .first-run-card { grid-template-columns: auto 1fr auto; } }
+.move-sync.is-offline { color: var(--warn); }
+.move-sync.is-offline i { background: var(--warn); }

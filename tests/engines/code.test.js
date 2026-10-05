@@ -74,9 +74,9 @@ test('running out of guesses is a draw', () => {
 
 test('illegal guesses are refused with a readable reason', () => {
   const state = start();
-  assert.throws(() => code.applyAction(codebreaker, state, 'p1', { guess: [1, 2, 3] }, two), /valid sequence/i, 'too short');
-  assert.throws(() => code.applyAction(codebreaker, state, 'p1', { guess: [1, 2, 3, 4, 5] }, two), /valid sequence/i, 'too long');
-  assert.throws(() => code.applyAction(codebreaker, state, 'p1', { guess: [1, 2, 3, 9] }, two), /valid sequence/i, 'a digit above 5');
-  assert.throws(() => code.applyAction(codebreaker, state, 'p1', { guess: '1234' }, two), /valid sequence/i, 'not an array');
+  assert.throws(() => code.applyAction(codebreaker, state, 'p1', { guess: [1, 2, 3] }, two), /Enter 4 digits from 0 to 5/i, 'too short');
+  assert.throws(() => code.applyAction(codebreaker, state, 'p1', { guess: [1, 2, 3, 4, 5] }, two), /Enter 4 digits from 0 to 5/i, 'too long');
+  assert.throws(() => code.applyAction(codebreaker, state, 'p1', { guess: [1, 2, 3, 9] }, two), /Enter 4 digits from 0 to 5/i, 'a digit above 5');
+  assert.throws(() => code.applyAction(codebreaker, state, 'p1', { guess: '1234' }, two), /Enter 4 digits from 0 to 5/i, 'not an array');
   assert.throws(() => code.applyAction(codebreaker, state, 'p2', { guess: [1, 2, 3, 4] }, two), /wait for your turn/i);
 });

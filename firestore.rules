@@ -1,6 +1,25 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // ---------------------------------------------------------------------------------------------
+    // Who may do what
+    //
+    // The browser reads; the trusted backend (`functions/`) writes. Every online mutation - claim a
+    // username, send/answer a request or invite, create/join/start/leave a room, make a move, rematch,
+    // block, report, delete an account, kick or close a room - is a callable Cloud Function that
+    // re-checks identity, membership, room status, room lifetime, turn order and action shape with
+    // the Admin SDK. The Admin SDK ignores these rules, which is exactly why the privacy and
+    // integrity decisions live in `functions/src/handlers.js` and `shared/online/room.js` instead of
+    // here: a rule can only refuse; it cannot validate a move against the engine.
+    //
+    // Consequences a reader should know:
+    //   * `allow create, update, delete: if false` below is deliberate, not an oversight.
+    //   * The two exceptions that stay client-writable are the ones that are not security decisions:
+    //     presence heartbeats (a client saying "I am here") and admin access management.
+    //   * Deploy the functions and these rules together. With these rules and no deployed backend,
+    //     online play would stop working (and the app says so; see `src/online/callables.js`).
+    // ---------------------------------------------------------------------------------------------
+
     function signedIn() {
       return request.auth != null;
     }
@@ -11,22 +30,17 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.admin == true;
     }
 
-    function isRoomMember(room) {
+    function isRoomMember(roomData) {
       return signedIn()
-        && room.playerUids is list
-        && room.playerUids.hasAny([request.auth.uid]);
-    }
-
-    function isExpiredRoom(room) {
-      return room.createdAt is timestamp
-        && request.time >= room.createdAt + duration.value(1, 'h');
+        && roomData.playerUids is list
+        && roomData.playerUids.hasAny([request.auth.uid]);
     }
 
     match /admins/{uid} {
       // The first flag is provisioned manually in the Firebase console (nobody can mint one from
       // the client without already being an admin). After that, admins manage access from the
-      // admin studio: a document holds exactly one boolean field, and a flag can never lock
-      // itself out by deleting its own document - revoke someone else, or use the console.
+      // admin studio: a document holds exactly one boolean field, and a flag can never lock itself
+      // out by deleting its own document - revoke someone else, or use the console.
       allow get: if signedIn() && (request.auth.uid == uid || isAdmin());
       allow list: if isAdmin();
       allow create, update: if isAdmin()
@@ -36,256 +50,98 @@ service cloud.firestore {
     }
 
     match /profiles/{uid} {
-      // These documents contain usernames only, so signed-in players can look each other up.
-      allow get, list: if signedIn();
-      allow create: if signedIn()
-        && request.auth.uid == uid
-        && request.resource.data.keys().hasOnly(['uid', 'username', 'usernameLower', 'createdAt'])
-        && request.resource.data.uid == uid
-        && request.resource.data.username is string
-        && request.resource.data.username.size() >= 3
-        && request.resource.data.username.size() <= 18
-        && request.resource.data.usernameLower is string
-        && request.resource.data.usernameLower.matches('^[a-z0-9_]{3,18}$')
-        && request.resource.data.createdAt == request.time
-        && existsAfter(/databases/$(database)/documents/usernames/$(request.resource.data.usernameLower))
-        && getAfter(/databases/$(database)/documents/usernames/$(request.resource.data.usernameLower)).data.uid == uid;
-      allow update: if signedIn()
-        && request.auth.uid == uid
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastSeenAt'])
-        && request.resource.data.uid == resource.data.uid
-        && request.resource.data.username == resource.data.username
-        && request.resource.data.usernameLower == resource.data.usernameLower;
-      allow delete: if isAdmin();
+      // A profile document is not public: it is readable by its owner and by admins only, and it
+      // cannot be listed by anyone but an admin. Friend search goes through the `lookupUser`
+      // callable, which is an exact username lookup with a per-user rate limit, so the player
+      // directory cannot be enumerated from a browser.
+      allow get: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow list: if isAdmin();
+      // Claiming a username is `claimUsername` (one transaction over usernames/{lower} +
+      // profiles/{uid}); removal is `deleteAccount` or the admin's `adminRemovePlayer`. A client
+      // cannot edit a profile, so a username cannot be renamed, spoofed or duplicated.
+      allow create, update, delete: if false;
     }
 
     match /usernames/{usernameLower} {
-      allow get: if signedIn();
-      allow list: if false;
-      allow create: if signedIn()
-        && request.resource.data.keys().hasOnly(['uid', 'username', 'createdAt'])
-        && request.resource.data.uid == request.auth.uid
-        && request.resource.data.username is string
-        && usernameLower.matches('^[a-z0-9_]{3,18}$')
-        && request.resource.data.username.lower() == usernameLower
-        && request.resource.data.createdAt == request.time
-        && existsAfter(/databases/$(database)/documents/profiles/$(request.auth.uid))
-        && getAfter(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.usernameLower == usernameLower;
-      // A reservation is immutable, but an admin may free a name (the admin studio removes a
-      // player's profile and their reservation in one batch).
-      allow update: if false;
-      allow delete: if isAdmin();
+      // A reservation is server-only state: clients never read or write it. The unique-name
+      // guarantee is the `claimUsername` transaction, and `lookupUser` is the only way a browser
+      // learns that a name exists.
+      allow read, write: if false;
     }
 
     match /friendRequests/{requestId} {
-      // Missing links should look like "not found", while existing documents and list queries stay private to their players.
+      // Participants may read their own requests (the app queries with `toUid ==` / `fromUid ==`),
+      // and admins may read the collection for the dashboard. Nothing is writable from a client
+      // except an admin's cleanup delete: `sendFriendRequest`, `respondFriendRequest`,
+      // `cancelFriendRequest`, `blockUser` and the rate limits behind them all live in the backend.
       allow get: if signedIn()
-        && (resource == null || resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid);
-      allow list: if signedIn()
-          && (resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid)
+        && (resource == null || resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid)
         || isAdmin();
-      allow create: if signedIn()
-        && request.resource.data.keys().hasOnly(['fromUid', 'toUid', 'fromName', 'toName', 'status', 'createdAt'])
-        && request.resource.data.fromUid == request.auth.uid
-        && request.resource.data.toUid is string
-        && request.resource.data.toUid != request.auth.uid
-        && request.resource.data.status == 'pending'
-        && request.resource.data.createdAt == request.time
-        && exists(/databases/$(database)/documents/profiles/$(request.resource.data.toUid));
-      allow update: if signedIn()
-        && resource.data.toUid == request.auth.uid
-        && resource.data.status == 'pending'
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'respondedAt'])
-        && request.resource.data.status in ['accepted', 'declined']
-        && request.resource.data.respondedAt == request.time;
-      allow delete: if signedIn()
-        && ((resource.data.fromUid == request.auth.uid && resource.data.status == 'pending')
-          || isAdmin());
+      allow list: if (signedIn()
+          && (resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid))
+        || isAdmin();
+      allow create, update: if false;
+      allow delete: if isAdmin();
     }
 
     match /friendships/{friendshipId} {
-      // Members read their own friendships (the app queries with array-contains on memberUids).
-      // Admins may also read them: the admin dashboard lists friendships to show the connection count.
-      // The member check comes first so ordinary players never trigger the billed admin lookup.
+      // Members read their own friendships (array-contains on memberUids); admins may read them for
+      // the connection count. A friendship is created by the `respondFriendRequest` transaction,
+      // which is the only thing that can accept a request.
       allow get, list: if (signedIn() && request.auth.uid in resource.data.memberUids)
         || isAdmin();
-      allow create: if signedIn()
-        && request.resource.data.keys().hasOnly(['memberUids', 'memberNames', 'requestId', 'createdAt'])
-        && request.resource.data.memberUids is list
-        && request.resource.data.memberUids.size() == 2
-        && request.resource.data.memberUids.hasAny([request.auth.uid])
-        && request.resource.data.memberNames is map
-        && request.resource.data.requestId is string
-        && request.resource.data.createdAt == request.time
-        && getAfter(/databases/$(database)/documents/friendRequests/$(request.resource.data.requestId)).data.status == 'accepted'
-        && getAfter(/databases/$(database)/documents/friendRequests/$(request.resource.data.requestId)).data.fromUid in request.resource.data.memberUids
-        && getAfter(/databases/$(database)/documents/friendRequests/$(request.resource.data.requestId)).data.toUid in request.resource.data.memberUids;
-      allow update: if false;
-      // Admins can unlink a pair from the admin studio.
+      allow create, update: if false;
       allow delete: if isAdmin();
     }
 
     match /gameInvites/{inviteId} {
-      // A deleted invite reads as "not found"; existing invites and list queries stay private to their players.
+      // As with friend requests: participants read, players never write.
       allow get: if signedIn()
-        && (resource == null || resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid);
-      allow list: if signedIn()
-          && (resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid)
+        && (resource == null || resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid)
         || isAdmin();
-      allow create: if signedIn()
-        && request.resource.data.keys().hasOnly(['fromUid', 'toUid', 'fromName', 'toName', 'friendshipId', 'roomId', 'gameId', 'status', 'createdAt'])
-        && request.resource.data.fromUid == request.auth.uid
-        && request.resource.data.toUid is string
-        && request.resource.data.toUid != request.auth.uid
-        && request.resource.data.status == 'pending'
-        && request.resource.data.createdAt == request.time
-        && request.resource.data.friendshipId is string
-        && get(/databases/$(database)/documents/friendships/$(request.resource.data.friendshipId)).data.memberUids.hasAny([request.auth.uid])
-        && get(/databases/$(database)/documents/friendships/$(request.resource.data.friendshipId)).data.memberUids.hasAny([request.resource.data.toUid])
-        && get(/databases/$(database)/documents/rooms/$(request.resource.data.roomId)).data.hostUid == request.auth.uid;
-      allow update: if signedIn()
-        && resource.data.toUid == request.auth.uid
-        && resource.data.status == 'pending'
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'respondedAt'])
-        && request.resource.data.status in ['accepted', 'declined']
-        && request.resource.data.respondedAt == request.time;
-      allow delete: if signedIn()
-        && (resource.data.fromUid == request.auth.uid
-          || (resource.data.toUid == request.auth.uid && isExpiredRoom(resource.data))
-          || isAdmin());
+      allow list: if (signedIn()
+          && (resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid))
+        || isAdmin();
+      allow create, update: if false;
+      allow delete: if isAdmin();
+    }
+
+    match /blocks/{blockId} {
+      // A block list is private to the person who created it (blockId is `blocker_blocked`).
+      allow get, list: if signedIn() && request.auth.uid == resource.data.blockerUid
+        || isAdmin();
+      allow create, update, delete: if false;
+    }
+
+    match /reports/{reportId} {
+      // Reports are for the operator. A player never reads another player's report, and only the
+      // backend writes one (`reportProblem`).
+      allow get, list: if isAdmin();
+      allow create, update, delete: if false;
+    }
+
+    match /rateLimits/{uid} {
+      // Per-user rate-limit documents are backend bookkeeping and contain nothing a client needs.
+      allow read, write: if false;
     }
 
     match /rooms/{roomId} {
-      // A room cannot be listed or discovered. The invite URL carries its document ID.
-      // `resource == null` lets a read of a room that does not exist succeed with "not found" (so the app can say
-      // "This invite link is invalid or has expired"). Without it Firestore answers permission-denied, because
-      // `resource.data` does not exist for a missing document. Existing rooms are still visible only while
-      // waiting, to their members, once expired (so visitors can auto-delete stale rooms), or to admins.
-      allow get: if signedIn()
-        && (resource == null || resource.data.status == 'waiting' || isRoomMember(resource.data) || isExpiredRoom(resource.data) || isAdmin());
+      // A room cannot be listed or discovered: the invite URL carries its random document ID. A
+      // member of the room reads it (that is the live game snapshot), an admin reads any, and a
+      // missing document reads as "not found" instead of permission-denied so the app can say
+      // "this invite link is invalid or has expired".
+      //
+      // There is no write path: rooms are created, joined, started, played, rematched and deleted
+      // by the callables, which keeps secret state and hidden information on the server and makes
+      // every move a validated one.
+      allow get: if signedIn() && (resource == null || isRoomMember(resource.data) || isAdmin());
       allow list: if isAdmin();
-      allow create: if signedIn()
-        && request.resource.data.keys().hasOnly(['hostUid', 'hostName', 'gameId', 'playerUids', 'playerNames', 'maxPlayers', 'status', 'state', 'createdAt', 'updatedAt'])
-        && request.resource.data.hostUid == request.auth.uid
-        && request.resource.data.gameId is string
-        && request.resource.data.playerUids is list
-        && request.resource.data.playerUids.size() == 1
-        && request.resource.data.playerUids.hasAny([request.auth.uid])
-        && request.resource.data.playerNames is map
-        && request.resource.data.playerNames.size() == 1
-        && request.resource.data.playerNames.keys().hasAll(request.resource.data.playerUids)
-        && request.resource.data.maxPlayers in [2, 3]
-        && request.resource.data.status == 'waiting'
-        && request.resource.data.state is map
-        && request.resource.data.createdAt == request.time
-        && request.resource.data.updatedAt == request.time;
-      // Admins bypass every player-level constraint: the admin studio can kick a lobby member,
-      // force-close a match, or rewrite room data, and Firestore itself checks their flag.
-      allow update: if isAdmin() || (signedIn() && !isExpiredRoom(resource.data) && (
-        (
-          resource.data.status == 'waiting'
-          && request.resource.data.status == 'waiting'
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['playerUids', 'playerNames', 'state', 'updatedAt'])
-          && request.resource.data.playerUids is list
-          && request.resource.data.playerUids.size() == resource.data.playerUids.size() + 1
-          && request.resource.data.playerUids.size() <= resource.data.maxPlayers
-          && request.resource.data.playerUids.hasAll(resource.data.playerUids)
-          && !resource.data.playerUids.hasAny([request.auth.uid])
-          && request.resource.data.playerUids.hasAny([request.auth.uid])
-          && request.resource.data.playerNames is map
-          && request.resource.data.playerNames.size() == request.resource.data.playerUids.size()
-          && request.resource.data.playerNames.keys().hasAll(request.resource.data.playerUids)
-          && request.resource.data.updatedAt == request.time
-        )
-        ||
-        (
-          // Leave a room that has not started yet. Your seat is released, so the invite link works
-          // for the next person - without this, one guest who closed the tab would block the room
-          // forever. You may only remove yourself, and nobody else's uid may change.
-          resource.data.status == 'waiting'
-          && request.resource.data.status == 'waiting'
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['playerUids', 'playerNames', 'state', 'updatedAt'])
-          && request.resource.data.playerUids.size() == resource.data.playerUids.size() - 1
-          && resource.data.playerUids.hasAll(request.resource.data.playerUids)
-          && resource.data.playerUids.hasAny([request.auth.uid])
-          && !request.resource.data.playerUids.hasAny([request.auth.uid])
-          && request.resource.data.playerNames.size() == request.resource.data.playerUids.size()
-          && request.resource.data.playerNames.keys().hasAll(request.resource.data.playerUids)
-          && request.resource.data.updatedAt == request.time
-        )
-        ||
-        (
-          isRoomMember(resource.data)
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['state', 'status', 'updatedAt', 'playerNames', 'winnerUid'])
-          && request.resource.data.playerUids == resource.data.playerUids
-          && request.resource.data.hostUid == resource.data.hostUid
-          && request.resource.data.gameId == resource.data.gameId
-          && request.resource.data.maxPlayers == resource.data.maxPlayers
-          && request.resource.data.status in ['waiting', 'playing', 'finished']
-          && request.resource.data.updatedAt == request.time
-          && (
-            !request.resource.data.diff(resource.data).affectedKeys().hasAny(['playerNames'])
-            || (
-              request.resource.data.playerNames is map
-              && request.resource.data.playerNames.size() == request.resource.data.playerUids.size()
-              && request.resource.data.playerNames.keys().hasAll(request.resource.data.playerUids)
-              && request.resource.data.playerNames.diff(resource.data.playerNames).affectedKeys().hasOnly([request.auth.uid])
-            )
-          )
-          && (
-            !request.resource.data.diff(resource.data).affectedKeys().hasAny(['winnerUid'])
-            || (
-              resource.data.status == 'playing'
-              && request.resource.data.status == 'finished'
-              && request.resource.data.state.phase == 'finished'
-            )
-            || (
-              resource.data.status == 'finished'
-              && request.resource.data.status == 'playing'
-              && request.resource.data.state.phase == 'playing'
-              && request.resource.data.get('winnerUid', null) == null
-            )
-          )
-          && (
-            // A normal move: the status stays the same and the game stays playable.
-            (request.resource.data.status == resource.data.status
-              && request.resource.data.state.phase == 'playing'
-              && request.resource.data.get('winnerUid', null) == resource.data.get('winnerUid', null))
-            // The host starts the match, once at least one friend has joined.
-            || (
-              resource.data.status == 'waiting'
-              && request.resource.data.status == 'playing'
-              && request.auth.uid == resource.data.hostUid
-              && resource.data.playerUids.size() >= 2
-            )
-            // Any player may close the match - but only when the game state written in the same
-            // update says the match is over, so nobody can end a game that is still running.
-            || (
-              resource.data.status == 'playing'
-              && request.resource.data.status == 'finished'
-              && request.resource.data.state.phase == 'finished'
-            )
-            // "Play again": a finished match can be reopened, but only with a fresh game state
-            // written in the same update, so a room can never claim to be playing a finished game.
-            || (
-              resource.data.status == 'finished'
-              && request.resource.data.status == 'playing'
-              && request.resource.data.state.phase == 'playing'
-            )
-          )
-        )
-      ));
-      allow delete: if signedIn()
-        && (isAdmin()
-          || isExpiredRoom(resource.data)
-          || (resource.data.hostUid == request.auth.uid && resource.data.status == 'waiting')
-          // A waiting room nobody is left in is litter: whoever is still in it may clear it away.
-          || (resource.data.status == 'waiting' && resource.data.playerUids.hasOnly([request.auth.uid])));
+      allow create, update, delete: if false;
 
       match /presence/{uid} {
-        // "Who is still in this room": one heartbeat document per member, written only by that
-        // member, readable by every member. Guests have no profile document, so presence lives
-        // here with the room. The room itself stays unlistable; only its members can see these.
+        // "Who is still in this room": one heartbeat per member, written only by that member and
+        // read by the room's members. A heartbeat is not a security boundary, so it stays a direct
+        // client write; everything else about the room does not.
         function roomData() {
           return get(/databases/$(database)/documents/rooms/$(roomId)).data;
         }
@@ -296,9 +152,22 @@ service cloud.firestore {
           && request.resource.data.keys().hasOnly(['status', 'lastSeenAt'])
           && request.resource.data.status in ['here', 'left']
           && request.resource.data.lastSeenAt == request.time;
-        // Your own heartbeat is yours to remove, also once the room is gone (the last player to
-        // leave deletes the room and their heartbeat in one transaction).
         allow delete: if signedIn() && (request.auth.uid == uid || isAdmin());
+      }
+
+      match /views/{uid} {
+        // A player's private projection (Sea Battle fleets): readable by that player only. Written
+        // by the backend, never by the browser, so a client cannot invent its own fleet.
+        allow get: if signedIn() && (request.auth.uid == uid || isAdmin());
+        allow list: if isAdmin();
+        allow create, update, delete: if false;
+      }
+
+      match /secrets/{document} {
+        // The authoritative engine state: codebreaker codes, fleets, quiz answer keys, unopened
+        // card faces. No client may read or write it, admin included - the operator's tools go
+        // through the callables, which return only projections that are safe to show.
+        allow read, write: if false;
       }
     }
   }

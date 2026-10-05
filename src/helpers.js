@@ -1,4 +1,12 @@
-export const USERNAME_REGEX = /^[a-z0-9_]{3,18}$/;
+import {
+  DISPLAY_NAME_MAX,
+  USERNAME_REGEX,
+  sanitizeUsernameSeed,
+  suggestUsername,
+  validateUsername,
+} from '../shared/online/identity.js';
+
+export { DISPLAY_NAME_MAX, USERNAME_REGEX, sanitizeUsernameSeed, suggestUsername, validateUsername };
 export const THEME_STORAGE_KEY = 'psd-theme-preference';
 export const FAVORITES_STORAGE_KEY = 'psd-favorite-games';
 export const RECENT_STORAGE_KEY = 'psd-recent-games';
@@ -8,91 +16,6 @@ export const KNOWN_ROOMS_STORAGE_KEY = 'psd-known-rooms';
 /** Every room automatically expires and is deleted 1 hour after creation. */
 export const ROOM_TTL_MS = 60 * 60 * 1000;
 export const EXPIRED_ROOM_MESSAGE = 'This room expired after 1 hour and was automatically deleted.';
-
-/**
- * Normalizes arbitrary text (such as a Google displayName or email prefix)
- * into lowercase characters valid for a PSD-gaming username: [a-z0-9_].
- */
-export function sanitizeUsernameSeed(input = '') {
-  const ascii = String(input || '')
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase();
-  return ascii
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/_+/g, '_')
-    .replace(/^_+|_+$/g, '');
-}
-
-/**
- * Suggests a valid 3-18 character PSD-gaming username from a display name
- * and/or email address, optionally appending a numeric/text suffix.
- */
-export function suggestUsername(displayName = '', email = '', suffix = '') {
-  const emailLocal = String(email || '').split('@')[0] || '';
-  let base = sanitizeUsernameSeed(displayName);
-  if (base.length < 3) {
-    base = sanitizeUsernameSeed(emailLocal);
-  }
-  if (!base) {
-    base = 'player';
-  }
-  if (base.length < 3) {
-    base = `${base}_player`.replace(/^_+|_+$/g, '');
-  }
-
-  const cleanSuffix = sanitizeUsernameSeed(suffix);
-  if (cleanSuffix) {
-    const maxBaseLength = Math.max(3, 18 - cleanSuffix.length - 1);
-    const trimmedBase = base.slice(0, maxBaseLength).replace(/_+$/g, '');
-    const combined = `${trimmedBase}_${cleanSuffix}`.replace(/_+/g, '_').slice(0, 18).replace(/_+$/g, '');
-    if (USERNAME_REGEX.test(combined)) return combined;
-  }
-
-  let candidate = base.slice(0, 18).replace(/_+$/g, '');
-  while (candidate.length < 3) {
-    candidate = `${candidate}x`;
-  }
-  return candidate.slice(0, 18);
-}
-
-/**
- * Validates a raw username string against PSD-gaming's 3-18 char [a-z0-9_] rule.
- */
-export function validateUsername(rawUsername = '') {
-  const username = String(rawUsername || '').trim();
-  const usernameLower = username.toLowerCase();
-  if (!username) {
-    return {
-      ok: false,
-      username: '',
-      usernameLower: '',
-      error: 'Choose a username between 3 and 18 characters.',
-    };
-  }
-  if (username.length < 3 || username.length > 18) {
-    return {
-      ok: false,
-      username,
-      usernameLower,
-      error: 'Usernames must be 3–18 characters long.',
-    };
-  }
-  if (!USERNAME_REGEX.test(usernameLower)) {
-    return {
-      ok: false,
-      username,
-      usernameLower,
-      error: 'Usernames must be 3–18 characters: letters, numbers, or underscores.',
-    };
-  }
-  return {
-    ok: true,
-    username,
-    usernameLower,
-    error: '',
-  };
-}
 
 /**
  * Normalizes a stored theme preference ('light' | 'dark' | 'system').

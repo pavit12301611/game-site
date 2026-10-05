@@ -16,7 +16,7 @@
  */
 
 import { getRedirectResult, linkWithPopup, linkWithRedirect, signInWithPopup, signInWithRedirect } from 'firebase/auth';
-import { doc, getDoc, runTransaction, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 import { auth, createGoogleProvider, db, firebaseReady } from './firebase.js';
 import { setupError } from './connection.js';
 import { friendlyError } from './errors.js';
@@ -26,6 +26,7 @@ import { state } from './state.js';
 import { showToast } from './ui/toast.js';
 import { isGoogleUser } from './ui/players.js';
 import { stopSocial, subscribeSocial } from './social.js';
+import { callBackend } from './online/callables.js';
 import { openRoomFromLink, sweepExpiredKnownRooms } from './online/rooms.js';
 import { DISPLAY_NAME_STORAGE_KEY, suggestUsername, validateUsername } from './helpers.js';
 
@@ -114,19 +115,47 @@ export async function registerProfile(user, rawUsername) {
   const validation = validateUsername(rawUsername);
   if (!validation.ok) throw new Error(validation.error);
   const { username, usernameLower } = validation;
-  const profileRef = doc(store, 'profiles', user.uid);
-  const usernameRef = doc(store, 'usernames', usernameLower);
-  await runTransaction(store, async (transaction) => {
-    const claim = await transaction.get(usernameRef);
-    if (claim.exists()) throw new Error('That username is already taken. Try another one.');
-    transaction.set(usernameRef, { uid: user.uid, username, createdAt: serverTimestamp() });
-    transaction.set(profileRef, { uid: user.uid, username, usernameLower, createdAt: serverTimestamp() });
-  });
+  // The claim is one transaction on the trusted backend (`claimUsername`): the reservation document
+  // and the profile are written together, nobody can win a race for a name, and profiles are not
+  // client-writable any more (see firestore.rules).
+  await callBackend('claimUsername', { username });
   state.profile = { uid: user.uid, username, usernameLower };
   state.displayName = username;
   localStorage.setItem(DISPLAY_NAME_STORAGE_KEY, username);
   await refreshAdminStatus(user);
   subscribeSocial(user);
+}
+
+/**
+ * Self-service account deletion.
+ *
+ * The backend does the deleting (profile, username reservation, friendships, requests, invites,
+ * presence, eligible rooms, then the Firebase Auth user) and refuses when it cannot: the single
+ * admin account is told to promote someone first, and a sign-in older than ten minutes is told to
+ * sign in again. Nothing here claims success unless the backend confirmed it, and only then does the
+ * browser sign out.
+ *
+ * @returns {Promise<Record<string, any>>} the backend's summary of what was removed
+ */
+export async function deleteAccountNow() {
+  if (!firebaseReady || !state.user) throw setupError();
+  // Refresh the ID token first: `auth_time` is what the backend's recent-login rule reads, and a
+  // long-lived tab would otherwise be rejected without the player understanding why.
+  try {
+    await authInstance.currentUser?.getIdToken(true);
+  } catch (error) {
+    console.warn('[PSD-gaming] Could not refresh the sign-in before deletion:', /** @type {any} */ (error)?.message);
+  }
+  const result = await callBackend('deleteAccount', { confirm: true });
+  stopSocial();
+  state.modal = null;
+  state.local = null;
+  try {
+    await authInstance.signOut();
+  } catch (error) {
+    console.warn('[PSD-gaming] Account deleted but the local sign-out failed:', /** @type {any} */ (error)?.message);
+  }
+  return result;
 }
 
 export async function refreshAdminStatus(user) {

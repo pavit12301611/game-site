@@ -14,6 +14,7 @@ import { state } from './state.js';
 import { applyFx } from './ui/fx.js';
 import { trackResult } from './result-popup.js';
 import { captureFocus, restoreFocus, syncLiveRegion, manageDialogFocus, focusPageStart } from './a11y.js';
+import { applyPageMeta } from './seo.js';
 
 /** The root element the app renders into (`#app` in index.html). */
 export const appRoot = document.querySelector('#app');
@@ -44,6 +45,7 @@ export function render() {
   else restoreFocus(appRoot, before);
   manageDialogFocus(appRoot, before, pageChanged);
   syncLiveRegion(appRoot);
+  applyPageMeta();
   applyFx(appRoot);
   trackResult(render);
 }

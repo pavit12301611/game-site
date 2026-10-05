@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  One entry, deliberately. The app is a single HTML document with a hash router, and a hash route is
+  the same URL to a crawler, so listing `#/catalog` or `#/privacy` here would be noise. Replace the
+  domain with the deployment's own URL if it is not the one in index.html's canonical link.
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://psd-gaming.vercel.app/</loc>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>

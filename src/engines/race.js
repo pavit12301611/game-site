@@ -1,5 +1,10 @@
 /**
  * race engine — real-time button mashing, no turns: first player to the target score wins.
+ *
+ * `tapGapMs` is the tempo of the game: the shortest interval between two taps that count. It is a
+ * real rule difference between the six races (Pixel Tap Sprint accepts every tap, Bug Blaster one
+ * every 250 ms), and in online play the trusted backend enforces the same number, so a script that
+ * fires thousands of taps a second gains nothing.
  * Games: Pixel Tap Sprint, Button Masher, Turbo Charge, Reaction Rush, Spacebar Showdown, Bug Blaster.
  */
 
@@ -16,7 +21,7 @@ import { assertPlaying, createRaceState } from './shared.js';
  * @returns {GameState}
  */
 export function createInitialState(game, players) {
-  return createRaceState(game, players);
+  return { ...createRaceState(game, players), tapGapMs: Number(game.options.tapGapMs) || 0 };
 }
 
 /**

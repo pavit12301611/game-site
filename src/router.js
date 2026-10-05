@@ -1,5 +1,6 @@
 /**
- * The hash router: `#/home`, `#/catalog`, `#/friends`, `#/admin`, `#/room/<id>` and `#/game`.
+ * The hash router: `#/home`, `#/catalog`, `#/friends`, `#/admin`, `#/privacy`, `#/safety`,
+ * `#/room/<id>` and `#/game`.
  *
  * `parseHash` and `setHash` are the only two pieces most callers need. `routeFromHash` runs on every
  * hash change (and once at startup) and is the only place that decides what being on a page means:
@@ -30,8 +31,10 @@ export function setHash(path) {
 
 export function routeFromHash() {
   const { page, id } = parseHash();
-  const validPages = ['home', 'catalog', 'friends', 'admin', 'room', 'game'];
+  const validPages = ['home', 'catalog', 'friends', 'admin', 'privacy', 'safety', 'room', 'game'];
   const nextPage = validPages.includes(page) ? page : 'home';
+  // A mistyped or stale link lands on home with a sentence about it, never a blank screen.
+  state.routeNotice = validPages.includes(page) ? '' : String(page || '').slice(0, 40);
   if (nextPage === 'room' && id) {
     state.page = 'room';
     state.local = null;
