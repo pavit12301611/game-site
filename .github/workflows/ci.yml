@@ -86,9 +86,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           {
-            echo "The Firestore rules job failed. Last lines of the emulator run:"
+            echo "The Firestore rules job failed."
+            echo
+            echo "Failing tests (with the assertion detail):"
             echo '```'
-            tail -c 3000 /tmp/rules.log
+            grep -n -A 30 '^not ok' /tmp/rules.log || true
+            echo '```'
+            echo "Last lines of the run:"
+            echo '```'
+            tail -c 2000 /tmp/rules.log
             echo '```'
           } > /tmp/rules-comment.md
           gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/rules-comment.md || true
