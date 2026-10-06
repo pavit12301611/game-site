@@ -197,6 +197,20 @@ service cloud.firestore {
         // through the callables, which return only projections that are safe to show.
         allow read, write: if false;
       }
+
+      match /chat/{messageId} {
+        // In-match chat. Members of the room may read it in real time while the match is live.
+        // The trusted backend (the `sendChat` callable) writes every message - it re-checks
+        // membership, rate limits, block lists and message length - so there is no client write
+        // path. Chat is permanently deleted the moment the match ends (`purgeRoomChat` in
+        // handlers.js runs when status becomes `finished` and on every rematch); the room's 1-hour
+        // TTL is a secondary safety net via `recursiveDelete(rooms/{roomId})`.
+        function roomData() {
+          return get(/databases/$(database)/documents/rooms/$(roomId)).data;
+        }
+        allow get, list: if signedIn() && (isRoomMember(roomData()) || isAdmin());
+        allow create, update, delete: if false;
+      }
     }
   }
 }

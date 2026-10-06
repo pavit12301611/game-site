@@ -84,6 +84,8 @@ const HTTPS_CODE = {
   'room-full': 'failed-precondition',
   'room-started': 'failed-precondition',
   'room-expired': 'failed-precondition',
+  'chat-not-live': 'failed-precondition',
+  'chat-empty': 'invalid-argument',
   'room-not-found': 'not-found',
   'user-not-found': 'not-found',
   'invite-missing': 'not-found',
@@ -137,6 +139,7 @@ export const startRoom = callableFor('startRoom');
 export const claimHost = callableFor('claimHost');
 export const playMove = callableFor('playMove');
 export const rematch = callableFor('rematch');
+export const sendChat = callableFor('sendChat');
 export const blockUser = callableFor('blockUser');
 export const unblockUser = callableFor('unblockUser');
 export const reportProblem = callableFor('reportProblem');
