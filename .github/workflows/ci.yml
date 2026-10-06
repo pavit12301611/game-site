@@ -50,7 +50,21 @@ jobs:
         run: node scripts/sync-shared.mjs
       - name: The shared mirror matches shared/ and src/engines/
         run: node scripts/sync-shared.mjs --check
-      - name: Backend tests (handlers, rooms, cleanup)
+      # The Vercel serverless routes import functions/src/** and the generated vendor mirror; a
+      # typo anywhere in that graph would otherwise surface only as a 500 on the deployed site.
+      # firebase-admin resolves from functions/node_modules, exactly as on the Vercel build.
+      - name: The Vercel api routes load (module graph resolves)
+        run: |
+          node --input-type=module -e '
+            const { pathToFileURL } = await import("node:url");
+            const backend = await import(pathToFileURL("api/backend/[[...name]].js"));
+            const cron = await import(pathToFileURL("api/cron/cleanup.js"));
+            if (typeof backend.default !== "function" || typeof cron.default !== "function") {
+              throw new Error("the api routes must each export a handler function");
+            }
+            console.log("api routes load: /api/backend/<name>, /api/cron/cleanup");
+          '
+      - name: Backend tests (handlers, rooms, cleanup, HTTP transport)
         run: npm test
         working-directory: functions
 

@@ -73,3 +73,40 @@ test('policy codes and retry hints survive the mapping untouched', () => {
   assert.equal(error.message, 'Too many rooms. Try again in 1 minute.');
   assert.equal(error.retryAfterMs, 60000);
 });
+
+test('HTTP responses from the same-origin backend become the same error shape the callable SDK produces', () => {
+  // The Vercel transport answers { error: { status, message, details } }; the mapping turns that
+  // into a functions/<status> error so toBackendError handles both transports with one mapping.
+  const policy = callables.errorFromHttpResponse(412, {
+    error: { status: 'failed-precondition', message: 'This room is full.', details: { code: 'room-full' } },
+  });
+  assert.equal(policy.code, 'functions/failed-precondition');
+  assert.equal(policy.message, 'This room is full.');
+  assert.deepEqual(policy.details, { code: 'room-full' });
+
+  const missing = callables.errorFromHttpResponse(404, null);
+  assert.equal(missing.code, 'functions/not-found');
+
+  const opaque = callables.errorFromHttpResponse(502, '<html>Bad Gateway</html>');
+  assert.equal(opaque.code, 'functions/internal');
+  assert.equal(opaque.message, 'internal');
+});
+
+test('a backend host without credentials says exactly what to add', () => {
+  // The backend answers with its own policy code, so the sentence it wrote passes through as-is;
+  // a host error page without that code is still recognised from the message.
+  const withCode = callables.toBackendError({
+    code: 'functions/internal',
+    message: 'The backend is not configured: set FIREBASE_SERVICE_ACCOUNT on the host (Vercel → Settings → Environment Variables) to the service-account key JSON, then redeploy. Local practice in the game library keeps working without it.',
+    details: { code: 'backend-unconfigured' },
+  }, 'createRoom');
+  assert.equal(withCode.code, 'backend-unconfigured');
+  assert.match(withCode.message, /FIREBASE_SERVICE_ACCOUNT/);
+
+  const withoutCode = callables.toBackendError({
+    code: 'functions/internal',
+    message: 'The backend is not configured: set FIREBASE_SERVICE_ACCOUNT on the host, then redeploy.',
+  }, 'createRoom');
+  assert.equal(withoutCode.code, 'backend-unconfigured');
+  assert.match(withoutCode.hint, /FIREBASE_SERVICE_ACCOUNT/);
+});

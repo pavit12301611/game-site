@@ -1,18 +1,16 @@
 # Online play: the trusted backend
 
-> **Status: the browser migration has landed; the backend itself is still not deployed.**
-> `functions/` holds the callable API, the validation policy and the tests (43, green), and the
-> browser now performs every online mutation through callables (`src/online/`,
-> `src/social.js`, `src/accounts.js`) while `firestore.rules` denies it those writes — so the two
-> sides have to be deployed **together**: rules without functions stop online play, functions
-> without rules leave the old permissive rules in place. **Online play needs
-> `firebase deploy --only functions` to have been run against the project the site was built with.**
-> Verified 2026-10-06 against production: `https://us-central1-psd-gaming.cloudfunctions.net/createRoom`
-> answers 404, so psd-gaming.vercel.app calls functions that do not exist. A 404 on the preflight
-> carries no `Access-Control-Allow-Origin` header, so the browser console reports a CORS error that
-> masks the missing deployment — the app's own message for that case lives in
-> `src/online/callables.js`. Deploy with the runbook below, or with the manual
-> **Deploy Cloud Functions backend** workflow (`.github/workflows/deploy-functions.yml`).
+> **Status: the backend ships with the site and needs no paid Firebase plan.**
+> The site is hosted on Vercel, and the trusted backend runs there too — as same-origin serverless
+> functions in [`api/`](../api/) (`POST /api/backend/<name>`), built on the same handlers as the
+> Firebase-callable transport in `functions/src/index.js`. Everything runs on free tiers: Vercel
+> Hobby (serverless functions + a once-a-day cron), Firebase Spark (Auth, Firestore, rules and
+> index deploys). The one server-side setup step is the `FIREBASE_SERVICE_ACCOUNT` environment
+> variable in Vercel; until it exists, every online action fails with the exact fix in the message
+> (see "Deploying" below). Why same-origin matters: the browser calls its own origin, so there is no
+> CORS preflight at all — the earlier production breakage (`createRoom` blocked by CORS) was an
+> undeployed Firebase function whose 404 carried no `Access-Control-Allow-Origin` header, which the
+> console reported as a CORS error while the real problem was that the function did not exist.
 
 ## Why a backend at all
 
@@ -24,9 +22,10 @@ them and scrape usernames.
 
 The backend moves the decisions to a place the browser cannot edit:
 
-- every online mutation is a callable Cloud Function (`functions/src/index.js`) that re-checks uid,
-  membership, room status, room lifetime, turn order, action shape and tap tempo against the stored
-  document (`functions/src/handlers.js` and `shared/online/room.js`);
+- every online mutation is one backend call (same-origin `/api/backend/<name>` by default, or a
+  Firebase callable when `VITE_BACKEND_URL=firebase`) that re-checks uid, membership, room status,
+  room lifetime, turn order, action shape and tap tempo against the stored document
+  (`functions/src/handlers.js` and `shared/online/room.js`);
 - secret state (codebreaker codes, fleets, quiz answer keys, unopened card faces, locked picks) is
   written only to `rooms/{roomId}/secrets/engine`, which no client rule ever allows reading;
 - usernames are claimed through one transaction that the caller cannot win by racing;
@@ -41,11 +40,15 @@ The backend moves the decisions to a place the browser cannot edit:
 
 | Path | What it is |
 | --- | --- |
-| `functions/src/index.js` | Callable wrappers (20 of them) plus the `cleanupExpired` schedule. Maps our error codes to `HttpsError` statuses. |
+| `api/backend/[[...name]].js` | The Vercel serverless route the browser calls by default: `POST /api/backend/<callable>`, same-origin, one function for the whole surface. |
+| `api/cron/cleanup.js` | The Vercel serverless route for the expiry sweep: `/api/cron/cleanup`, guarded by `CRON_SECRET`. |
+| `functions/src/index.js` | The *optional* Firebase-callable transport (needs Blaze): `onCall` wrappers plus the `cleanupExpired` Cloud Scheduler. |
+| `functions/src/http-backend.js` | The HTTP transport behind `api/`: verifies the Firebase ID token, dispatches to the handlers, maps errors to the same wire shape as the callable SDK, checks the cron secret. |
+| `functions/src/backend.js` | The runtime shared by both transports: handlers + store + error codes. Only the transport differs. |
 | `functions/src/handlers.js` | All policy: identity, social, rooms, moves, blocks, reports, deletion, admin. Pure functions of (payload, auth context, store). |
 | `functions/src/store.js` | The narrow Firestore adapter the handlers use (`get`/`set`/`query`/`transaction`/`batch`/`recursiveDelete`). |
-| `functions/src/cleanup.js` | Expired-room, finished-room, invite, request, rate-limit and report purging. Idempotent by construction. |
-| `functions/test/` | The backend tests (in-memory `Store` double — no emulator, no Java, no network). |
+| `functions/src/cleanup.js` | Expired-room, finished-room, invite, request, rate-limit and report purging. Idempotent by construction, and one failed step does not abort the sweep. |
+| `functions/test/` | The backend tests (in-memory `Store` double — no emulator, no Java, no network), covering both transports. |
 | `shared/online/` | Room transitions, projections, identity rules and rate limits. Imported by **both** the browser and the functions. |
 | `functions/vendor/` | Generated mirror of `shared/**` and `src/engines/**`. Never edit; run `node scripts/sync-shared.mjs`. |
 
@@ -60,56 +63,74 @@ The emulator suite needs **Java 11 or newer** (the Firestore emulator is a JVM a
 CLI (`firebase-tools`, already a dev dependency). No real Firebase project is touched.
 
 ```bash
-npm ci                     # browser app
-cd functions && npm ci     # backend (firebase-admin + firebase-functions)
+npm ci                     # browser app + the backend's serverless dependencies (firebase-admin)
+cd functions && npm ci     # the backend package (its own lockfile)
 
 node scripts/sync-shared.mjs         # refresh the mirror after editing shared/ or src/engines/
 cd functions && npm test             # backend tests: no emulator, no Java, no network
 node scripts/sync-shared.mjs --check # fail when the mirror is stale (CI does this)
 
-firebase emulators:start --only functions,firestore,auth \
-  --project psd-gaming-local         # functions on 127.0.0.1:5001
+firebase emulators:start --only firestore,auth \
+  --project psd-gaming-local         # Firestore on 127.0.0.1:8080, Auth on 9099
 npm run test:rules                   # firestore.rules against the Firestore emulator
 ```
+
+Online play in local development needs the backend too, and the backend needs admin credentials:
+run `vercel dev` (serves the site *and* the `api/` functions on one port, with
+`FIREBASE_SERVICE_ACCOUNT` and `CRON_SECRET` read from `.env.local` or `vercel env pull`), and
+point the Vite dev server's proxy at it — `npm run dev` already forwards `/api` to
+`http://127.0.0.1:3000` (override with `API_PROXY_TARGET`). With `FIREBASE_AUTH_EMULATOR_HOST` and
+`FIRESTORE_EMULATOR_HOST` set, the Admin SDK talks to the local emulator suite instead of the real
+project. Plain `npm run dev` without `vercel dev` still serves local practice; online actions then
+report the backend as not answering, which is the honest answer.
 
 If Java is unavailable the rules suite is **skipped locally, never silently "passing"**; the
 `FIRESTORE_EMULATOR_HOST` contract makes it fail instead of skipping inside `npm run test:rules`, so
 the CI job is the real gate.
 
-## Deploying (operator steps — not run here)
+## Deploying (operator steps — the free plan path)
 
-Raising a project from zero, in order:
+Everything below runs on free tiers: **Vercel Hobby** (serverless functions, one daily cron) and
+**Firebase Spark** (Auth, Firestore, rules and index deploys). No Blaze plan, no credit card.
 
-1. **Upgrade the Firebase project to the Blaze (pay-as-you-go) plan.** Cloud Functions, Cloud
-   Scheduler (`cleanupExpired` runs every 15 minutes) and outbound network calls are not available on
-   the free Spark plan. Costs for a hobby deployment are normally inside the free monthly allowance,
-   but a billing account and a budget alert are required; nothing in this repository can verify your
-   actual usage.
-2. Enable the sign-in providers you want in **Authentication → Sign-in method** (Google,
-   Email/Password, Anonymous for guests).
-3. Provision the first admin: create the account, then add `admins/{uid} = { admin: true }` in the
-   Firebase console. Nobody can mint an admin flag from the client.
-4. Deploy the rules and functions (the client migration has landed, so both belong together now):
+1. **Enable the sign-in providers** you want in Firebase Console → Authentication → Sign-in method
+   (Google, Email/Password, Anonymous for guests).
+2. **Give the backend its credentials.** Firebase Console → Project settings → Service accounts →
+   *Generate new private key*, then in Vercel → Settings → Environment Variables add:
+   - `FIREBASE_SERVICE_ACCOUNT` — the contents of that JSON key file, pasted as one value
+     (raw JSON or base64). Server-side only; it is never sent to the browser, and the repository's
+     secret scan refuses to let one be committed.
+   - `CRON_SECRET` — any long random string, so only your schedulers can trigger the cleanup.
+   Enable both for **Production** and **Preview**, then **redeploy** (a running deployment never
+   sees a changed variable).
+3. **Publish the rules and the one composite index** (both free on Spark; `.firebaserc` already
+   points at the project):
 
    ```bash
-   firebase deploy --only firestore:rules
-   firebase deploy --only functions                # runs scripts/sync-shared.mjs as a predeploy hook
-   firebase functions:log
+   firebase deploy --only firestore:rules,firestore:indexes
    ```
 
-   Or, without a local toolchain: add a `FIREBASE_SERVICE_ACCOUNT` secret (Firebase Console →
-   Project settings → Service accounts → Generate new private key) to the GitHub repository, then
-   run the manual **Deploy Cloud Functions backend** workflow (`.github/workflows/deploy-functions.yml`).
-   It mirrors `shared/`, runs the backend suite, deploys, and then smoke-tests that the callable
-   endpoints answer the CORS preflight and refuse an anonymous call with 401 — the two things a
-   missing (or non-public) deployment gets wrong, and the exact failure the console otherwise shows
-   only as a masked CORS error.
+   Without the rules the locked-down client permissions are not in force; without the index the
+   finished-rooms step of the cleanup is skipped (the sweep records it and continues).
+4. **Push to `main`.** Vercel builds the site *and* the backend together — the same deployment now
+   carries both, so the two can never drift apart again.
+5. **Restore the 15-minute cleanup cadence** (optional but recommended). Vercel's Hobby cron runs
+   once a day (`vercel.json`); rooms are *refused* at their 1-hour expiry regardless (the backend
+   checks `expiresAt` on every read and move), but physical deletion waits for the sweep. For the
+   original cadence, add two repository secrets — `PSD_CLEANUP_ENDPOINT`
+   (`https://psd-gaming.vercel.app/api/cron/cleanup`) and `PSD_CLEANUP_SECRET` (the same value as
+   Vercel's `CRON_SECRET`) — and the free **Expiry sweep** GitHub Actions workflow
+   (`.github/workflows/cleanup.yml`) calls the endpoint every 15 minutes.
 
-5. Optional second expiry mechanism: in the Firebase console, **Firestore → Time-to-live**, add a TTL
-   policy on the `expiresAtDate` field. The store adapter writes it next to the numeric `expiresAt`
-   the cleanup function queries, so the two never disagree.
-6. App Check is not required by this design but is worth enabling: the functions are protected by
-   Firebase Auth, and every rate limit is enforced per uid.
+### What still needs the Blaze plan (and only then)
+
+- `firebase deploy --only functions` — the *optional* Firebase-callable transport
+  (`functions/src/index.js`) plus its Cloud Scheduler. Point the browser at it by setting
+  `VITE_BACKEND_URL=firebase` in Vercel and redeploying. There is no reason to do this while the
+  same-origin backend ships with the site; the transport exists so the choice stays open.
+- Firestore TTL policies: a native TTL on `expiresAtDate` (the store adapter writes it next to the
+  numeric `expiresAt`) would be a second, independent expiry mechanism — but TTL itself requires
+  billing, so on Spark the cleanup sweep is the one mechanism.
 
 ### What the operator must still decide (labelled, not invented here)
 
@@ -130,8 +151,9 @@ Raising a project from zero, in order:
 
 ## Staging smoke-test checklist
 
-Run this against a staging project after deploying functions (and after the rules migration, if you
-are publishing the locked rules). Every line is something the automated suites cannot check for you.
+Run this against a staging project once it is deployed (the backend ships with the site, so a
+Vercel preview URL with `FIREBASE_SERVICE_ACCOUNT` enabled for **Preview** is enough). Every line is
+something the automated suites cannot check for you.
 
 - [ ] Google sign-in and Email/Password sign-in both complete; a guest link stays anonymous.
 - [ ] Host a 2-player room, join by invite link **and** by the 7-character code; start it; finish it;

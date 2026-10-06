@@ -1,11 +1,16 @@
 /**
- * The PSD-gaming backend entry point: the callable functions the browser is allowed to use, plus the
- * scheduled data cleanup.
+ * The Firebase callable hosting of the PSD-gaming backend: the callable functions the browser is
+ * allowed to use, plus the scheduled data cleanup.
  *
  * Deployment shape (see docs/online-play.md and the README):
  *
  *   firebase deploy --only functions      # runs `node scripts/sync-shared.mjs` as a predeploy hook
  *   firebase emulators:start --only functions,firestore,auth
+ *
+ * This transport needs the Blaze plan (Cloud Functions + Cloud Scheduler). The default deployment
+ * of this project does NOT use it: `functions/src/http-backend.js` exposes the same handlers over
+ * plain HTTPS, hosted as same-origin Vercel serverless functions from `api/`, which runs on the
+ * free tier. Set `VITE_BACKEND_URL=firebase` in the site's build to point the browser here instead.
  *
  * Nothing here trusts the browser. The Firestore rules deny every client write to rooms, profiles,
  * usernames, requests, invites, friendships, blocks and reports, so these functions are the only
@@ -13,7 +18,6 @@
  * lives in ./handlers.js and in the shared room transitions.
  */
 
-import { randomUUID } from 'node:crypto';
 import { initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
@@ -22,11 +26,8 @@ import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { setGlobalOptions } from 'firebase-functions/v2';
 
-import { GAMES } from '../vendor/shared/games.js';
-import { onlineItemsForGame } from '../vendor/shared/content/quiz-banks.js';
-import * as engineRegistry from '../vendor/src/engines/index.js';
+import { createBackendRuntime, describeBackendError, engines } from './backend.js';
 import { createFirestoreStore } from './store.js';
-import { PolicyError, RoomError, createHandlers } from './handlers.js';
 import { cleanupExpiredData } from './cleanup.js';
 
 setGlobalOptions({ region: 'us-central1', maxInstances: 10 });
@@ -35,76 +36,7 @@ const app = initializeApp();
 const db = getFirestore(app);
 const auth = getAuth(app);
 
-/** A short, URL-safe id used for room ids and report ids. */
-function shortId(length = 20) {
-  return randomUUID().replace(/-/g, '').slice(0, length);
-}
-
-/**
- * The engine registry the backend validates with — the *same* modules the browser runs, with one
- * crucial difference for quiz games: online rooms are dealt from the full bank minus the warm-up
- * items that ship to the browser, so an online answer is never present in a player's bundle.
- */
-export const engines = {
-  createInitialGameState: (game, players, seed) => engineRegistry.createInitialGameState(
-    game,
-    players,
-    seed,
-    game.engine === 'quiz' ? { bank: onlineItemsForGame(game.id) } : undefined,
-  ),
-  applyGameAction: engineRegistry.applyGameAction,
-  engineIds: engineRegistry.engineIds,
-};
-
-/** @param {ReturnType<typeof createFirestoreStore>} store */
-function makeHandlers(store, { timestampMs = Date.now() } = {}) {
-  return createHandlers({
-    store,
-    games: GAMES,
-    engines,
-    onlineBankFor: onlineItemsForGame,
-    randomId: shortId,
-    timestampMs,
-    deleteAuthUser: async (uid) => { await auth.deleteUser(uid); },
-  });
-}
-
-/** Maps our error codes to the HTTP status the browser sees. */
-const HTTPS_CODE = {
-  unauthenticated: 'unauthenticated',
-  'admin-only': 'permission-denied',
-  blocked: 'permission-denied',
-  'not-your-request': 'permission-denied',
-  'not-your-invite': 'permission-denied',
-  'self-remove': 'permission-denied',
-  'rate-limited': 'resource-exhausted',
-  'recent-login-required': 'failed-precondition',
-  'last-admin': 'failed-precondition',
-  'illegal-move': 'failed-precondition',
-  'room-full': 'failed-precondition',
-  'room-started': 'failed-precondition',
-  'room-expired': 'failed-precondition',
-  'chat-not-live': 'failed-precondition',
-  'chat-empty': 'invalid-argument',
-  'room-not-found': 'not-found',
-  'user-not-found': 'not-found',
-  'invite-missing': 'not-found',
-  'request-missing': 'not-found',
-  'profile-required': 'failed-precondition',
-  'account-required': 'failed-precondition',
-  'username-taken': 'already-exists',
-  'already-friends': 'already-exists',
-};
-
-/** @param {unknown} error */
-function toHttpsError(error) {
-  if (error instanceof RoomError || error instanceof PolicyError) {
-    const status = HTTPS_CODE[error.code] ?? 'failed-precondition';
-    return new HttpsError(status, error.message, { code: error.code, ...error.details });
-  }
-  logger.error('[psd-gaming] unexpected backend failure', error);
-  return new HttpsError('internal', 'The online service hit an unexpected problem. Please try again.', { code: 'internal' });
-}
+export { engines };
 
 /**
  * Wraps one handler as a callable. Request authentication comes from Firebase itself
@@ -114,13 +46,14 @@ function toHttpsError(error) {
  */
 export function callableFor(name) {
   return onCall(async (request) => {
-    const store = createFirestoreStore(db, { now: () => Date.now() });
-    const handler = makeHandlers(store)[name];
+    const { handlers } = createBackendRuntime({ db, auth, timestampMs: Date.now() });
+    const handler = handlers[name];
     if (typeof handler !== 'function') throw new HttpsError('internal', `Unknown handler ${name}`, { code: 'unknown-handler' });
     try {
       return await handler(request.data ?? {}, request.auth ?? { uid: '' });
     } catch (error) {
-      throw toHttpsError(error);
+      const described = describeBackendError(error, { log: (cause) => logger.error('[psd-gaming] unexpected backend failure', cause) });
+      throw new HttpsError(described.status, described.message, described.details);
     }
   });
 }
@@ -163,8 +96,9 @@ export const cleanupExpired = onSchedule('every 15 minutes', async () => {
 
 /**
  * Room documents carry an `expiresAtDate` Firestore timestamp next to the numeric `expiresAt` (the
- * store adapter adds it), so the operator can enable a native Firestore TTL policy on
- * `expiresAtDate` as a second, independent expiry mechanism:
+ * store adapter adds it), so an operator can enable a native Firestore TTL policy on
+ * `expiresAtDate` as a second, independent expiry mechanism — on the Blaze plan only, because
+ * Firestore TTL itself requires billing:
  * Firebase Console → Firestore Database → Time-to-live → add `expiresAtDate`.
  */
 export const TTL_FIELD = 'expiresAtDate';
