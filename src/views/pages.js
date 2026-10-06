@@ -20,6 +20,7 @@ import { artImage, esc, icon } from '../ui/html.js';
 import { formatAwayFor } from '../presence-status.js';
 import { activeName, isGoogleUser } from '../ui/players.js';
 import { renderEngineBoard } from './boards.js';
+import { renderAdminMaintenance } from './maintenance.js';
 import {
   REVIEW_SENTIMENTS,
   buildImprovementIdeas,
@@ -252,9 +253,10 @@ export function timeAgo(timestamp) {
 }
 
 
-/** The five admin studio tabs. */
+/** The admin studio tabs. */
 const ADMIN_TABS = [
   ['overview', 'Overview'],
+  ['site', 'Maintenance'],
   ['rooms', 'Rooms'],
   ['players', 'Players'],
   ['social', 'Social'],
@@ -314,7 +316,7 @@ function renderAdminOverview(data) {
   return `<div class="admin-metrics">${metrics.map(([label, value, hint]) => `<article><span>${esc(label)}</span><b>${state.adminLoading ? '…' : value}</b><small>${esc(hint)}</small></article>`).join('')}</div>
     <div class="admin-grid">
       <section class="surface admin-table-panel"><div class="panel-heading"><div><span class="eyebrow">Live room snapshot</span><h2>Recent rooms</h2></div><button class="text-button" data-action="admin-tab" data-tab="rooms">Manage all ${icon('arrow')}</button></div>${renderAdminRoomsTable(activeRooms, { limitRows: 8 })}</section>
-      <aside class="surface admin-powers"><div class="panel-heading"><div><span class="eyebrow">God mode, on</span><h2>What this studio can do</h2></div><span class="admin-live"><i></i> ${GAMES.length} games</span></div><ul class="admin-powers-list"><li><b>Rooms:</b> inspect every room, kick anyone from a waiting lobby, delete a room with its heartbeats.</li><li><b>Players:</b> remove a profile and free its username, so repeat offenders cannot hide.</li><li><b>Social:</b> unlink friend pairs, clear stale requests and game invites.</li><li><b>Access:</b> grant and revoke admin flags without opening the Firebase console.</li></ul><div class="notice-panel"><span>${icon('shield')}</span><div><b>Firestore enforces every button.</b><p>Each action above checks <code>admins/{yourUid}.admin == true</code> on the server. A forged flag in someone else's browser cannot touch this data.</p></div></div></aside>
+      <aside class="surface admin-powers"><div class="panel-heading"><div><span class="eyebrow">God mode, on</span><h2>What this studio can do</h2></div><span class="admin-live"><i></i> ${GAMES.length} games</span></div><ul class="admin-powers-list"><li><b>Rooms:</b> inspect every room, kick anyone from a waiting lobby, delete a room with its heartbeats.</li><li><b>Players:</b> remove a profile and free its username, so repeat offenders cannot hide.</li><li><b>Social:</b> unlink friend pairs, clear stale requests and game invites.</li><li><b>Access:</b> grant and revoke admin flags without opening the Firebase console.</li><li><b>Maintenance:</b> close the public arcade, write a reason, and mint a 16-digit tester PIN for other devices.</li></ul><div class="notice-panel"><span>${icon('shield')}</span><div><b>Firestore enforces every button.</b><p>Each action above checks <code>admins/{yourUid}.admin == true</code> on the server. A forged flag in someone else's browser cannot touch this data.</p></div></div></aside>
     </div>`;
 }
 
@@ -407,8 +409,10 @@ export function renderAdmin() {
   else if (tab === 'social') body = renderAdminSocial(data);
   else if (tab === 'reviews') body = renderAdminReviews(data);
   else if (tab === 'access') body = renderAdminAccess(data);
+  else if (tab === 'site') body = renderAdminMaintenance();
   else body = renderAdminOverview(data);
-  return `<section class="admin-heading"><div><div class="eyebrow">Private admin area · UID verified · god mode</div><h1>Arcade control<span>.</span></h1><p>Only accounts with <code>admins/{uid}.admin = true</code> can see this workspace - and Firestore re-checks the flag on every action.</p></div><button class="button button-outline" data-action="refresh-admin">${icon('spark')} Refresh data</button></section>
+  const maintenancePill = state.maintenance.enabled ? `<span class="status-pill status-waiting">Maintenance on</span>` : '';
+  return `<section class="admin-heading"><div><div class="eyebrow">Private admin area · UID verified · god mode</div><h1>Arcade control<span>.</span></h1><p>Only accounts with <code>admins/{uid}.admin = true</code> can see this workspace - and Firestore re-checks the flag on every action.</p></div><div class="admin-heading-actions">${maintenancePill}<button class="button button-outline" data-action="refresh-admin">${icon('spark')} Refresh data</button></div></section>
     <div class="filter-pills admin-tabs" role="tablist" aria-label="Admin sections">${tabs}</div>
     ${state.adminLoading && data && !data.error ? `<div class="admin-refreshing"><i></i> Syncing with Firestore…</div>` : ''}
     <div id="admin-panel" role="tabpanel" aria-labelledby="admin-tab-${tab}" tabindex="0">${body}</div>`;

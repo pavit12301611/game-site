@@ -14,8 +14,9 @@ service cloud.firestore {
     //
     // Consequences a reader should know:
     //   * `allow create, update, delete: if false` below is deliberate, not an oversight.
-    //   * The two exceptions that stay client-writable are the ones that are not security decisions:
-    //     presence heartbeats (a client saying "I am here") and admin access management.
+    //   * The exceptions that stay client-writable are the ones that are not move-integrity
+    //     decisions: presence heartbeats (a client saying "I am here"), admin access management,
+    //     and the public maintenance status document (admin-written, world-readable).
     //   * Deploy the functions and these rules together. With these rules and no deployed backend,
     //     online play would stop working (and the app says so; see `src/online/callables.js`).
     // ---------------------------------------------------------------------------------------------
@@ -34,6 +35,33 @@ service cloud.firestore {
       return signedIn()
         && roomData.playerUids is list
         && roomData.playerUids.hasAny([request.auth.uid]);
+    }
+
+    match /site/{docId} {
+      // Public arcade gate. Anyone may read the single `status` document so a visitor learns the
+      // arcade is closed without signing in. Only an admin may write it, and the payload is a
+      // closed set of fields: a boolean, a short reason, and a salted PIN hash (never the PIN).
+      allow get: if true;
+      allow list: if false;
+      allow create, update: if isAdmin()
+        && docId == 'status'
+        && request.resource.data.keys().hasOnly(['enabled', 'reason', 'sessionId', 'pinSalt', 'pinHash', 'updatedAt', 'updatedBy'])
+        && request.resource.data.enabled is bool
+        && request.resource.data.reason is string
+        && request.resource.data.reason.size() <= 280
+        && request.resource.data.sessionId is string
+        && request.resource.data.sessionId.size() <= 64
+        && request.resource.data.pinSalt is string
+        && request.resource.data.pinSalt.size() <= 64
+        && request.resource.data.pinHash is string
+        && request.resource.data.pinHash.size() <= 64
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.updatedBy == request.auth.uid
+        && (!request.resource.data.enabled
+          || (request.resource.data.sessionId.size() >= 16
+            && request.resource.data.pinSalt.size() >= 16
+            && request.resource.data.pinHash.size() == 64));
+      allow delete: if false;
     }
 
     match /admins/{uid} {

@@ -68,8 +68,29 @@ export const state = {
   blocked: [],
   adminData: null,
   adminLoading: false,
-  /** Which admin studio section is open: overview | rooms | players | social | reviews | access. */
+  /** Which admin studio section is open: overview | rooms | players | social | reviews | access | site. */
   adminTab: 'overview',
+  /**
+   * Public `site/status` snapshot. `pending` is true only while the first Firestore read is in
+   * flight, so the arcade does not flash before a closed door is known.
+   */
+  maintenance: {
+    pending: false,
+    loaded: false,
+    enabled: false,
+    reason: '',
+    sessionId: '',
+    pinSalt: '',
+    pinHash: '',
+    updatedAt: null,
+    updatedBy: '',
+  },
+  /** True when this device presented a PIN that matches the current maintenance window. */
+  maintenanceUnlocked: false,
+  /** Plaintext PIN shown once on the admin device that just minted it. Never persisted. */
+  maintenancePlainPin: '',
+  maintenancePinError: '',
+  maintenanceSaving: false,
   /** Public reviews are readable without sign-in; new review writes still require a guest session. */
   reviews: [],
   featuredReview: null,
@@ -121,6 +142,17 @@ export function currentGameState() {
 /** The server clock, as well as this client can tell: what presence ages are measured against. */
 export function presenceNow() {
   return Date.now() + (state.presenceClockOffsetMs || 0);
+}
+
+/**
+ * Visitors who are not admins and do not hold a valid tester PIN are locked out while maintenance
+ * is on. While the first status snapshot is still in flight the public UI stays closed so the
+ * arcade cannot flash open for a moment.
+ */
+export function isSiteLocked() {
+  if (state.isAdmin || state.maintenanceUnlocked) return false;
+  if (state.maintenance.enabled) return true;
+  return Boolean(state.maintenance.pending);
 }
 
 /**

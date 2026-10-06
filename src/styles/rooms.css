@@ -35,6 +35,7 @@
 .admin-table tbody tr:nth-child(even) { background: var(--surface-2); }
 .table-game { font-weight: 600; }
 .admin-heading code { padding: 2px 8px; border-radius: var(--r-1); background: var(--surface-2); font-size: var(--fs-2); }
+.admin-heading-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); }
 
 /* Admin studio: tabs, power panels, action rows */
 .admin-tabs { margin: var(--sp-4) 0 var(--sp-5); }
