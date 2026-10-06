@@ -1,8 +1,22 @@
 {
-  "installCommand": "npm ci --ignore-scripts",
+  "installCommand": "node scripts/sync-shared.mjs && npm ci --ignore-scripts",
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "framework": "vite",
+  "functions": {
+    "api/backend/**": {
+      "maxDuration": 30
+    },
+    "api/cron/**": {
+      "maxDuration": 60
+    }
+  },
+  "crons": [
+    {
+      "path": "/api/cron/cleanup",
+      "schedule": "17 2 * * *"
+    }
+  ],
   "headers": [
     {
       "source": "/(.*)",
