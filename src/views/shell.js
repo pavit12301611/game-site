@@ -3,13 +3,18 @@
  * page (plus the modal and the toast when there is one). `renderPage` is the router's switch - it
  * maps `state.page` to one of the page views.
  *
+ * There is one exception to "chrome around a page": while the site is in maintenance mode and the
+ * viewer is not exempt, this module paints the maintenance screen instead of the shell (see
+ * `src/maintenance.js` and docs/maintenance-mode.md).
+ *
  * Pure rendering only: navigation happens through `data-action="navigate"` buttons and the hash
  * router in `src/app.js`.
  */
 
 import { connection } from '../connection.js';
-import { state } from '../state.js';
+import { maintenanceBlocks, state } from '../state.js';
 import { esc, icon, renderBrand } from '../ui/html.js';
+import { renderMaintenanceBanner, renderMaintenanceScreen } from './maintenance.js';
 import { renderModal } from './modals.js';
 import { renderAdmin, renderCatalog, renderFriends, renderGameScreen, renderHome, renderReviews, renderRoom } from './pages.js';
 import { renderPrivacy, renderSafety } from './legal.js';
@@ -68,10 +73,19 @@ export function renderMobileNav() {
   return `<nav class="mobile-nav has-settings ${state.isAdmin ? 'has-admin' : ''}" aria-label="Mobile navigation">${pageItems}<button class="mobile-nav-item" data-action="open-settings">${icon('settings')}<span>Settings</span></button></nav>`;
 }
 
+/** The dialog and the status line, which outlive whichever page is underneath them. */
+function renderOverlays() {
+  return `${state.modal ? renderModal() : ''}${state.toast ? `<div class="toast toast-${state.toast.kind}" role="status">${icon(state.toast.kind === 'success' ? 'check' : 'spark')}<span>${esc(state.toast.message)}</span></div>` : ''}`;
+}
+
 export function renderShell() {
   const conn = connection();
   const pageNames = { home: 'Welcome back', catalog: 'Game library', friends: 'Your crew', reviews: 'Player reviews', admin: 'Admin studio', room: 'Private room', game: 'Now playing', privacy: 'Privacy notice', safety: 'Terms & safety' };
-  return `<div class="app-shell"><button class="button button-primary skip-link" data-action="skip-to-content">Skip to content</button>${renderSidebar()}<div class="main-column">${renderTopbar()}<aside class="page-context" aria-label="Page status"><span class="page-context-name">${pageNames[state.page] || 'Arcade'}</span><span class="network-status is-${conn.kind}" title="${esc(conn.title)}"><i></i><span>${esc(conn.shortLabel)}</span></span></aside><main class="page-content" id="page-content">${renderPage()}</main></div>${renderMobileNav()}</div>${state.modal ? renderModal() : ''}${state.toast ? `<div class="toast toast-${state.toast.kind}" role="status">${icon(state.toast.kind === 'success' ? 'check' : 'spark')}<span>${esc(state.toast.message)}</span></div>` : ''}`;
+  // Maintenance mode replaces the whole chrome, not just the page: a sidebar full of doors that lead
+  // to the same notice would be a worse way to say "not yet". The dialog and the toast stay on top,
+  // because an admin signs in through a dialog and a typed code answers with a toast.
+  if (maintenanceBlocks()) return `${renderMaintenanceScreen()}${renderOverlays()}`;
+  return `<div class="app-shell"><button class="button button-primary skip-link" data-action="skip-to-content">Skip to content</button>${renderSidebar()}<div class="main-column">${renderTopbar()}<aside class="page-context" aria-label="Page status"><span class="page-context-name">${pageNames[state.page] || 'Arcade'}</span><span class="network-status is-${conn.kind}" title="${esc(conn.title)}"><i></i><span>${esc(conn.shortLabel)}</span></span></aside>${renderMaintenanceBanner()}<main class="page-content" id="page-content">${renderPage()}</main></div>${renderMobileNav()}</div>${renderOverlays()}`;
 }
 
 export function renderPage() {

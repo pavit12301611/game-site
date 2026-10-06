@@ -16,6 +16,7 @@ import {
 } from './helpers.js';
 import { GAMES, getGame } from './catalog.js';
 import { presenceVerdicts } from './presence-status.js';
+import { isMaintenanceLocked, maintenancePassIsValid, MAINTENANCE_PIN_DEFAULT_HOURS } from '../shared/online/maintenance.js';
 
 /** The starting digits of a code-breaking guess row; the real range comes from the game's `symbols`. */
 export const DEFAULT_CODE_DRAFT = Object.freeze([0, 0, 0, 0]);
@@ -94,6 +95,47 @@ export const state = {
   liveCheck: null,
   cpuTimer: null,
   cpuPending: false,
+  /**
+   * Maintenance mode (src/maintenance.js, docs/maintenance-mode.md): a mirror of the public
+   * `siteStatus/maintenance` document plus what this device remembers about it.
+   *
+   * `status` says how much to trust the rest: 'pending' before anything has been read, 'cached' when
+   * the picture came from this browser's last visit, 'live' once Firestore answered, 'error' when the
+   * read failed and 'unavailable' when Firebase never started (local practice mode).
+   */
+  maintenance: {
+    status: 'pending',
+    enabled: false,
+    reason: '',
+    updatedAtMs: 0,
+    updatedByUid: '',
+    /** The salted digest of the access code: what a typed code is compared with. Never the code. */
+    pinHash: '',
+    pinSalt: '',
+    pinExpiresAtMs: 0,
+    pinSetAtMs: 0,
+    pinExpired: false,
+    error: '',
+    /** `{ digest, expiresAtMs }` for this device, or null. */
+    pass: null,
+    /** Wrong codes typed here, and any cooldown they earned. */
+    attempts: { count: 0, lockedUntilMs: 0 },
+    checking: false,
+    /** True while the studio is writing either document. */
+    saving: false,
+    /** What is in the code box right now, so a repaint mid-typing does not swallow the digits. */
+    pinDraft: '',
+    /** The last answer to a typed code, shown under the box. */
+    unlockMessage: '',
+    unlockOk: false,
+    /** An admin deliberately looking at the notice. */
+    preview: false,
+    /** Admin-only: the code itself, read from `maintenanceAccess/active` on demand. */
+    access: null,
+    accessError: '',
+    /** What is in the studio's form right now, so a repaint does not lose a half-typed reason. */
+    draft: { reason: '', hours: MAINTENANCE_PIN_DEFAULT_HOURS },
+  },
 };
 
 export function currentUid() {
@@ -116,6 +158,20 @@ export function currentPlayers() {
 
 export function currentGameState() {
   return (/** @type {any} */ (state.local)?.gameState) || (/** @type {any} */ (state.room)?.state) || null;
+}
+
+/**
+ * Must this viewer be shown the maintenance notice instead of the arcade?
+ *
+ * Three facts decide it, all of them already in `state`: the site is closed, this account is a
+ * verified admin (or asked to preview the notice), and otherwise whether this device holds a pass
+ * that still matches the current code. See `isMaintenanceLocked` for the order they are applied in.
+ */
+export function maintenanceBlocks() {
+  return isMaintenanceLocked(state.maintenance, {
+    isAdmin: state.isAdmin,
+    passValid: maintenancePassIsValid(state.maintenance.pass, state.maintenance),
+  });
 }
 
 /** The server clock, as well as this client can tell: what presence ages are measured against. */

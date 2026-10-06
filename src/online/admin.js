@@ -30,6 +30,7 @@ import { presenceNow, state } from '../state.js';
 import { showToast } from '../ui/toast.js';
 import { forgetKnownRoom } from './rooms.js';
 import { callBackend } from './callables.js';
+import { loadMaintenanceAccess } from '../maintenance.js';
 
 /**
  * `db` is null only when Firebase never started; every export below is guarded by `state.isAdmin`,
@@ -104,6 +105,9 @@ export async function loadAdminData() {
   } catch (error) {
     state.adminData = { error: friendlyError(error), rooms: [], profiles: [], admins: [], friendships: [], requests: [], invites: [], reviews: [], reviewAnnotations: [], reviewAgentModel: null };
   }
+  // The maintenance panel's code lives in an admin-only document, so the studio has to ask for it
+  // separately (and forgets it politely when the read is denied - see `loadMaintenanceAccess`).
+  await loadMaintenanceAccess();
   state.adminLoading = false;
   render();
 }

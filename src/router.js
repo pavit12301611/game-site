@@ -12,7 +12,7 @@
 
 import { firebaseReady } from './firebase.js';
 import { render } from './render.js';
-import { state } from './state.js';
+import { maintenanceBlocks, state } from './state.js';
 import { showToast } from './ui/toast.js';
 import { loadAdminData } from './online/admin.js';
 import { openRoomFromLink, stopActiveRoom } from './online/rooms.js';
@@ -40,13 +40,17 @@ export function routeFromHash() {
     state.page = 'room';
     state.local = null;
     render();
-    if (firebaseReady) void openRoomFromLink(id);
+    // A locked-out visitor does not join a room: the invite link is remembered in the hash, and the
+    // same route runs again the moment the device is let back in (or the site reopens).
+    if (firebaseReady && !maintenanceBlocks()) void openRoomFromLink(id);
     return;
   }
   stopActiveRoom();
   if (nextPage !== 'game') state.local = null;
   state.page = nextPage;
   render();
+  // While the notice is up, routing is only a repaint: no reviews to fetch, no admin data to read.
+  if (maintenanceBlocks()) return;
   if (state.focusSearchAfterRoute) {
     state.focusSearchAfterRoute = false;
     requestAnimationFrame(() => {

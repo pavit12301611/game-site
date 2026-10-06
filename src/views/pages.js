@@ -25,6 +25,16 @@ import {
   buildImprovementIdeas,
   summarizeReviewSentiment,
 } from '../../shared/reviews/agent.js';
+import {
+  MAINTENANCE_PIN_DEFAULT_HOURS,
+  MAINTENANCE_PIN_DIGITS,
+  MAINTENANCE_REASON_MAX,
+  MAINTENANCE_REASON_LINES_MAX,
+  MAINTENANCE_PIN_DURATIONS,
+  formatMaintenancePin,
+  maintenancePinGroupHint,
+} from '../../shared/online/maintenance.js';
+import { renderMaintenanceCodePin } from './maintenance.js';
 
 /** The 640 px picture of a game, used as the backdrop of the game stage heading. */
 function stageArt(game) {
@@ -252,9 +262,10 @@ export function timeAgo(timestamp) {
 }
 
 
-/** The five admin studio tabs. */
+/** The seven admin studio sections. */
 const ADMIN_TABS = [
   ['overview', 'Overview'],
+  ['maintenance', 'Maintenance'],
   ['rooms', 'Rooms'],
   ['players', 'Players'],
   ['social', 'Social'],
@@ -314,7 +325,7 @@ function renderAdminOverview(data) {
   return `<div class="admin-metrics">${metrics.map(([label, value, hint]) => `<article><span>${esc(label)}</span><b>${state.adminLoading ? '…' : value}</b><small>${esc(hint)}</small></article>`).join('')}</div>
     <div class="admin-grid">
       <section class="surface admin-table-panel"><div class="panel-heading"><div><span class="eyebrow">Live room snapshot</span><h2>Recent rooms</h2></div><button class="text-button" data-action="admin-tab" data-tab="rooms">Manage all ${icon('arrow')}</button></div>${renderAdminRoomsTable(activeRooms, { limitRows: 8 })}</section>
-      <aside class="surface admin-powers"><div class="panel-heading"><div><span class="eyebrow">God mode, on</span><h2>What this studio can do</h2></div><span class="admin-live"><i></i> ${GAMES.length} games</span></div><ul class="admin-powers-list"><li><b>Rooms:</b> inspect every room, kick anyone from a waiting lobby, delete a room with its heartbeats.</li><li><b>Players:</b> remove a profile and free its username, so repeat offenders cannot hide.</li><li><b>Social:</b> unlink friend pairs, clear stale requests and game invites.</li><li><b>Access:</b> grant and revoke admin flags without opening the Firebase console.</li></ul><div class="notice-panel"><span>${icon('shield')}</span><div><b>Firestore enforces every button.</b><p>Each action above checks <code>admins/{yourUid}.admin == true</code> on the server. A forged flag in someone else's browser cannot touch this data.</p></div></div></aside>
+      <aside class="surface admin-powers"><div class="panel-heading"><div><span class="eyebrow">God mode, on</span><h2>What this studio can do</h2></div><span class="admin-live"><i></i> ${GAMES.length} games</span></div><ul class="admin-powers-list"><li><b>Rooms:</b> inspect every room, kick anyone from a waiting lobby, delete a room with its heartbeats.</li><li><b>Players:</b> remove a profile and free its username, so repeat offenders cannot hide.</li><li><b>Social:</b> unlink friend pairs, clear stale requests and game invites.</li><li><b>Access:</b> grant and revoke admin flags without opening the Firebase console.</li><li><b>Maintenance:</b> close the site with a reason, and hand out a temporary code that lets one device keep testing.</li></ul><div class="notice-panel"><span>${icon('shield')}</span><div><b>Firestore enforces every button.</b><p>Each action above checks <code>admins/{yourUid}.admin == true</code> on the server. A forged flag in someone else's browser cannot touch this data.</p></div></div></aside>
     </div>`;
 }
 
@@ -391,6 +402,79 @@ function renderAdminAccess(data) {
     <aside class="surface admin-powers"><div class="panel-heading"><div><span class="eyebrow">Safety rails</span><h2>Still enforced by Firestore</h2></div><span>${icon('shield')}</span></div><ul class="admin-powers-list"><li>Nobody can mint their first flag from the client - the <b>first</b> admin is still created in the Firebase console.</li><li>A flag document can only ever contain <code>admin: true/false</code>, nothing else.</li><li>You cannot revoke yourself (rules block it), so the studio can never lock itself out.</li><li>Revoked admins lose access the moment their token refreshes.</li></ul></aside></div>`;
 }
 
+/** A clock label short enough to read in a panel: "today at 21:40" or "Oct 8 at 09:05". */
+function maintenanceTimeLabel(ms) {
+  const time = Number(ms) || 0;
+  if (!time) return 'not set';
+  const date = new Date(time);
+  const clock = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+  if (date.toDateString() === new Date().toDateString()) return `today at ${clock}`;
+  return `${date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} at ${clock}`;
+}
+
+/** How much the studio trusts the maintenance numbers it is showing. */
+function maintenanceSourceLabel(maintenance) {
+  if (maintenance.status === 'live') return 'Read live from Firestore - this panel moves by itself when the document changes.';
+  if (maintenance.status === 'cached') return 'Still showing what this browser saw last time; the live read has not answered yet.';
+  if (maintenance.status === 'error') return `The status document could not be read: ${maintenance.error || 'permission denied'}`;
+  if (maintenance.status === 'unavailable') return 'Firebase is not configured here, so maintenance mode cannot be switched on from this build.';
+  return 'Waiting for the first read of the status document…';
+}
+
+/**
+ * The maintenance studio: the switch, the reason visitors read, and the temporary 16-digit code that
+ * lets a device keep testing while the site is closed. Writes go straight to `siteStatus/maintenance`
+ * and `maintenanceAccess/active` under the rules in `firestore.rules` (admin only, exact shape), so
+ * this panel is a convenience and Firestore is the gatekeeper.
+ */
+function renderAdminMaintenance() {
+  const maintenance = state.maintenance;
+  const on = maintenance.enabled === true;
+  const draft = maintenance.draft || {};
+  const reason = String(draft.reason ?? maintenance.reason ?? '');
+  const hours = Number(draft.hours) || MAINTENANCE_PIN_DEFAULT_HOURS;
+  const access = maintenance.access;
+  const pinLive = on && Boolean(maintenance.pinHash) && !maintenance.pinExpired;
+  const switchButton = on
+    ? `<button class="button button-primary" data-action="maintenance-off" ${state.maintenance.saving ? 'disabled' : ''}>${icon('check')} Open the site again</button>`
+    : `<button class="button button-primary" type="submit" ${state.maintenance.saving ? 'disabled' : ''}>${icon('settings')} Close the site</button>`;
+  const codePanel = on && access?.pin
+    ? `${renderMaintenanceCodePin(access.pin)}
+      <div class="maintenance-panel-foot"><small>Valid until ${esc(maintenanceTimeLabel(access.expiresAtMs))} · ${MAINTENANCE_PIN_DIGITS} digits, grouped ${maintenancePinGroupHint().replace(/^\d+ digits in /, '')}</small><div class="maintenance-actions"><button class="button button-outline button-small" data-action="maintenance-copy-pin" data-pin="${esc(formatMaintenancePin(access.pin, ''))}">${icon('copy')} Copy code</button><button class="button button-quiet button-small" data-action="maintenance-rotate-pin">${icon('spark')} New code</button></div></div>`
+    : on
+      ? `<div class="maintenance-pin-facts"><span>The code for this window is <b>${maintenance.pinExpired ? 'expired' : 'still live'}</b>, but it is kept in an admin-only document, so this panel has to fetch it.</span></div><div class="maintenance-panel-foot"><small>${esc(maintenance.accessError ? `Could not read it: ${maintenance.accessError}` : 'Nothing typed here is stored: the code lives in Firestore, not in this page.')}</small><div class="maintenance-actions"><button class="button button-outline button-small" data-action="maintenance-reveal-pin">${icon('search')} Show the code</button><button class="button button-quiet button-small" data-action="maintenance-rotate-pin">${icon('spark')} New code</button></div></div>`
+      : `<div class="maintenance-pin-facts"><span>No window is open, so no code exists right now. Switching maintenance on mints a fresh ${MAINTENANCE_PIN_DIGITS}-digit code and shows it here once.</span></div>`;
+  return `<section class="maintenance-status-strip">
+    <span class="maintenance-status-pill is-${on ? 'on' : 'off'}"><i></i> ${on ? 'Site closed to visitors' : 'Site open to everyone'}</span>
+    <div class="maintenance-actions">${on ? `<button class="button button-outline" data-action="maintenance-preview-on">${icon('search')} See the notice</button>` : ''}<button class="button button-quiet" data-action="maintenance-reload">${icon('spark')} Re-read status</button></div>
+    <p class="maintenance-note">${esc(maintenanceSourceLabel(maintenance))}${maintenance.updatedAtMs ? ` Switched ${on ? 'on' : 'off'} ${esc(maintenanceTimeLabel(maintenance.updatedAtMs))}.` : ''}</p>
+  </section>
+  <div class="maintenance-grid">
+    <form class="surface maintenance-panel" data-form="admin-maintenance">
+      <div class="panel-heading"><div><span class="eyebrow">What visitors read</span><h2>Reason for the maintenance<span>.</span></h2></div><span class="status-pill ${on ? 'status-waiting' : 'status-playing'}">${on ? 'shown now' : 'saved for next time'}</span></div>
+      <label for="maintenance-reason">Why is the site closed?<textarea id="maintenance-reason" name="reason" rows="5" maxlength="${MAINTENANCE_REASON_MAX + 40}" data-maintenance-reason placeholder="Scheduled maintenance: the arcade is being upgraded. Back within the hour.">${esc(reason)}</textarea></label>
+      <small id="maintenance-reason-count">${reason.length} / ${MAINTENANCE_REASON_MAX} characters · up to ${MAINTENANCE_REASON_LINES_MAX} lines · plain text, no links needed</small>
+      <label for="maintenance-hours">${on ? 'How long should the next testing code stay valid?' : 'How long should a testing code stay valid?'}<select id="maintenance-hours" name="hours" data-maintenance-hours>${MAINTENANCE_PIN_DURATIONS.map((option) => `<option value="${option.hours}" ${option.hours === hours ? 'selected' : ''}>${esc(option.label)}</option>`).join('')}</select></label>
+      <div class="maintenance-panel-foot"><small>${on ? 'Saving the reason does not touch the code, so nobody is locked out by a typo fix.' : 'Closing the site shows this text on the notice and mints a code for one device at a time.'}</small><div class="maintenance-actions">${on ? `<button class="button button-primary" type="button" data-action="maintenance-save-reason">${icon('check')} Save reason</button>` : switchButton}${on ? '' : `<button class="button button-outline" type="button" data-action="maintenance-save-reason">Save for next time</button>`}</div></div>
+    </form>
+    <div class="maintenance-column">
+      <section class="surface maintenance-panel maintenance-code-panel">
+        <div class="panel-heading"><div><span class="eyebrow">Temporary access</span><h2>${MAINTENANCE_PIN_DIGITS}-digit code<span>.</span></h2></div><span class="admin-live"><i></i> ${on ? (pinLive ? 'live' : 'inactive') : 'off'}</span></div>
+        ${codePanel}
+      </section>
+      <aside class="surface admin-powers">
+        <div class="panel-heading"><div><span class="eyebrow">How a device uses it</span><h2>What the notice does</h2></div><span>${icon('shield')}</span></div>
+        <ol class="maintenance-steps">
+          <li><i>1</i><span>Type or paste the code into the notice. Spaces are ignored, so a copied <code>1234 5678 …</code> works as is.</span></li>
+          <li><i>2</i><span>The device is let in for as long as the code is valid - on a phone, a laptop, any browser. Nothing is sent to a friend who does not have the code.</span></li>
+          <li><i>3</i><span>New code, or opening the site again, ends every device pass at once: the pass is only worth as much as the code it came from.</span></li>
+        </ol>
+        <ul class="admin-powers-list"><li><b>Rules, not hope:</b> only an account with <code>admins/{uid}.admin = true</code> can write either document, and the shape of both is fixed in <code>firestore.rules</code>.</li><li><b>Admins never get locked out:</b> your own account always sees the arcade - which is also why closing the site cannot strand you.</li><li><b>It is a soft door:</b> a determined person can open the arcade without the code, so treat maintenance as a notice, not a vault. Player data stays behind rules regardless.</li></ul>
+      </aside>
+    </div>
+  </div>`;
+}
+
 export function renderAdmin() {
   if (!state.isAdmin) return `<section class="admin-denied"><span>${icon('shield')}</span><h1>Restricted area</h1><p>This Firebase account is not marked as an administrator.</p><button class="button button-primary" data-action="navigate" data-page="home">Back to the arcade</button></section>`;
   const data = state.adminData;
@@ -404,6 +488,7 @@ export function renderAdmin() {
   else if (data.error) body = `<div class="notice-panel notice-warn">${esc(data.error)}</div>`;
   else if (tab === 'rooms') body = `<section class="surface admin-table-panel"><div class="panel-heading"><div><span class="eyebrow">Every private room</span><h2>Rooms <i>${activeRooms.length}</i></h2></div><span class="admin-live"><i></i> latest 100 · 1h auto-delete</span></div>${renderAdminRoomsTable(activeRooms)}</section>`;
   else if (tab === 'players') body = `<section class="surface admin-table-panel"><div class="panel-heading"><div><span class="eyebrow">Everyone who claimed a name</span><h2>Players <i>${data.profiles.length}</i></h2></div><span class="admin-live"><i></i> latest 300</span></div>${renderAdminPlayers(data)}</section>`;
+  else if (tab === 'maintenance') body = renderAdminMaintenance();
   else if (tab === 'social') body = renderAdminSocial(data);
   else if (tab === 'reviews') body = renderAdminReviews(data);
   else if (tab === 'access') body = renderAdminAccess(data);
