@@ -55,14 +55,16 @@ export function createFirestoreStore(db, { now = () => Date.now(), toTimestamp }
     return { ...data, expiresAtDate: toTimestamp(expiresAt) };
   };
   const documentPath = (path) => path.split('/');
+  // Firestore paths start with a collection: documents have an even number of segments, while
+  // collections (including nested ones such as rooms/{id}/chat) have an odd number.
   const refOf = (path) => {
     const parts = documentPath(path);
-    if (parts.length % 2 === 0) throw new Error(`"${path}" is not a document path (it has ${parts.length} segments)`);
+    if (parts.length % 2 !== 0) throw new Error(`"${path}" is not a document path (it has ${parts.length} segments)`);
     return db.doc(path);
   };
   const collectionOf = (path) => {
     const parts = documentPath(path);
-    if (parts.length % 2 !== 0) throw new Error(`"${path}" is not a collection path (it has ${parts.length} segments)`);
+    if (parts.length % 2 === 0) throw new Error(`"${path}" is not a collection path (it has ${parts.length} segments)`);
     return db.collection(path);
   };
   const read = async (snapshot) => ({
