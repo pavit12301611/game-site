@@ -1,12 +1,18 @@
 # Online play: the trusted backend
 
-> **Status: the backend is implemented and tested; the browser has not been switched over yet.**
-> `functions/` holds the callable API, the validation policy and the tests (36, green). The browser
-> still performs the older client-side Firestore transactions, and `firestore.rules` still permits
-> them. **Do not publish the rules in this document's "locked" form until the client migration in
-> `src/online/rooms.js`, `src/social.js` and `src/accounts.js` has landed**, or online play breaks
-> for everyone mid-session. Nothing here has been deployed; the deploy commands below were never run
-> from this repository.
+> **Status: the browser migration has landed; the backend itself is still not deployed.**
+> `functions/` holds the callable API, the validation policy and the tests (43, green), and the
+> browser now performs every online mutation through callables (`src/online/`,
+> `src/social.js`, `src/accounts.js`) while `firestore.rules` denies it those writes — so the two
+> sides have to be deployed **together**: rules without functions stop online play, functions
+> without rules leave the old permissive rules in place. **Online play needs
+> `firebase deploy --only functions` to have been run against the project the site was built with.**
+> Verified 2026-10-06 against production: `https://us-central1-psd-gaming.cloudfunctions.net/createRoom`
+> answers 404, so psd-gaming.vercel.app calls functions that do not exist. A 404 on the preflight
+> carries no `Access-Control-Allow-Origin` header, so the browser console reports a CORS error that
+> masks the missing deployment — the app's own message for that case lives in
+> `src/online/callables.js`. Deploy with the runbook below, or with the manual
+> **Deploy Cloud Functions backend** workflow (`.github/workflows/deploy-functions.yml`).
 
 ## Why a backend at all
 
@@ -83,13 +89,21 @@ Raising a project from zero, in order:
    Email/Password, Anonymous for guests).
 3. Provision the first admin: create the account, then add `admins/{uid} = { admin: true }` in the
    Firebase console. Nobody can mint an admin flag from the client.
-4. Deploy the rules and functions (review the migration status above first):
+4. Deploy the rules and functions (the client migration has landed, so both belong together now):
 
    ```bash
-   firebase deploy --only firestore:rules          # only after the client migration lands
+   firebase deploy --only firestore:rules
    firebase deploy --only functions                # runs scripts/sync-shared.mjs as a predeploy hook
    firebase functions:log
    ```
+
+   Or, without a local toolchain: add a `FIREBASE_SERVICE_ACCOUNT` secret (Firebase Console →
+   Project settings → Service accounts → Generate new private key) to the GitHub repository, then
+   run the manual **Deploy Cloud Functions backend** workflow (`.github/workflows/deploy-functions.yml`).
+   It mirrors `shared/`, runs the backend suite, deploys, and then smoke-tests that the callable
+   endpoints answer the CORS preflight and refuse an anonymous call with 401 — the two things a
+   missing (or non-public) deployment gets wrong, and the exact failure the console otherwise shows
+   only as a masked CORS error.
 
 5. Optional second expiry mechanism: in the Firebase console, **Firestore → Time-to-live**, add a TTL
    policy on the `expiresAtDate` field. The store adapter writes it next to the numeric `expiresAt`

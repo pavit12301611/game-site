@@ -125,13 +125,16 @@ is drawn anyway. The collaborators are passed in from `src/app.js`, which is wha
 a `ReferenceError` in that branch: two functions called in `src/app.js` without an import, which
 stopped the first paint on Vercel only - every local run has `firebaseReady === false`.
 
-> **The backend is written, tested and not deployed by this repository.** `functions/` owns every
-> online mutation, the hidden state, the rate limits, account deletion and the expiry cleanup, and
-> its suite passes locally (`cd functions && npm test`, 36 tests). The browser talks to it only
-> through callables. **Nothing here has been deployed, and nothing here can be verified against a
-> live Firebase project**: callable Functions require the Blaze plan, `firebase deploy --only functions`,
-> and the rules published from [`firestore.rules`](firestore.rules). Until an operator does that, the
-> app says so honestly (a missing deployment reads as an actionable setup message, not a broken move).
+> **The backend is written, tested, and — as of 2026-10-06 — still not deployed to the Firebase
+> project the production site uses.** `functions/` owns every online mutation, the hidden state, the
+> rate limits, account deletion and the expiry cleanup, and its suite passes locally
+> (`cd functions && npm test`, 43 tests). The browser talks to it only through callables, so online
+> rooms, friends and reviews **cannot work until an operator deploys**: callable Functions require
+> the Blaze plan and `firebase deploy --only functions` (or the manual **Deploy Cloud Functions
+> backend** GitHub workflow), with the rules published from [`firestore.rules`](firestore.rules).
+> Until then every online action fails with "The online service is not answering." while the browser
+> console shows a CORS error — an undeployed function answers 404 with no
+> `Access-Control-Allow-Origin` header, so the browser masks the 404 as a preflight failure.
 > Read [docs/online-play.md](docs/online-play.md) before touching a real project.
 
 ### Fast online moves on top of a server-owned room
@@ -472,6 +475,7 @@ redeploy). Headers only apply to Vercel deployments, never to `npm run dev`.
 
 | What you see | Likely cause | Fix |
 | --- | --- | --- |
+| Console shows a **CORS** error on `…cloudfunctions.net/createRoom` ("No 'Access-Control-Allow-Origin' header") and rooms are never created | The callable functions are **not deployed** to the Firebase project this build was made with. The endpoint answers 404, and a 404 carries no CORS header, so the browser masks the real error as a preflight failure. The app's own message for it is "The online service is not answering." | Deploy the backend: upgrade the project to Blaze, then `firebase deploy --only functions` (or run the **Deploy Cloud Functions backend** GitHub workflow). Its post-deploy smoke test checks the preflight and an anonymous call, so this state cannot look green. |
 | Deployed site shows **Local practice mode** and "Firebase config is missing from this deployment…" | The `VITE_FIREBASE_*` variables were not present when this deployment was built. They were never added, are not ticked for this environment, or were added after the build. | Vercel → Settings → Environment Variables → add them for **Production** and **Preview**, then **Redeploy**. |
 | The build log says `Found other Firebase-looking variable name(s): FIREBASE_API_KEY …` | A variable is misnamed (missing the `VITE_` prefix, wrong capitals, or a stray space), so Vite never exposes it to the app. Only the exact names in the table in step 4 (and the older `VITE_FIREBASE_CONFIG`) are read. | Rename it to exactly e.g. `VITE_FIREBASE_API_KEY` and redeploy. |
 | It works on Production but a Preview URL shows **Local practice mode** | The variables are not enabled for the **Preview** environment. | Tick **Preview** for each variable, then redeploy that preview. |

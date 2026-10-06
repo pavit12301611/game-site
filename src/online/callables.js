@@ -57,8 +57,13 @@ export class BackendError extends Error {
 /** Messages for the failures that are about the deployment rather than about a move. */
 const DEPLOYMENT_HINT = 'The online backend is not available for this Firebase project yet. An operator has to deploy it: `firebase deploy --only functions` (Cloud Functions needs the Blaze plan). Local practice keeps working without it.';
 
-/** @param {any} error @param {string} name */
-function toBackendError(error, name) {
+/**
+ * Turns one SDK error into a `BackendError`. Exported for the tests, because the two failures a
+ * browser cannot see through — an undeployed function (404 without CORS headers, which the SDK
+ * reports as the opaque "internal") and a real server error — must keep distinct messages.
+ * @param {any} error @param {string} name
+ */
+export function toBackendError(error, name) {
   const rawCode = String(error?.code || '').replace(/^functions\//, '');
   const details = /** @type {Record<string, any>} */ (error?.details || {});
   const policyCode = typeof details.code === 'string' && details.code ? details.code : '';
@@ -70,6 +75,19 @@ function toBackendError(error, name) {
   }
   if (rawCode === 'not-found') {
     return new BackendError('backend-missing', `The online service is not responding (${name}).`, { hint: DEPLOYMENT_HINT, cause: error });
+  }
+  // The callable SDK turns a request that never got through into code "internal" with the bare word
+  // "internal" for the message and no details: a rejected fetch carries no HTTP status the SDK can
+  // read. From a browser that is exactly what an *undeployed* function looks like — the endpoint
+  // answers 404, that 404 has no `Access-Control-Allow-Origin` header, so the preflight fails and
+  // the console shows a CORS error that masks the real problem. A dropped connection produces the
+  // same signature, so the sentence names both and the hint names the fix.
+  if (rawCode === 'internal' && /^internal$/i.test(String(error?.message || '').trim())) {
+    return new BackendError(
+      'backend-unreachable',
+      'The online service is not answering. Check your connection and try again; if every online action fails like this, the backend functions are not deployed yet — local practice still works.',
+      { hint: DEPLOYMENT_HINT, cause: error },
+    );
   }
   if (rawCode === 'failed-precondition' && /billing|enabled|API/i.test(String(error?.message || ''))) {
     return new BackendError('backend-billing', 'Cloud Functions is not enabled for this Firebase project.', { hint: DEPLOYMENT_HINT, cause: error });
