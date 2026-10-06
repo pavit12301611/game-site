@@ -59,6 +59,16 @@ import {
   adminRevokeAccess,
   loadAdminData,
 } from './online/admin.js';
+import {
+  disableMaintenance,
+  enableMaintenance,
+  formatMaintenancePin,
+  normalizeMaintenancePin,
+  regenerateMaintenancePin,
+  saveMaintenanceReason,
+  unlockWithMaintenancePin,
+  watchMaintenance,
+} from './maintenance.js';
 import { loadFeaturedReview, loadPublicReviews, submitReview } from './reviews.js';
 import {
   claimHost,
@@ -225,6 +235,47 @@ async function handleReviewSubmit(form) {
   }
 }
 
+function readPinFromForm(form) {
+  const joined = [0, 1, 2, 3].map((index) => String(new FormData(form).get(`pin${index}`) || '')).join('');
+  const fallback = String(new FormData(form).get('pin') || '');
+  return normalizeMaintenancePin(joined || fallback);
+}
+
+async function handleMaintenancePinSubmit(form) {
+  await unlockWithMaintenancePin(readPinFromForm(form));
+}
+
+async function handleMaintenanceReasonSubmit(form) {
+  await saveMaintenanceReason(String(new FormData(form).get('reason') || ''));
+}
+
+function fillPinCells(digits) {
+  const clean = String(digits || '').replace(/\D/g, '').slice(0, 16);
+  for (let index = 0; index < 4; index += 1) {
+    const cell = /** @type {HTMLInputElement | null} */ (document.querySelector(`#pin-cell-${index}`));
+    if (cell) cell.value = clean.slice(index * 4, index * 4 + 4);
+  }
+  const lastFilled = Math.min(3, Math.max(0, Math.ceil(clean.length / 4) - 1));
+  /** @type {HTMLInputElement | null} */ (document.querySelector(`#pin-cell-${lastFilled}`))?.focus();
+}
+
+function copyMaintenancePin() {
+  const pin = state.maintenancePlainPin;
+  if (!pin) {
+    showToast('Generate a PIN on this device to copy it.', 'warning');
+    return;
+  }
+  const formatted = formatMaintenancePin(pin);
+  if (navigator.clipboard?.writeText) {
+    void navigator.clipboard.writeText(formatted).then(
+      () => showToast('Tester PIN copied. It works on phones and computers.'),
+      () => showToast(formatted, 'warning'),
+    );
+  } else {
+    showToast(formatted, 'warning');
+  }
+}
+
 async function handleAdminGrantSubmit(form) {
   /** Granting by raw UID goes through the same confirm gate as the player-row button. */
   const uidToPromote = String(new FormData(form).get('uid') || '').trim();
@@ -297,7 +348,13 @@ function handleClick(event) {
   if (action === 'modal-backdrop' && event.target === actionButton) { modalClose(); return; }
   if (action === 'navigate') { navigate(page); return; }
   if (action === 'toggle-theme') { toggleTheme(); return; }
-  if (action === 'skip-to-content') { const main = /** @type {HTMLElement | null} */ (document.querySelector('#page-content')); if (main) { main.setAttribute('tabindex', '-1'); main.focus(); } return; }
+  if (action === 'skip-to-content') {
+    const pin = /** @type {HTMLElement | null} */ (document.querySelector('#pin-cell-0'));
+    const main = /** @type {HTMLElement | null} */ (document.querySelector('#page-content'));
+    const target = pin || main;
+    if (target) { target.setAttribute('tabindex', pin ? pin.getAttribute('tabindex') || '0' : '-1'); target.focus(); }
+    return;
+  }
   if (action === 'open-settings') { modalOpen({ type: 'settings' }); return; }
   if (action === 'toggle-favorite') { toggleFavorite(gameId); return; }
   if (action === 'open-game') { recordRecentGame(gameId); modalOpen({ type: 'game', gameId }); return; }
@@ -427,6 +484,34 @@ function handleClick(event) {
   }
   if (action === 'admin-train-review-agent') { void adminTrainReviewAgent(); return; }
   if (action === 'admin-tab') { state.adminTab = adminArg(actionButton.dataset.tab) || 'overview'; render(); return; }
+  if (action === 'open-site-admin') {
+    if (!state.isAdmin) { showToast('The admin area is only available to approved accounts.', 'warning'); return; }
+    state.adminTab = 'site';
+    navigate('admin');
+    return;
+  }
+  if (action === 'toggle-maintenance') {
+    const turningOn = !state.maintenance.enabled;
+    openAdminConfirm(
+      turningOn ? 'Close the public arcade?' : 'Open the arcade again?',
+      turningOn
+        ? 'Visitors will see a maintenance page. A new 16-digit tester PIN will be generated so other phones and computers can still test. You keep full access as admin.'
+        : 'Everyone can use the site again. The current tester PIN stops working on every device.',
+      turningOn ? 'Turn maintenance on' : 'Turn maintenance off',
+      () => (turningOn ? enableMaintenance(state.maintenance.reason) : disableMaintenance()).catch((error) => showToast(friendlyError(error), 'warning')),
+    );
+    return;
+  }
+  if (action === 'copy-maintenance-pin') { copyMaintenancePin(); return; }
+  if (action === 'regenerate-maintenance-pin') {
+    openAdminConfirm(
+      'Mint a new tester PIN?',
+      'The old 16-digit PIN stops working on every phone and computer immediately. The new one is shown only on this device.',
+      'Generate new PIN',
+      () => regenerateMaintenancePin().catch((error) => showToast(friendlyError(error), 'warning')),
+    );
+    return;
+  }
   if (action === 'confirm-modal-run') {
     // The confirm modal carries its work as a function; close first so errors toast over the page.
     const run = state.modal?.type === 'confirm' ? state.modal.run : null;
@@ -522,6 +607,8 @@ function handleSubmit(event) {
   else if (type === 'auth') task = handleAuthSubmit(form);
   else if (type === 'username-setup') task = handleUsernameSetupSubmit(form);
   else if (type === 'admin-grant') task = handleAdminGrantSubmit(form);
+  else if (type === 'maintenance-pin') task = handleMaintenancePinSubmit(form);
+  else if (type === 'maintenance-reason') task = handleMaintenanceReasonSubmit(form);
   else if (type === 'settings') { handleSettingsSubmit(form); if (submitButton) submitButton.disabled = false; return; }
   else if (type === 'friend-search') { requestFriendSearch(form); if (submitButton) submitButton.disabled = false; return; }
   else if (type === 'join-code') task = handleJoinCodeSubmit(form);
@@ -542,6 +629,20 @@ function handleSubmit(event) {
 }
 
 function handleInput(event) {
+  const pinCell = event.target.closest?.('.pin-cell');
+  if (pinCell) {
+    const index = Number(pinCell.dataset.pinIndex);
+    const digits = String(pinCell.value || '').replace(/\D/g, '');
+    if (digits.length > 4) {
+      fillPinCells(digits);
+      return;
+    }
+    pinCell.value = digits.slice(0, 4);
+    if (pinCell.value.length === 4 && index < 3) {
+      /** @type {HTMLInputElement | null} */ (document.querySelector(`#pin-cell-${index + 1}`))?.focus();
+    }
+    return;
+  }
   if (event.target.id === 'global-search') {
     state.query = event.target.value;
     if (state.page === 'home') {
@@ -589,6 +690,17 @@ function handleTabKeys(event) {
 }
 
 function handleKeydown(event) {
+  const pinCell = event.target?.closest?.('.pin-cell');
+  if (pinCell && event.key === 'Backspace' && !event.altKey && !event.ctrlKey && !event.metaKey && !String(pinCell.value || '')) {
+    const index = Number(pinCell.dataset.pinIndex);
+    if (index > 0) {
+      event.preventDefault();
+      const previous = /** @type {HTMLInputElement | null} */ (document.querySelector(`#pin-cell-${index - 1}`));
+      previous?.focus();
+      if (previous) previous.value = String(previous.value || '').slice(0, -1);
+    }
+    return;
+  }
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
     event.preventDefault();
     const search = /** @type {HTMLInputElement | null} */ (document.querySelector('#global-search'));
@@ -624,12 +736,24 @@ function handleKeydown(event) {
   }
 }
 
+function handlePaste(event) {
+  const pinCell = event.target?.closest?.('.pin-cell');
+  if (!pinCell) return;
+  const text = event.clipboardData?.getData('text') || '';
+  const digits = String(text).replace(/\D/g, '');
+  if (digits.length >= 8) {
+    event.preventDefault();
+    fillPinCells(digits);
+  }
+}
+
 function attachAppEvents() {
   // index.html without #app: nothing to attach to, and render() is a no-op for the same reason.
   if (!appRoot) return;
   appRoot.addEventListener('click', handleClick);
   appRoot.addEventListener('submit', handleSubmit);
   appRoot.addEventListener('input', handleInput);
+  appRoot.addEventListener('paste', handlePaste);
   appRoot.addEventListener('change', handleFilterChange);
   window.addEventListener('keydown', handleKeydown);
   window.addEventListener('hashchange', routeFromHash);
@@ -645,6 +769,7 @@ function attachAppEvents() {
 
 attachAppEvents();
 applyTheme(state.themePreference);
+watchMaintenance();
 window.addEventListener('online', () => {
   state.online = true;
   render();
