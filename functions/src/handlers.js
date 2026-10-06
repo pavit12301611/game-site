@@ -35,6 +35,7 @@ import {
 } from '../vendor/shared/online/room.js';
 import { MAX_STATE_BYTES, jsonBytes, roomCode } from '../vendor/shared/online/view.js';
 import {
+  CHAT_MESSAGE_MAX,
   DISPLAY_NAME_MAX,
   REPORT_MESSAGE_MAX,
   safeDisplayName,
@@ -169,6 +170,31 @@ export function createHandlers(deps) {
     const snapshot = await store.get(paths.secret(roomId));
     if (!snapshot.exists) return null;
     return snapshot.data;
+  }
+
+  /**
+   * Permanently delete every chat message in this room.
+   *
+   * Chat is ephemeral by design: it is deleted as soon as the match ends so nothing lingers in
+   * Firestore after the game. The room's overall 1-hour TTL is a secondary safety net (every chat
+   * message lives under `rooms/{id}/chat/`, and `recursiveDelete(rooms/{id})` in the cleanup will
+   * sweep anything that somehow survived).
+   * @param {string} roomId
+   * @param {number} [limit]
+   */
+  async function purgeRoomChat(roomId, limit = 200) {
+    // Batched delete so even a long-running match cannot leave a chat subcollection behind.
+    // Firestore batch writes are capped at 500 operations; we loop a bounded number of times.
+    let removed = 0;
+    for (let page = 0; page < 5; page += 1) {
+      const messages = await store.query(paths.chatCollection(roomId), { limit });
+      if (!messages.length) break;
+      const ops = messages.map((message) => ({ type: 'delete', path: paths.chatMessage(roomId, message.id) }));
+      for (let index = 0; index < ops.length; index += 400) await store.batch(ops.slice(index, index + 400));
+      removed += messages.length;
+      if (messages.length < limit) break;
+    }
+    return removed;
   }
 
   /**
@@ -617,6 +643,12 @@ export function createHandlers(deps) {
     }
     result.room.id = roomId;
     await persistRoom(result.room, result.secret);
+    // Chat is ephemeral: the moment a match ends, every message is permanently deleted from
+    // Firestore. The 1-hour room TTL is just a fallback — nothing from an ended game is left to
+    // sweep.
+    if (result.room.status === 'finished') {
+      await purgeRoomChat(roomId);
+    }
     return {
       ...(await roomPayload({ id: roomId, ...result.room }, uid)),
       applied: true,
@@ -643,7 +675,52 @@ export function createHandlers(deps) {
     });
     rematched.room.id = roomId;
     await persistRoom(rematched.room, rematched.secret);
+    // Wipe the previous match's chat so the new game starts with a clean slate.
+    await purgeRoomChat(roomId);
     return roomPayload({ id: roomId, ...rematched.room }, uid);
+  }
+
+  /**
+   * Send one chat message to the room. Chat is ephemeral by design:
+   *   * only members of the room may send (server-checked),
+   *   * messages are short (≤ CHAT_MESSAGE_MAX chars) and stripped of control characters,
+   *   * a per-minute rate limit defeats spam,
+   *   * every message is deleted the moment the match ends or a rematch starts,
+   *   * any straggler is removed by the 1-hour room TTL (chat lives under rooms/{id}/chat/ so
+   *     `recursiveDelete(rooms/{id})` sweeps it too).
+   * @param {Record<string, any>} payload @param {any} context
+   */
+  async function sendChat(payload, context) {
+    const uid = requireUser(context.uid);
+    const roomId = text(payload, 'roomId');
+    await spendRateLimit(uid, 'sendChat');
+    const room = await loadRoom(roomId, deps.timestampMs);
+    if (!room.playerUids.includes(uid)) throw new RoomError('not-in-room', 'You are not in this room.');
+    // Chat is a live-match feature. Once the game is over the panel is gone, and the stored
+    // messages are deleted by `playMove` / `rematch` above. Refusing late posts keeps finished
+    // rooms from accumulating ghost messages.
+    if (room.status !== 'playing') throw new PolicyError('chat-not-live', 'Chat is only available while a match is in progress.');
+    // If either side has blocked the other, no message crosses.
+    for (const other of room.playerUids) {
+      if (other === uid) continue;
+      await assertNotBlocked(uid, other);
+    }
+    const profile = await store.get(paths.profile(uid));
+    const senderName = safeDisplayName(
+      room.playerNames?.[uid] || (profile.exists ? profile.data.username : '') || 'Player',
+      'Player',
+    );
+    const text_ = safeMessage(payload?.text, CHAT_MESSAGE_MAX);
+    if (text_.length < 1) throw new PolicyError('chat-empty', 'Type a message first.');
+    const messageId = deps.randomId(20);
+    const createdAtMs = deps.timestampMs;
+    await store.set(paths.chatMessage(roomId, messageId), {
+      uid,
+      name: senderName,
+      text: text_,
+      createdAtMs,
+    });
+    return { messageId, createdAtMs };
   }
 
   /**
@@ -994,6 +1071,8 @@ export function createHandlers(deps) {
     claimHost,
     playMove,
     rematch,
+    sendChat,
+    purgeRoomChat,
     blockUser,
     unblockUser,
     reportProblem,

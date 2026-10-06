@@ -69,6 +69,7 @@ import {
   rematchRoom,
   startRoom,
 } from './online/rooms.js';
+import { sendChatMessage, toggleChatPanel } from './online/chat.js';
 import { showToast } from './ui/toast.js';
 import { setupError } from './connection.js';
 import {
@@ -362,6 +363,7 @@ function handleClick(event) {
       .catch((error) => showToast(friendlyError(error), 'warning'));
     return;
   }
+  if (action === 'toggle-chat') { toggleChatPanel(); return; }
   if (action === 'retry-room') { const route = parseHash(); state.roomError = ''; state.room = null; state.roomId = null; if (route.id) void openRoomFromLink(route.id); return; }
   if (action === 'leave-session') { routeBackToCatalog(); return; }
   if (action === 'play-again') { void resetCurrentGame(); return; }
@@ -525,6 +527,13 @@ function handleSubmit(event) {
   else if (type === 'join-code') task = handleJoinCodeSubmit(form);
   else if (type === 'report') task = handleReportSubmit(form);
   else if (type === 'review') task = handleReviewSubmit(form);
+  else if (type === 'chat') {
+    const input = /** @type {HTMLInputElement | null} */ (form.querySelector('input[name="text"]'));
+    const text = String(new FormData(form).get('text') || '');
+    task = sendChatMessage(text).then(() => {
+      if (input) input.value = '';
+    });
+  }
   Promise.resolve(task).catch((error) => {
     if (type === 'auth') reportAuthError(error, { method: 'password' });
     else showToast(friendlyError(error), 'warning');
