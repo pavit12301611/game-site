@@ -11,7 +11,7 @@ import { connection } from '../connection.js';
 import { state } from '../state.js';
 import { esc, icon, renderBrand } from '../ui/html.js';
 import { renderModal } from './modals.js';
-import { renderAdmin, renderCatalog, renderFriends, renderGameScreen, renderHome, renderRoom } from './pages.js';
+import { renderAdmin, renderCatalog, renderFriends, renderGameScreen, renderHome, renderReviews, renderRoom } from './pages.js';
 import { renderPrivacy, renderSafety } from './legal.js';
 
 export function renderSidebar() {
@@ -20,6 +20,7 @@ export function renderSidebar() {
     { page: 'home', icon: 'home', label: 'Home' },
     { page: 'catalog', icon: 'grid', label: 'Game library', count: '40' },
     { page: 'friends', icon: 'people', label: 'Friends', count: state.requests.length || null },
+    { page: 'reviews', icon: 'star', label: 'Reviews' },
   ];
   if (state.isAdmin) items.push({ page: 'admin', icon: 'shield', label: 'Admin studio' });
   return `<aside class="sidebar" aria-label="Arcade menu">
@@ -60,7 +61,7 @@ export function renderTopbar() {
 
 export function renderMobileNav() {
   const items = [
-    ['home', 'Home', 'home'], ['catalog', 'Games', 'grid'], ['friends', 'Friends', 'people'],
+    ['home', 'Home', 'home'], ['catalog', 'Games', 'grid'], ['friends', 'Friends', 'people'], ['reviews', 'Reviews', 'star'],
   ];
   if (state.isAdmin) items.push(['admin', 'Admin', 'shield']);
   const pageItems = items.map(([page, label, iconName]) => `<button class="mobile-nav-item ${state.page === page ? 'is-active' : ''}" data-action="navigate" data-page="${page}">${icon(iconName)}<span>${label}</span></button>`).join('');
@@ -69,7 +70,7 @@ export function renderMobileNav() {
 
 export function renderShell() {
   const conn = connection();
-  const pageNames = { home: 'Welcome back', catalog: 'Game library', friends: 'Your crew', admin: 'Admin studio', room: 'Private room', game: 'Now playing', privacy: 'Privacy notice', safety: 'Terms & safety' };
+  const pageNames = { home: 'Welcome back', catalog: 'Game library', friends: 'Your crew', reviews: 'Player reviews', admin: 'Admin studio', room: 'Private room', game: 'Now playing', privacy: 'Privacy notice', safety: 'Terms & safety' };
   return `<div class="app-shell"><button class="button button-primary skip-link" data-action="skip-to-content">Skip to content</button>${renderSidebar()}<div class="main-column">${renderTopbar()}<aside class="page-context" aria-label="Page status"><span class="page-context-name">${pageNames[state.page] || 'Arcade'}</span><span class="network-status is-${conn.kind}" title="${esc(conn.title)}"><i></i><span>${esc(conn.shortLabel)}</span></span></aside><main class="page-content" id="page-content">${renderPage()}</main></div>${renderMobileNav()}</div>${state.modal ? renderModal() : ''}${state.toast ? `<div class="toast toast-${state.toast.kind}" role="status">${icon(state.toast.kind === 'success' ? 'check' : 'spark')}<span>${esc(state.toast.message)}</span></div>` : ''}`;
 }
 
@@ -77,6 +78,7 @@ export function renderPage() {
   switch (state.page) {
     case 'catalog': return renderCatalog();
     case 'friends': return renderFriends();
+    case 'reviews': return renderReviews();
     case 'admin': return renderAdmin();
     case 'room': return renderRoom();
     case 'game': return renderGameScreen();

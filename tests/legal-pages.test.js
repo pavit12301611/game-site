@@ -60,6 +60,10 @@ test('the privacy notice describes every collection the app really writes', () =
   }
   assert.match(words, /Firebase Authentication/);
   assert.match(words, /Passwords are handled by Firebase Authentication/);
+  assert.match(words, /Hugging Face/);
+  assert.match(words, /about 67 MB/);
+  assert.match(words, /never sends your review text/);
+  assert.match(words, /movie-review sentences, not PSD-gaming reviews or game reviews/);
 });
 
 test('the retention numbers on the page are the numbers the cleanup function uses', () => {

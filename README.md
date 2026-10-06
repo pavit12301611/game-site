@@ -1,8 +1,8 @@
 # PSD-gaming
 
-A lightweight, responsive browser arcade for laptops and phones. The shelf contains **40 original retro-style mini-games** with ten compact rulesets, local practice against a browser rival, private 2–3 player rooms, username friends, direct game invites, optional email accounts, guest play, and a UID-gated admin area.
+A lightweight, responsive browser arcade for laptops and phones. The shelf contains **40 original retro-style mini-games** with ten compact rulesets, local practice against a browser rival, private 2–3 player rooms, username friends, direct game invites, optional email accounts, guest play, a public player-review wall with automatic no-key replies, and a UID-gated admin area.
 
-Online play is **server-authoritative**: every room mutation, friend request, invite, report and account deletion runs through callable Cloud Functions in [`functions/`](functions/) using the Firebase Admin SDK, and [`firestore.rules`](firestore.rules) denies browser writes to rooms, their secrets and private views, profiles, usernames and every social collection. Hidden state (the codebreaker code, fleet positions, quiz answer keys) never reaches a browser that should not see it. Local practice still works with no Firebase configuration at all.
+Online play is **server-authoritative**: every room mutation, friend request, invite, report, review submission and account deletion runs through callable Cloud Functions in [`functions/`](functions/) using the Firebase Admin SDK. [`firestore.rules`](firestore.rules) allows public reads of published reviews but denies every browser write to them; the review wall uses a pretrained DistilBERT sentiment model in the browser (no inference API or API key), then the backend attaches a reply before publication. The quantized weights download on first use; the model is not game-review-trained, and the review form, in-app privacy notice and [model guide](docs/reviews-and-local-agent.md) explain the download and limitations. Hidden game state (the codebreaker code, fleet positions, quiz answer keys) never reaches a browser that should not see it. Local practice still works with no Firebase configuration at all.
 
 The games are original mini-games and variations, not bundled copyrighted ROMs or downloaded emulators. That keeps the app small, quick to load, and safe to deploy.
 
@@ -11,12 +11,12 @@ The games are original mini-games and variations, not bundled copyrighted ROMs o
 Requirements: Node.js 20+ and npm.
 
 ```bash
-npm install
+npm install --ignore-scripts
 npm test
 npm run dev
 ```
 
-Open the Vite URL printed in the terminal. **Without Firebase**, the home page, all 40 game cards, and local practice mode work, and the app says plainly why online play is off (see [Connection status](#connection-status-what-the-labels-mean)). Online rooms, accounts, usernames, friends, and admin data become active once Firebase is configured.
+Open the Vite URL printed in the terminal. `--ignore-scripts` skips the unused native Node ONNX postinstall download; inference uses the browser's WebAssembly runtime. **Without Firebase**, the home page, all 40 game cards, and local practice mode work, and the app says plainly why online play is off (see [Connection status](#connection-status-what-the-labels-mean)). Online rooms, accounts, usernames, friends, and admin data become active once Firebase is configured.
 
 ### Turn on online mode locally (`.env.local`)
 
@@ -87,12 +87,16 @@ Two things to know: the flag is **ignored by a production build** (`vite build`)
 | `src/diagnostics.js` | The setup dialog's "Run check" button. |
 | `src/online/session.js` | `ensureOnlineUser()`: guests are anonymous accounts, so a link never forces a sign-up. |
 | `src/online/callables.js` | The one bridge to the backend: `httpsCallable` wrappers plus the error mapping that turns a missing deployment, a rate limit or a refused move into a sentence (see [docs/online-play.md](docs/online-play.md)). |
+| `src/reviews.js` | Public paged review reads, top-review query, on-device inference handoff and callable submission path. |
+| `src/review-model*.js` | Quantized DistilBERT module worker and output adapter; weights are downloaded lazily and cached by the browser. |
+| `shared/reviews/agent.js` | Dependency-free prediction validation, fallback sentiment logic, automatic reply templates, evidence-counted ideas and first-party trainer. |
 | `src/online/rooms.js` | Create/join/leave/start/claim-host/rematch/move through the callables, plus the member-only room and private-view snapshots and the 1-hour countdown. |
 | `src/online/action-sync.js` | Pure optimistic-move replay, bounded idempotency markers, and rematch revision handling. |
 | `src/online/presence.js` | "Who is still in this room": your heartbeat in `rooms/{roomId}/presence/{uid}`, everyone else's read back (see below). |
 | `src/presence-status.js` | The pure half of presence: the here / away / left verdicts and the heartbeat loop, unit-tested with fake timers. |
-| `src/online/admin.js` | The admin studio's reads and privileged actions (delete/kick/grant/revoke - each one re-checks the flag server-side and refreshes the dashboard). |
+| `src/online/admin.js` | The admin studio's reads and privileged actions (delete/kick/grant/revoke, human-review labels and model training - each one re-checks the flag server-side). |
 | `src/views/` | Pure "state in, HTML out": `shell`, `pages`, `modals`, `boards`, `legal` (privacy and terms/safety), `fatal`. |
+| `src/styles/reviews.css` | Responsive public review cards, featured review spotlight, submission form and admin agent console. |
 | `src/seo.js` | Per-route title, description and social-preview tags (one HTML document, so `render()` applies them). |
 | `src/data-policy.js` | Re-exports the retention windows the privacy notice prints, from the same table the cleanup function uses. |
 | `src/ui/` | Small pieces: `html` (icons, escaping), `players`, `toast`, `theme`, `sound`, `prefs`, `links`. |
@@ -101,8 +105,9 @@ Two things to know: the flag is **ignored by a production build** (`vite build`)
 | `src/styles/` | The design system: `tokens`, `base`, `components`, `shell`, `home`, `rooms`, `boards`, `modals`, `legal` (see below). |
 | `src/a11y.js` | Live region, focus restore after a repaint, dialog focus and Tab trap, arrow keys in boards. |
 | `functions/` | The trusted backend: callable handlers with all the policy, the Admin-SDK store, the scheduled cleanup and its own test suite. |
-| `shared/online/retention.js` | The retention table: room, invite, request, rate-limit and report lifetimes, used by the cleanup function, the browser and the privacy notice. |
+| `shared/online/retention.js` | The retention table: room, invite, request, rate-limit, report and public-review lifetimes, used by the cleanup function, the browser and the privacy notice. |
 | `docs/online-play.md` | Architecture, deploy runbook, billing, retention defaults and the staging smoke-test checklist. |
+| `docs/reviews-and-local-agent.md` | Model provenance, first-use weight download, on-device privacy, public replies and first-party data distillation. |
 | `docs/design-reboot.md` | The visual-reboot brief: audit, tokens with measured contrast, component list, per-game image brief and per-engine board spec. `tests/design-brief.test.js` recomputes its numbers. |
 
 Rules for contributing to this layout: views never write to state and never talk to Firebase;

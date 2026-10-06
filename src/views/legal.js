@@ -19,6 +19,7 @@ import {
   RECENT_AUTH_WINDOW_MS,
   FINISHED_ROOM_GRACE_MS,
   REPORT_MAX_AGE_MS,
+  REVIEW_MAX_AGE_MS,
   ROOM_TTL_MS,
 } from '../data-policy.js';
 
@@ -49,8 +50,9 @@ export function renderPrivacy() {
     ${qa('Your profile', 'The username you claim, stored at <code>profiles/{your-uid}</code>. Usernames are reserved in <code>usernames/{name}</code> so two people cannot hold the same name; the backend owns both documents and no browser can write them.')}
     ${qa('Friends and invites', '<code>friendRequests</code>, <code>friendships</code> and <code>gameInvites</code> hold the two UIDs involved, the display name shown in the UI, a status and a timestamp. Only the two participants (and a signed-in admin, for tidying up abuse) can read them.')}
     ${qa('Rooms', 'A room document holds the game id, the players in it, whose turn it is, the public board, and a heartbeat of who is present. Private game state — the codebreaker code, fleet positions, quiz answer keys — lives in <code>rooms/{id}/secrets</code>, which no browser can read, and your own private view lives in <code>rooms/{id}/views/{your-uid}</code>, which only you can read.')}
-    ${qa('Rate-limit counters', 'One small document per account at <code>rateLimits/{your-uid}</code> counts recent friend requests, invites, room creations and reports so one account cannot flood another. It is readable by nobody in the browser and is deleted by cleanup.')}
+    ${qa('Rate-limit counters', 'One small document per account at <code>rateLimits/{your-uid}</code> counts recent friend requests, invites, room creations, reports and review submissions so one account cannot flood the service. It is readable by nobody in the browser and is deleted by cleanup.')}
     ${qa('Blocks and reports', 'A block is stored at <code>blocks/{you}_{them}</code> and is only readable by you (and admins). A report stores your UID, the reported player or room, your message and a timestamp, and is readable only by the operator in the admin studio.')}
+    ${qa('Player reviews and the review agent', 'Reviews are public to signed-out visitors and contain the display name you choose, star rating, game, title, review text, a sentiment estimate and an automatic public reply. A private backend-only owner record lets account deletion remove your reviews. Before submission, a quantized DistilBERT classifier ([model card](https://huggingface.co/Xenova/distilbert-base-uncased-finetuned-sst-2-english)) runs in your browser; its public weights are pretrained on Stanford Sentiment Treebank movie-review sentences, not PSD-gaming reviews or game reviews. The first use downloads about 67 MB of static model files from the public Hugging Face model repository (and its file CDN); the browser caches them for later, subject to browser cache eviction. The app also loads its on-demand ONNX WebAssembly runtime from this site (about 27 MB uncompressed, roughly 6.7 MB gzip in the current build). The model-file request sends normal connection metadata such as your IP address to Hugging Face, but never sends your review text. There is no inference API call or provider API key. When you post, the review text is sent to this project’s Firebase function for publication and its automatic reply. If the transformer cannot load, the backend uses the transparent lexicon and a small synthetic starter fallback; neither is a claim of real player training. An admin can label real reviews and distill them into a compact first-party word-weight model; it stores weights, not source review text.')}
     ${qa('This device', 'Favorites, recent games, theme, sound and your display name live in this browser’s <code>localStorage</code>. Clearing site data removes them; they are never sent anywhere as a list.')}
   </section>
 
@@ -64,14 +66,14 @@ export function renderPrivacy() {
     <ul class="legal-list">
       <li>Rooms stop working <b>${minutes(ROOM_TTL_MS)} minutes</b> after creation and are deleted by the next cleanup pass, together with their private views, secrets and presence documents.</li>
       <li>Game invites are cleared after <b>${hours(INVITE_MAX_AGE_MS)} hours</b>; finished rooms after <b>${minutes(FINISHED_ROOM_GRACE_MS)} minutes</b> of inactivity.</li>
-      <li>Friend requests are cleared after <b>${days(FRIEND_REQUEST_MAX_AGE_MS)} days</b>; rate-limit counters after <b>${days(RATE_LIMIT_MAX_AGE_MS)} days</b>; reports after <b>${days(REPORT_MAX_AGE_MS)} days</b>.</li>
+      <li>Friend requests are cleared after <b>${days(FRIEND_REQUEST_MAX_AGE_MS)} days</b>; rate-limit counters after <b>${days(RATE_LIMIT_MAX_AGE_MS)} days</b>; reports after <b>${days(REPORT_MAX_AGE_MS)} days</b>; public reviews after <b>${days(REVIEW_MAX_AGE_MS)} days</b>.</li>
       <li>Unanswered requests, blocks and your profile stay until you remove them or delete the account.</li>
     </ul>
     <p>These windows are the defaults in this repository. An operator who changes their Firebase project can adjust them in <code>functions/src/cleanup.js</code>; the numbers above describe the code as it ships.</p>
   </section>
 
   <section class="legal-card"><h2>Deleting your account</h2>
-    <p>Signed-in accounts can delete themselves from the account menu. The backend deletes your profile, releases your username reservation, removes your friendships, requests, invites and presence documents, leaves or closes the rooms you were in, and finally deletes the Firebase Authentication user. If a room still needs another player to finish, deletion stops and tells you exactly what to do instead of pretending it worked.</p>
+    <p>Signed-in accounts can delete themselves from the account menu. The backend deletes your profile, releases your username reservation, removes your friendships, requests, invites, public reviews and review-training annotations, leaves or closes the rooms you were in, and finally deletes the Firebase Authentication user. If your reviews were used in a distilled model, that model is cleared so it can be retrained without those examples. If a room still needs another player to finish, deletion stops and tells you exactly what to do instead of pretending it worked.</p>
     <p>For safety, deletion asks you to have signed in within the last <b>${authWindow} minutes</b>. If you have not, it tells you to sign in again rather than failing silently. The single admin account cannot delete itself while it is the only admin: promote another player first.</p>
   </section>
 

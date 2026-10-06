@@ -26,9 +26,13 @@ export const PAGE_META = Object.freeze({
     title: 'Friends — add players by username · PSD-gaming',
     description: 'Find a player by their exact username, keep a friends list, and send direct game invites. Guests can play by link without an account.',
   },
+  reviews: {
+    title: 'Player reviews — the arcade community · PSD-gaming',
+    description: 'Read public player reviews, see the community spotlight, and leave feedback with an automatic no-API review-agent reply.',
+  },
   admin: {
     title: 'Admin studio · PSD-gaming',
-    description: 'Operator tools: rooms, players, social cleanup, and the reports players send in. Available only to approved admin accounts.',
+    description: 'Operator tools: rooms, players, social cleanup, public reviews, sentiment insights and locally distilled review-agent suggestions.',
   },
   privacy: {
     title: 'Privacy notice — what the arcade stores · PSD-gaming',

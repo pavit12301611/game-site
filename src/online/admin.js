@@ -15,6 +15,7 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDoc,
   getDocs,
   limit,
   orderBy,
@@ -67,13 +68,16 @@ export async function loadAdminData() {
   state.adminLoading = true;
   render();
   try {
-    const [roomsSnap, profilesSnap, adminsSnap, friendshipsSnap, requestsSnap, invitesSnap] = await Promise.all([
+    const [roomsSnap, profilesSnap, adminsSnap, friendshipsSnap, requestsSnap, invitesSnap, reviewsSnap, reviewAnnotationsSnap, reviewAgentModelSnap] = await Promise.all([
       getDocs(query(collection(store, 'rooms'), orderBy('createdAt', 'desc'), limit(100))),
       getDocs(query(collection(store, 'profiles'), limit(300))),
       getDocs(query(collection(store, 'admins'), limit(100))),
       getDocs(query(collection(store, 'friendships'), limit(300))),
       getDocs(query(collection(store, 'friendRequests'), limit(300))),
       getDocs(query(collection(store, 'gameInvites'), limit(300))),
+      getDocs(query(collection(store, 'reviews'), orderBy('createdAtMs', 'desc'), limit(300))),
+      getDocs(query(collection(store, 'reviewAnnotations'), orderBy('createdAtMs', 'desc'), limit(500))),
+      getDoc(doc(store, 'reviewAgentModels', 'active')),
     ]);
     const allRooms = rowsOf(roomsSnap);
     const allInvites = rowsOf(invitesSnap);
@@ -92,10 +96,13 @@ export async function loadAdminData() {
       friendships: rowsOf(friendshipsSnap),
       requests: rowsOf(requestsSnap),
       invites: activeInvites,
+      reviews: rowsOf(reviewsSnap),
+      reviewAnnotations: rowsOf(reviewAnnotationsSnap),
+      reviewAgentModel: reviewAgentModelSnap.exists() ? reviewAgentModelSnap.data() : null,
       error: '',
     };
   } catch (error) {
-    state.adminData = { error: friendlyError(error), rooms: [], profiles: [], admins: [], friendships: [], requests: [], invites: [] };
+    state.adminData = { error: friendlyError(error), rooms: [], profiles: [], admins: [], friendships: [], requests: [], invites: [], reviews: [], reviewAnnotations: [], reviewAgentModel: null };
   }
   state.adminLoading = false;
   render();
@@ -186,4 +193,22 @@ export async function adminDeleteGameInvite(inviteId) {
   await runAdminAction('Game invite deleted.', async () => {
     await deleteDoc(doc(store, 'gameInvites', inviteId));
   });
+}
+
+/** @param {string} reviewId @param {string} sentiment */
+export async function adminLabelReview(reviewId, sentiment) {
+  await runAdminAction('Human training label saved. Retrain the local agent when enough examples are ready.', async () => {
+    await callBackend('adminLabelReview', { reviewId, sentiment });
+  });
+}
+
+export async function adminTrainReviewAgent() {
+  try {
+    const result = await callBackend('adminTrainReviewAgent');
+    showToast(`Review agent distilled from ${Number(result.trainingSize) || 0} real reviews (${Number(result.vocabularySize) || 0} compact word weights).`, 'success');
+  } catch (error) {
+    showToast(friendlyError(error), 'warning');
+    return;
+  }
+  await loadAdminData();
 }

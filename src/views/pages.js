@@ -20,6 +20,11 @@ import { artImage, esc, icon } from '../ui/html.js';
 import { formatAwayFor } from '../presence-status.js';
 import { activeName, isGoogleUser } from '../ui/players.js';
 import { renderEngineBoard } from './boards.js';
+import {
+  REVIEW_SENTIMENTS,
+  buildImprovementIdeas,
+  summarizeReviewSentiment,
+} from '../../shared/reviews/agent.js';
 
 /** The 640 px picture of a game, used as the backdrop of the game stage heading. */
 function stageArt(game) {
@@ -108,6 +113,54 @@ export function renderCategoryRow() {
   return `<section class="section-block category-section" aria-labelledby="category-title"><div class="section-heading"><div><div class="eyebrow">Find your mood</div><h2 id="category-title">Browse by category<span>.</span></h2></div></div><ul class="category-row">${cards}</ul></section>`;
 }
 
+function reviewStars(rating) {
+  const stars = Math.max(0, Math.min(5, Number(rating) || 0));
+  return `<span class="review-stars" aria-label="${stars} out of 5 stars">${'★'.repeat(stars)}<span class="review-stars-empty">${'☆'.repeat(5 - stars)}</span></span>`;
+}
+
+function reviewGameName(gameId) {
+  return gameId === 'arcade' ? 'Whole arcade' : getGame(gameId)?.title || 'Arcade game';
+}
+
+function renderReviewSpotlight({ compact = false } = {}) {
+  const review = state.featuredReview;
+  if (!review) {
+    return `<section class="review-spotlight ${compact ? 'is-compact' : ''}" aria-labelledby="review-spotlight-title"><div class="review-spotlight-art" aria-hidden="true"><span>★</span><i>★</i><b>★</b></div><div class="review-spotlight-copy"><span class="eyebrow">Community spotlight</span><h2 id="review-spotlight-title">Find your next favorite review<span>.</span></h2><p>Read what players think, see every reply, and leave a note of your own for the arcade.</p><button class="button button-primary" data-action="navigate" data-page="reviews">Read reviews &amp; share yours ${icon('arrow')}</button></div></section>`;
+  }
+  const sentiment = REVIEW_SENTIMENTS.includes(review.sentiment) ? review.sentiment : 'neutral';
+  const rating = Math.max(1, Math.min(5, Number(review.rating) || 1));
+  return `<section class="review-spotlight ${compact ? 'is-compact' : ''}" aria-labelledby="review-spotlight-title"><div class="review-spotlight-art" aria-hidden="true"><span>★</span><i>★</i><b>★</b></div><div class="review-spotlight-copy"><div class="review-spotlight-kicker"><span class="eyebrow">Top community review</span><span class="review-featured-badge">${icon('trophy')} Featured</span></div><div class="review-spotlight-stars">${reviewStars(rating)}<span>${rating}.0 / 5</span></div><h2 id="review-spotlight-title">${esc(review.title || 'A player’s take on the arcade')}</h2><blockquote>“${esc(review.message || '')}”</blockquote><div class="review-spotlight-byline"><b>${esc(review.reviewerName || 'Arcade player')}</b><span>${esc(reviewGameName(review.gameId))}</span><span class="review-sentiment-chip sentiment-${sentiment}">${esc(sentiment)}</span></div>${review.assistantReply ? `<div class="review-spotlight-reply"><span>✦ ${esc(review.assistantName || 'Arcade Review Agent')} replied</span><p>${esc(review.assistantReply)}</p></div>` : ''}<button class="text-button" data-action="navigate" data-page="reviews">See every review ${icon('arrow')}</button></div></section>`;
+}
+
+function renderPublicReviewCard(review) {
+  const sentiment = REVIEW_SENTIMENTS.includes(review.sentiment) ? review.sentiment : 'neutral';
+  const rating = Math.max(1, Math.min(5, Number(review.rating) || 1));
+  return `<article class="review-card"><div class="review-card-top"><div>${reviewStars(rating)}<span class="review-rating-number">${rating}.0</span></div><span class="review-sentiment-chip sentiment-${sentiment}">${esc(sentiment)}</span></div><h3>${esc(review.title || 'A player review')}</h3><p class="review-card-message">${esc(review.message || '')}</p><div class="review-card-meta"><b>${esc(review.reviewerName || 'Arcade player')}</b><span>${esc(reviewGameName(review.gameId))}</span><time>${esc(timeAgo(review.createdAtMs))}</time></div><section class="review-agent-reply" aria-label="Reply from the Arcade Review Agent"><div><span class="review-agent-mark">✦</span><b>${esc(review.assistantName || 'Arcade Review Agent')}</b><small>replied automatically</small></div><p>${esc(review.assistantReply || 'Thanks for sharing your experience with the community.')}</p></section></article>`;
+}
+
+function renderReviewForm() {
+  const disabled = !firebaseReady || state.reviewSubmitting;
+  const disabledAttr = disabled ? 'disabled' : '';
+  const name = state.profile?.username || state.displayName || '';
+  return `<section class="surface review-form-panel" aria-labelledby="review-form-title"><div class="review-form-heading"><span class="review-form-icon">${icon('star')}</span><div><span class="eyebrow">Add your voice</span><h2 id="review-form-title">Leave a review<span>.</span></h2></div></div><p class="review-form-intro">Your note is public. A pretrained DistilBERT model classifies it in this browser and the agent posts a reply. It learned from short English movie-review sentences, not game reviews, so game slang can be misread. First use fetches about 67 MB of public weights and loads this site’s on-demand WebAssembly runtime; both are cached. If the model cannot load, the local fallback still answers.</p><form class="review-form" data-form="review"><fieldset class="review-form-fields" ${firebaseReady ? '' : 'disabled'}><legend class="sr-only">Review details</legend><div class="review-form-grid"><fieldset class="review-rating-field"><legend>Rating <span class="required-mark">*</span></legend><span class="rating-picker">${[1, 2, 3, 4, 5].map((value) => `<label><input name="rating" type="radio" value="${value}" required><span aria-hidden="true">★</span><span class="sr-only">${value} ${value === 1 ? 'star' : 'stars'}</span></label>`).join('')}</span></fieldset><label>What are you reviewing?<select name="gameId"><option value="arcade">The whole arcade</option>${GAMES.map((game) => `<option value="${esc(game.id)}">${esc(game.title)}</option>`).join('')}</select></label></div><label>Headline <span class="review-field-optional">optional</span><input name="title" type="text" maxlength="80" placeholder="A quick take" autocomplete="off"></label><label>Your review <span class="required-mark">*</span><textarea name="message" rows="5" maxlength="800" minlength="8" required placeholder="What worked well? What should we improve? A game name or concrete example helps."></textarea><small class="review-character-note">8–800 characters. Please leave out personal information.</small></label><label>Display name <span class="review-field-optional">optional</span><input name="reviewerName" type="text" maxlength="24" value="${esc(name)}" placeholder="Arcade player" ${state.profile?.username ? 'readonly' : ''}></label><button class="button button-primary button-full" type="submit" ${disabledAttr}>${state.reviewSubmitting ? 'Analyzing & posting…' : 'Post review'} ${icon('arrow')}</button></fieldset>${state.reviewSubmitting ? `<small class="review-model-status" role="status" aria-live="polite">${esc(state.reviewModelStatus || 'Preparing the on-device model…')}</small>` : ''}<small class="review-privacy-note">Your review text is not sent to Hugging Face. Its public static model files are downloaded on first use; no inference API or API key is used. The review itself is sent to Firebase when you post and is visible to everyone with its automatic reply.</small>${firebaseReady ? '' : `<small class="review-privacy-note is-warning">${esc(onlineUnavailableNote(connection()))}</small>`}</form></section>`;
+}
+
+export function renderReviews() {
+  const reviews = state.reviews || [];
+  const loaded = reviews.length;
+  const average = loaded ? (reviews.reduce((sum, review) => sum + (Number(review.rating) || 0), 0) / loaded).toFixed(1) : '—';
+  const positive = loaded ? Math.round((reviews.filter((review) => review.sentiment === 'positive').length / loaded) * 100) : 0;
+  const entries = reviews.length
+    ? `<div class="review-list">${reviews.map((review) => renderPublicReviewCard(review)).join('')}</div>`
+    : state.reviewsLoading
+      ? `<div class="empty-inline"><span class="loader"></span><b>Fetching community reviews…</b><small>Everyone can read this wall; no account is needed.</small></div>`
+      : `<div class="empty-inline review-empty"><span>✦</span><b>No reviews yet</b><small>Be the first to share a specific, useful note. The review agent will answer it.</small></div>`;
+  return `<section class="reviews-heading"><div><div class="eyebrow">The arcade, through your eyes</div><h1>Player reviews<span>.</span></h1><p>Real notes from the people playing. Every posted review gets a public reply from our local review agent.</p></div><span class="review-public-pill">${icon('people')} Public to everyone</span></section>
+    ${state.reviewsError ? `<div class="notice-panel notice-warn" role="status">${icon('spark')}<div><b>Reviews could not be loaded.</b><p>${esc(state.reviewsError)}</p></div></div>` : ''}
+    ${renderReviewSpotlight()}
+    <div class="review-page-grid"><div class="review-feed-column"><section class="review-pulse" aria-label="Reviews loaded on this page"><div><b>${loaded}${state.reviewsHasMore ? '+' : ''}</b><span>reviews loaded</span></div><div><b>${average}</b><span>average stars shown</span></div><div><b>${loaded ? `${positive}%` : '—'}</b><span>positive in this sample</span></div></section><section class="review-feed-panel" aria-labelledby="review-feed-title"><div class="panel-heading"><div><span class="eyebrow">Community wall · newest first</span><h2 id="review-feed-title">All player reviews</h2></div><span class="review-feed-count">${loaded ? `Showing ${loaded}${state.reviewsHasMore ? '+' : ''}` : ''}</span></div>${entries}${state.reviewsHasMore && !state.reviewsLoading ? `<button class="button button-outline review-load-more" data-action="load-more-reviews">Load older reviews ${icon('arrow')}</button>` : ''}${state.reviewsLoading && loaded ? `<div class="review-loading-more" role="status">Loading more reviews…</div>` : ''}</section></div>${renderReviewForm()}</div>`;
+}
+
 export function renderHome() {
   const featured = GAMES.slice(0, 6);
   const conn = connection();
@@ -119,6 +172,7 @@ export function renderHome() {
   <div class="marquee" aria-hidden="true"><span>★ INSERT FRIENDS ★ PRESS START ★ 40 GAMES ★ 2–3 PLAYERS ★ NO DOWNLOADS ★ SHARE A LINK ★ HIGH SCORE IS WAITING ★</span></div>
   ${renderSetupCallout(conn)}
   <section class="stat-strip" aria-label="Arcade facts"><div><b>40</b><span>tiny game worlds</span></div><div><b>2–3</b><span>players per room</span></div><div><b>0</b><span>downloads required</span></div></section>
+  ${renderReviewSpotlight({ compact: true })}
   <section class="join-code-panel" aria-labelledby="join-code-title"><div><div class="eyebrow">Got a code instead of a link?</div><h2 id="join-code-title">Join a room by code<span>.</span></h2><p>Room codes are 7 characters and only work while the room is open. Anyone who has the code can join — links and codes are equivalent, so share them the same way.</p></div><form class="join-code-form" data-form="join-code"><label for="room-code-input">Room code</label><div class="join-code-row"><input id="room-code-input" name="code" type="text" inputmode="latin" autocomplete="off" spellcheck="false" maxlength="12" placeholder="ABCD234" ${conn.onlineFeatures ? '' : 'disabled'} required><button class="button button-primary" type="submit" ${conn.onlineFeatures ? '' : 'disabled'}>Join room ${icon('arrow')}</button></div>${conn.onlineFeatures ? '<small>Codes are not listed anywhere; the host has to send you one.</small>' : `<small class="join-code-off">${esc(onlineUnavailableNote(conn))}</small>`}</form></section>
   <section class="first-run" aria-labelledby="first-run-title"><h2 id="first-run-title" class="first-run-title">Two ways to play<span>.</span></h2>
     <div class="first-run-card is-practice"><span class="first-run-icon" aria-hidden="true">${icon('gamepad')}</span><div><b>Practice on this device</b><p>Open any game and press <b>Practice locally</b>. You play against a browser rival, one screen, no account, no Firebase project needed. Favorites and recent games stay in this browser.</p></div><button class="button button-outline" data-action="navigate" data-page="catalog">Pick a game ${icon('arrow')}</button></div>
@@ -204,6 +258,7 @@ const ADMIN_TABS = [
   ['rooms', 'Rooms'],
   ['players', 'Players'],
   ['social', 'Social'],
+  ['reviews', 'Review agent'],
   ['access', 'Access'],
 ];
 
@@ -301,6 +356,27 @@ function renderAdminSocial(data) {
     <section class="surface admin-table-panel"><div class="panel-heading"><div><span class="eyebrow">Direct challenges</span><h2>Game invites <i>${data.invites.length}</i></h2></div></div>${invites}</section></div>`;
 }
 
+function renderAdminReviews(data) {
+  const reviews = data.reviews || [];
+  const annotations = data.reviewAnnotations || [];
+  const labelsById = new Map(annotations.map((annotation) => [annotation.id, annotation.sentiment]));
+  const counts = summarizeReviewSentiment(reviews);
+  const labelCounts = Object.fromEntries(REVIEW_SENTIMENTS.map((label) => [label, annotations.filter((annotation) => annotation.sentiment === label).length]));
+  const trainableClasses = REVIEW_SENTIMENTS.filter((label) => labelCounts[label] >= 2);
+  const canTrain = trainableClasses.length >= 2;
+  const model = data.reviewAgentModel;
+  const ideas = buildImprovementIdeas(reviews);
+  const ideasMarkup = ideas.map((idea) => `<article class="review-idea-card"><span class="review-idea-evidence">${idea.evidence ? `${idea.evidence} ${idea.evidence === 1 ? 'review' : 'reviews'}` : 'Watchlist'}</span><h3>${esc(idea.title)}</h3><p>${esc(idea.action)}</p><small>${esc(idea.note)}</small></article>`).join('');
+  const reviewRows = reviews.length
+    ? `<div class="admin-review-list">${reviews.map((review) => {
+      const currentLabel = labelsById.get(review.id) || '';
+      const labelButtons = REVIEW_SENTIMENTS.map((label) => `<button class="review-label-button ${currentLabel === label ? 'is-selected' : ''}" data-action="admin-label-review" data-review-id="${esc(review.id)}" data-label="${label}" aria-pressed="${currentLabel === label}" title="Use ${label} as the human-checked training label">${esc(label)}</button>`).join('');
+      return `<article class="admin-review-row">${renderPublicReviewCard(review)}<div class="review-training-panel"><div><b>Human training label</b><small>${currentLabel ? `Currently ${esc(currentLabel)} · click to correct` : 'Not labelled yet · choose the sentiment that best fits'}</small></div><div class="review-label-buttons" role="group" aria-label="Training sentiment label for review by ${esc(review.reviewerName || 'player')}">${labelButtons}</div></div></article>`;
+    }).join('')}</div>`
+    : `<div class="empty-inline"><span>✦</span><b>No community reviews yet</b><small>Reviews and their automatic replies will appear here after the first player posts.</small></div>`;
+  return `<section class="review-agent-console"><div class="review-agent-console-heading"><div><span class="eyebrow">On-device transformer · no inference API</span><h2>Arcade Review Agent</h2><p>A pretrained DistilBERT classifier runs in the player’s browser before submission; its first use downloads about 67 MB of public weights and loads this site’s on-demand WASM runtime. Review text is not sent to the model host—only the normal Firebase submission receives it. No inference API or API key is used; replies remain server-generated templates.</p></div><span class="review-agent-orb" aria-hidden="true">✦</span></div><div class="review-agent-metrics"><article><span>Reviews analyzed</span><b>${counts.total}</b><small>latest ${reviews.length} loaded</small></article><article><span>Positive</span><b>${counts.positive}</b><small>local sentiment estimate</small></article><article><span>Mixed / neutral</span><b>${counts.mixed + counts.neutral}</b><small>needs more context</small></article><article><span>Negative</span><b>${counts.negative}</b><small>themes feed the ideas below</small></article></div><div class="review-distillation-panel"><div><span class="eyebrow">Real-feedback distillation</span><h3>${model ? `Human-distilled model · ${Number(model.trainingSize) || 0} reviewed examples` : 'Pretrained DistilBERT is primary'}</h3><p>${model ? `Trained ${esc(timeAgo(model.trainedAtMs))} on first-party reviews. It takes over only when confident; otherwise DistilBERT leads. ${Number(model.vocabularySize) || 0} token weights; no source review text is stored in the model.` : `The day-one transformer is pretrained on the Stanford Sentiment Treebank (movie-review sentences), not game reviews. It runs in-browser; the small synthetic starter is only a fallback, not the real model. Label at least two reviews in each of two classes to train a first-party specialist.`}</p><small>Human-labelled examples: ${REVIEW_SENTIMENTS.map((label) => `${label} ${labelCounts[label] || 0}`).join(' · ')}</small></div><button class="button button-primary" data-action="admin-train-review-agent" ${canTrain ? '' : 'disabled'}>${model ? 'Retrain local model' : 'Distill labeled reviews'} ${icon('spark')}</button></div></section><section class="review-ideas-section"><div class="panel-heading"><div><span class="eyebrow">Grounded in negative &amp; mixed feedback</span><h2>Improvement ideas</h2></div><span class="review-ideas-note">Suggestions are rules-based, not promises</span></div><div class="review-ideas-grid">${ideasMarkup}</div></section><section class="surface admin-table-panel admin-reviews-panel"><div class="panel-heading"><div><span class="eyebrow">Every public review · newest first</span><h2>Review inbox <i>${reviews.length}</i></h2></div><span class="admin-live"><i></i> latest 300</span></div>${reviewRows}</section>`;
+}
+
 function renderAdminAccess(data) {
   const profileNames = new Map(data.profiles.map((profile) => [profile.uid, profile.username]));
   const admins = data.admins.length
@@ -329,6 +405,7 @@ export function renderAdmin() {
   else if (tab === 'rooms') body = `<section class="surface admin-table-panel"><div class="panel-heading"><div><span class="eyebrow">Every private room</span><h2>Rooms <i>${activeRooms.length}</i></h2></div><span class="admin-live"><i></i> latest 100 · 1h auto-delete</span></div>${renderAdminRoomsTable(activeRooms)}</section>`;
   else if (tab === 'players') body = `<section class="surface admin-table-panel"><div class="panel-heading"><div><span class="eyebrow">Everyone who claimed a name</span><h2>Players <i>${data.profiles.length}</i></h2></div><span class="admin-live"><i></i> latest 300</span></div>${renderAdminPlayers(data)}</section>`;
   else if (tab === 'social') body = renderAdminSocial(data);
+  else if (tab === 'reviews') body = renderAdminReviews(data);
   else if (tab === 'access') body = renderAdminAccess(data);
   else body = renderAdminOverview(data);
   return `<section class="admin-heading"><div><div class="eyebrow">Private admin area · UID verified · god mode</div><h1>Arcade control<span>.</span></h1><p>Only accounts with <code>admins/{uid}.admin = true</code> can see this workspace - and Firestore re-checks the flag on every action.</p></div><button class="button button-outline" data-action="refresh-admin">${icon('spark')} Refresh data</button></section>

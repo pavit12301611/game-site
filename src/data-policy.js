@@ -12,5 +12,6 @@ export {
   RATE_LIMIT_MAX_AGE_MS,
   RECENT_AUTH_WINDOW_MS,
   REPORT_MAX_AGE_MS,
+  REVIEW_MAX_AGE_MS,
   ROOM_TTL_MS,
 } from '../shared/online/retention.js';

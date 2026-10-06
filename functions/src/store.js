@@ -135,6 +135,10 @@ export const paths = Object.freeze({
   rateLimit: (uid) => `rateLimits/${uid}`,
   block: (blockerUid, blockedUid) => `blocks/${blockerUid}_${blockedUid}`,
   report: (reportId) => `reports/${reportId}`,
+  review: (reviewId) => `reviews/${reviewId}`,
+  reviewOwner: (reviewId) => `reviewOwners/${reviewId}`,
+  reviewAnnotation: (reviewId) => `reviewAnnotations/${reviewId}`,
+  reviewAgentModel: (modelId = 'active') => `reviewAgentModels/${modelId}`,
 });
 
 /** @param {Record<string, any>} payload @param {string} key @returns {string} */

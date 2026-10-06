@@ -25,6 +25,7 @@ import {
   INVITE_MAX_AGE_MS,
   RATE_LIMIT_MAX_AGE_MS,
   REPORT_MAX_AGE_MS,
+  REVIEW_MAX_AGE_MS,
 } from '../vendor/shared/online/retention.js';
 
 /** Per run caps: a retry continues the work, and one invocation cannot exceed its timeout. */
@@ -34,6 +35,7 @@ export const CLEANUP_LIMITS = Object.freeze({
   invites: 300,
   requests: 300,
   rateLimits: 300,
+  reviews: 300,
 });
 
 /**
@@ -65,6 +67,7 @@ export async function cleanupExpiredData({ store, nowMs }) {
     requests: 0,
     rateLimits: 0,
     reports: 0,
+    reviews: 0,
   };
 
   const expired = await store.query('rooms', { where: [['expiresAt', '<=', nowMs]], limit: CLEANUP_LIMITS.rooms });
@@ -112,6 +115,20 @@ export async function cleanupExpiredData({ store, nowMs }) {
     await store.delete(`reports/${report.id}`);
     summary.reports += 1;
   }
+
+  const reviews = await store.query('reviews', {
+    where: [['createdAtMs', '<', nowMs - REVIEW_MAX_AGE_MS]],
+    limit: CLEANUP_LIMITS.reviews,
+  });
+  for (const review of reviews) {
+    await store.delete(`reviews/${review.id}`);
+    await store.delete(`reviewOwners/${review.id}`);
+    await store.delete(`reviewAnnotations/${review.id}`);
+    summary.reviews += 1;
+  }
+  // A trained vocabulary is derived from first-party reviews; reset it when its source examples
+  // expire so the next submission falls back to the bundled local lexicon until it is retrained.
+  if (reviews.length) await store.delete('reviewAgentModels/active');
 
   return summary;
 }

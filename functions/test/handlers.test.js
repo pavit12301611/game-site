@@ -10,6 +10,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { GAMES } from '../../shared/games.js';
+import { ON_DEVICE_REVIEW_MODEL_ID, ON_DEVICE_REVIEW_MODEL_REVISION } from '../../shared/reviews/agent.js';
 import { ENGINE_POLICY, RATE_LIMITS } from '../../shared/online/policy.js';
 import { onlineItemsForGame, practiceItemsForGame } from '../../shared/content/quiz-banks.js';
 import * as engineRegistry from '../../src/engines/index.js';
@@ -549,6 +550,133 @@ test('report messages are normalised, capped and stored verbatim for the operato
   assert.equal(dump()[`reports/${report.reportId}`].status, 'open');
 });
 
+test('reviews are validated, publicly published without UIDs and automatically replied to by the local agent', async () => {
+  const { handlers, dump } = backend();
+  const result = await handlers.createReview({
+    rating: 5,
+    gameId: 'pixel-tac-toe',
+    title: 'A really fun classic',
+    message: 'Great, smooth and fun to play with friends.',
+    reviewerName: 'Guest pilot',
+  }, guest('guest-reviewer'));
+  const published = dump()[`reviews/${result.reviewId}`];
+  assert.equal(published.rating, 5);
+  assert.equal(published.reviewerName, 'Guest pilot');
+  assert.equal(published.gameId, 'pixel-tac-toe');
+  assert.equal(published.sentiment, 'positive');
+  assert.match(published.assistantReply, /Thanks for the kind words/);
+  assert.equal(published.assistantName, 'Arcade Review Agent');
+  assert.equal(published.assistantMode, 'local-lexicon');
+  assert.equal(Object.hasOwn(published, 'ownerUid'), false, 'public documents never reveal the Firebase UID');
+  assert.doesNotMatch(JSON.stringify(published), /guest-reviewer/);
+  assert.equal(dump()[`reviewOwners/${result.reviewId}`].ownerUid, 'guest-reviewer', 'the private owner map supports account deletion');
+  assert.ok(published.featuredScore >= 5000);
+
+  const modeled = await handlers.createReview({
+    rating: 5,
+    gameId: 'arcade',
+    message: 'A considered note without obvious emotion cues.',
+    pretrainedPrediction: {
+      modelId: ON_DEVICE_REVIEW_MODEL_ID,
+      revision: ON_DEVICE_REVIEW_MODEL_REVISION,
+      sentiment: 'positive',
+      confidence: 0.91,
+    },
+  }, guest('guest-with-on-device-model'));
+  assert.equal(dump()[`reviews/${modeled.reviewId}`].assistantMode, 'on-device-distilbert');
+  assert.equal(dump()[`reviews/${modeled.reviewId}`].sentiment, 'positive');
+
+  const untrusted = await handlers.createReview({
+    rating: 1,
+    gameId: 'arcade',
+    message: 'Broken, laggy and frustrating.',
+    pretrainedPrediction: {
+      modelId: 'some-other-model',
+      revision: ON_DEVICE_REVIEW_MODEL_REVISION,
+      sentiment: 'positive',
+      confidence: 0.99,
+    },
+  }, guest('guest-with-invalid-model'));
+  assert.notEqual(dump()[`reviews/${untrusted.reviewId}`].assistantMode, 'on-device-distilbert');
+
+  await assert.rejects(
+    () => handlers.createReview({ rating: 0, message: 'This text is long enough', gameId: 'arcade' }, guest('guest-invalid')),
+    (error) => error.code === 'invalid-review-rating',
+  );
+  await assert.rejects(
+    () => handlers.createReview({ rating: 5, message: 'Too short', gameId: 'not-a-game' }, guest('guest-invalid')),
+    (error) => error.code === 'invalid-review-game',
+  );
+  await assert.rejects(
+    () => handlers.createReview({ rating: 5, message: '  no  ', gameId: 'arcade' }, guest('guest-invalid')),
+    (error) => error.code === 'review-too-short',
+  );
+  await assert.rejects(
+    () => handlers.createReview({ rating: 5, message: 'This should not be anonymous', gameId: 'arcade' }, { uid: '' }),
+    (error) => error.code === 'unauthenticated',
+  );
+});
+
+test('review submission is rate-limited per account', async () => {
+  const { handlers, dump } = backend();
+  const reviewer = guest('guest-review-limit');
+  for (let attempt = 0; attempt < RATE_LIMITS.review.max; attempt += 1) {
+    await handlers.createReview({ rating: 4, gameId: 'arcade', message: `Review number ${attempt} was pretty fun.` }, reviewer);
+  }
+  await assert.rejects(
+    () => handlers.createReview({ rating: 4, gameId: 'arcade', message: 'One too many review submissions.' }, reviewer),
+    (error) => error.code === 'rate-limited',
+  );
+  assert.equal(Object.keys(dump()).filter((path) => path.startsWith('reviews/')).length, RATE_LIMITS.review.max);
+});
+
+test('only admins can label reviews and distill the local model from real corrected reviews', async () => {
+  const { handlers, store, dump } = backend();
+  const sources = [
+    ['review-positive-a', 'Great smooth polished game that I love', 'positive'],
+    ['review-positive-b', 'Fun awesome excellent and responsive', 'positive'],
+    ['review-negative-a', 'Broken laggy confusing and frustrating', 'negative'],
+    ['review-negative-b', 'Bad clunky slow controls with crashes', 'negative'],
+  ];
+  const reviewIds = [];
+  for (let index = 0; index < sources.length; index += 1) {
+    const [uid, message, label] = sources[index];
+    const result = await handlers.createReview({ rating: label === 'positive' ? 5 : 1, gameId: 'arcade', message }, guest(uid));
+    reviewIds.push({ id: result.reviewId, label });
+  }
+  await assert.rejects(
+    () => handlers.adminLabelReview({ reviewId: reviewIds[0].id, sentiment: 'positive' }, account('not-admin')),
+    (error) => error.code === 'admin-only',
+  );
+  store.seed('admins/review-admin', { admin: true });
+  for (const review of reviewIds) await handlers.adminLabelReview({ reviewId: review.id, sentiment: review.label }, account('review-admin'));
+  const trained = await handlers.adminTrainReviewAgent({}, account('review-admin'));
+  assert.equal(trained.trainingSize, 4);
+  assert.ok(trained.vocabularySize > 0);
+  const model = dump()['reviewAgentModels/active'];
+  assert.equal(model.trainingSize, 4);
+  assert.equal(JSON.stringify(model).includes(sources[0][1]), false, 'distilled weights do not keep source text');
+  const next = await handlers.createReview({ rating: 5, gameId: 'arcade', message: 'Polished smooth enjoyable game' }, guest('review-after-training'));
+  assert.equal(dump()[`reviews/${next.reviewId}`].assistantMode, 'distilled-model');
+});
+
+test('account deletion removes authored public reviews and clears a model distilled from them', async () => {
+  const { handlers, store, dump } = backend();
+  await makeAccounts(handlers, [['review-owner', 'reviewowner']]);
+  const review = await handlers.createReview({ rating: 5, gameId: 'arcade', message: 'A great, fun arcade experience.' }, account('review-owner'));
+  store.seed('reviewAnnotations/labelled-review', { sentiment: 'positive', createdByUid: 'some-admin' });
+  store.seed('reviewAgentModels/active', { classes: ['positive', 'negative'], weights: { positive: { great: -0.1 } } });
+  // A label attached to the owner's review is removed with the review, not left as orphan training data.
+  store.seed(`reviewAnnotations/${review.reviewId}`, { sentiment: 'positive', createdByUid: 'some-admin' });
+  const removed = await handlers.deleteAccount({ confirm: true }, account('review-owner'));
+  assert.equal(removed.reviews, 1);
+  assert.equal(dump()[`reviews/${review.reviewId}`], undefined);
+  assert.equal(dump()[`reviewOwners/${review.reviewId}`], undefined);
+  assert.equal(dump()[`reviewAnnotations/${review.reviewId}`], undefined);
+  assert.equal(dump()['reviewAgentModels/active'], undefined);
+  assert.ok(dump()['reviewAnnotations/labelled-review'], 'another review’s annotation is not removed');
+});
+
 test('account deletion removes the profile, username, social data and waiting rooms, and deletes the auth user', async () => {
   const { handlers, dump, deletedUsers, store } = backend();
   await makeAccounts(handlers, [['uid-a', 'alice'], ['uid-b', 'bob']]);
@@ -665,7 +793,7 @@ test('cleanup deletes expired rooms with their private data, and is safe to run 
   );
 });
 
-test('cleanup prunes stale requests, invites, rate-limit documents and old reports', async () => {
+test('cleanup prunes stale requests, invites, rate-limit documents, reports and community reviews', async () => {
   const { store, dump } = backend();
   const thirtyOneDays = 31 * 24 * 60 * 60 * 1000;
   store.seed('friendRequests/old_1', { fromUid: 'old', toUid: '1', status: 'pending', createdAtMs: NOW - thirtyOneDays });
@@ -674,15 +802,23 @@ test('cleanup prunes stale requests, invites, rate-limit documents and old repor
   store.seed('rateLimits/uid-old', { buckets: { createRoom: { windowStart: NOW - 5 * 24 * 60 * 60 * 1000, count: 3 } }, updatedAtMs: NOW - 5 * 24 * 60 * 60 * 1000 });
   store.seed('rateLimits/uid-new', { buckets: { createRoom: { windowStart: NOW, count: 1 } }, updatedAtMs: NOW });
   store.seed('reports/ancient', { reporterUid: 'uid-a', message: 'old', createdAtMs: NOW - 200 * 24 * 60 * 60 * 1000 });
+  store.seed('reviews/ancient', { reviewerName: 'Old player', message: 'expired', createdAtMs: NOW - 400 * 24 * 60 * 60 * 1000 });
+  store.seed('reviewOwners/ancient', { ownerUid: 'uid-old' });
+  store.seed('reviewAnnotations/ancient', { sentiment: 'negative' });
+  store.seed('reviewAgentModels/active', { classes: ['positive', 'negative'], weights: {} });
   const summary = await cleanupExpiredData({ store, nowMs: NOW });
   assert.deepEqual(
-    { invites: summary.invites, requests: summary.requests, rateLimits: summary.rateLimits, reports: summary.reports },
-    { invites: 1, requests: 1, rateLimits: 1, reports: 1 },
+    { invites: summary.invites, requests: summary.requests, rateLimits: summary.rateLimits, reports: summary.reports, reviews: summary.reviews },
+    { invites: 1, requests: 1, rateLimits: 1, reports: 1, reviews: 1 },
   );
   const after = dump();
   assert.ok(after['friendRequests/new_1'], 'a current request survives');
   assert.ok(after['rateLimits/uid-new'], 'a current rate-limit document survives');
   assert.equal(after['reports/ancient'], undefined);
+  assert.equal(after['reviews/ancient'], undefined);
+  assert.equal(after['reviewOwners/ancient'], undefined);
+  assert.equal(after['reviewAnnotations/ancient'], undefined);
+  assert.equal(after['reviewAgentModels/active'], undefined, 'an expired source review resets the compact model');
 });
 
 test('cleanup leaves a live room alone and purges one room on demand', async () => {

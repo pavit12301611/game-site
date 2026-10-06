@@ -21,6 +21,8 @@ export const FRIEND_REQUEST_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 export const RATE_LIMIT_MAX_AGE_MS = 2 * 24 * 60 * 60 * 1000;
 /** Reports are kept for the operator this long, then deleted by the scheduled cleanup. */
 export const REPORT_MAX_AGE_MS = 180 * 24 * 60 * 60 * 1000;
+/** Public community reviews are automatically removed after one year. */
+export const REVIEW_MAX_AGE_MS = 365 * 24 * 60 * 60 * 1000;
 /** How long a recent sign-in is accepted when an account deletes itself (Firebase's own window). */
 export const RECENT_AUTH_WINDOW_MS = 10 * 60 * 1000;
 /** The scheduled cleanup runs this often; the number is quoted in the privacy notice. */
