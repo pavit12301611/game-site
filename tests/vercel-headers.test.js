@@ -29,8 +29,9 @@ function directive(name) {
 
 const CONNECT = directive('connect-src');
 
-test('the deployment config still builds a Vite app from dist', () => {
+test('the deployment config installs browser-only dependencies and builds a Vite app from dist', () => {
   assert.equal(config.outputDirectory, 'dist');
+  assert.equal(config.installCommand, 'npm ci --ignore-scripts');
   assert.equal(config.buildCommand, 'npm run build');
   assert.equal(config.framework, 'vite');
 });
@@ -52,7 +53,7 @@ test('popups keep working: Google sign-in needs same-origin-allow-popups', () =>
   );
 });
 
-test('the CSP allows the Firebase endpoints the SDK talks to', () => {
+test('the CSP allows Firebase and static model-weight endpoints without opening arbitrary connections', () => {
   for (const origin of [
     'https://identitytoolkit.googleapis.com',
     'https://securetoken.googleapis.com',
@@ -70,6 +71,14 @@ test('the CSP allows the Firebase endpoints the SDK talks to', () => {
     'every online mutation is a callable, which the SDK reaches at https://<region>-<project>.cloudfunctions.net',
   );
   assert.match(CONNECT, /https:\/\/\*\.firebaseapp\.com/, 'the auth domain is used by redirect sign-in');
+  for (const origin of [
+    'https://huggingface.co',
+    'https://cdn-lfs.huggingface.co',
+    'https://cas-bridge.xethub.hf.co',
+    'https://cdn-lfs-us-1.hf.co',
+  ]) {
+    assert.ok(CONNECT.includes(origin), `connect-src must allow the static model-weight host ${origin}`);
+  }
   assert.ok(!CONNECT.includes('http://'), 'connect-src must stay on https');
 });
 
@@ -80,8 +89,9 @@ test('the CSP allows the frames and scripts Google sign-in loads', () => {
 });
 
 test('the script-src rejects inline scripts while runtime style attributes stay allowed', () => {
-  assert.equal(directive('script-src'), "'self' https://apis.google.com https://www.gstatic.com");
+  assert.equal(directive('script-src'), "'self' https://apis.google.com https://www.gstatic.com 'wasm-unsafe-eval'");
   assert.doesNotMatch(directive('script-src'), /'unsafe-inline'/);
+  assert.equal(directive('worker-src'), "'self' blob:", 'the module worker stays same-origin or an app-created blob');
   assert.match(directive('style-src'), /'unsafe-inline'/, 'cards set custom properties with style attributes');
 });
 

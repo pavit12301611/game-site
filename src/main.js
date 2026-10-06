@@ -26,5 +26,6 @@ import './styles/rooms.css';
 import './styles/boards.css';
 import './styles/modals.css';
 import './styles/legal.css';
+import './styles/reviews.css';
 import './styles/fx.css';
 import './app.js';

@@ -23,6 +23,7 @@ const browserGlobals = Object.fromEntries([
   'TextEncoder',
   'URL',
   'URLSearchParams',
+  'Worker',
   'addEventListener',
   'cancelAnimationFrame',
   'clearInterval',

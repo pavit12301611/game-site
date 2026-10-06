@@ -120,6 +120,34 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
+    match /reviews/{reviewId} {
+      // Public community feedback is intentionally readable without an account. It contains only
+      // the reviewer's chosen display name, rating, text, sentiment and the local agent's reply;
+      // author UIDs and training annotations live in separate private collections. The backend is
+      // the only writer, so every published review is validated, analysed and answered first.
+      allow get, list: if true;
+      allow create, update, delete: if false;
+    }
+
+    match /reviewOwners/{reviewId} {
+      // Private owner mapping used only to remove a person's public reviews on account deletion.
+      allow read, write: if false;
+    }
+
+    match /reviewAnnotations/{reviewId} {
+      // Admins may inspect human-corrected labels for local model distillation. Writes stay in the
+      // admin callable so forged client data cannot train or poison the assistant.
+      allow get, list: if isAdmin();
+      allow create, update, delete: if false;
+    }
+
+    match /reviewAgentModels/{modelId} {
+      // The trained compact model is admin-visible for diagnostics, but only trusted functions
+      // may replace it. Public submissions use it only inside createReview.
+      allow get, list: if isAdmin();
+      allow create, update, delete: if false;
+    }
+
     match /rateLimits/{uid} {
       // Per-user rate-limit documents are backend bookkeeping and contain nothing a client needs.
       allow read, write: if false;

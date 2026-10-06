@@ -51,12 +51,15 @@ import {
   adminDeleteFriendship,
   adminDeleteGameInvite,
   adminDeleteRoom,
+  adminLabelReview,
+  adminTrainReviewAgent,
   adminGrantAccess,
   adminKickPlayer,
   adminRemovePlayer,
   adminRevokeAccess,
   loadAdminData,
 } from './online/admin.js';
+import { loadFeaturedReview, loadPublicReviews, submitReview } from './reviews.js';
 import {
   claimHost,
   createOnlineRoom,
@@ -181,6 +184,44 @@ function handleSettingsSubmit(form) {
   state.modal = null;
   render();
   showToast('Settings saved on this device.');
+}
+
+async function handleReviewSubmit(form) {
+  const formData = new FormData(form);
+  const payload = {
+    rating: Number(formData.get('rating')),
+    gameId: String(formData.get('gameId') || 'arcade'),
+    title: String(formData.get('title') || ''),
+    message: String(formData.get('message') || ''),
+    reviewerName: String(formData.get('reviewerName') || ''),
+  };
+  state.reviewSubmitting = true;
+  state.reviewModelStatus = 'Preparing the on-device model…';
+  render();
+  try {
+    const result = await submitReview(payload, (message) => {
+      if (state.reviewModelStatus === message) return;
+      state.reviewModelStatus = message;
+      render();
+    });
+    state.reviewSubmitting = false;
+    state.reviewModelStatus = '';
+    await Promise.all([
+      loadPublicReviews({ reset: true }),
+      loadFeaturedReview({ force: true }),
+    ]);
+    const modelNote = result.usedOnDeviceModel
+      ? ' Sentiment was classified on your device.'
+      : result.modelUnavailable
+        ? ' The on-device model was unavailable, so the private local fallback handled it.'
+        : '';
+    showToast(`Your review is live. ${result.assistantName || 'The Arcade Review Agent'} replied.${modelNote}`, 'success');
+  } catch (error) {
+    state.reviewSubmitting = false;
+    state.reviewModelStatus = '';
+    render();
+    throw error;
+  }
 }
 
 async function handleAdminGrantSubmit(form) {
@@ -377,6 +418,12 @@ function handleClick(event) {
     return;
   }
   if (action === 'refresh-admin') { void loadAdminData(); return; }
+  if (action === 'load-more-reviews') { void loadPublicReviews({ reset: false }); return; }
+  if (action === 'admin-label-review') {
+    void adminLabelReview(adminArg(actionButton.dataset.reviewId), adminArg(actionButton.dataset.label));
+    return;
+  }
+  if (action === 'admin-train-review-agent') { void adminTrainReviewAgent(); return; }
   if (action === 'admin-tab') { state.adminTab = adminArg(actionButton.dataset.tab) || 'overview'; render(); return; }
   if (action === 'confirm-modal-run') {
     // The confirm modal carries its work as a function; close first so errors toast over the page.
@@ -477,6 +524,7 @@ function handleSubmit(event) {
   else if (type === 'friend-search') { requestFriendSearch(form); if (submitButton) submitButton.disabled = false; return; }
   else if (type === 'join-code') task = handleJoinCodeSubmit(form);
   else if (type === 'report') task = handleReportSubmit(form);
+  else if (type === 'review') task = handleReviewSubmit(form);
   Promise.resolve(task).catch((error) => {
     if (type === 'auth') reportAuthError(error, { method: 'password' });
     else showToast(friendlyError(error), 'warning');

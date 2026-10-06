@@ -54,6 +54,7 @@ export const RATE_LIMITS = Object.freeze({
   respondFriendRequest: Object.freeze({ windowMs: 24 * 60 * 60 * 1000, max: 200, label: 'friend answers per day' }),
   gameInvite: Object.freeze({ windowMs: 24 * 60 * 60 * 1000, max: 80, label: 'game invites per day' }),
   report: Object.freeze({ windowMs: 24 * 60 * 60 * 1000, max: 10, label: 'reports per day' }),
+  review: Object.freeze({ windowMs: 24 * 60 * 60 * 1000, max: 3, label: 'reviews per day' }),
   claimUsername: Object.freeze({ windowMs: 24 * 60 * 60 * 1000, max: 10, label: 'username claims per day' }),
   deleteAccount: Object.freeze({ windowMs: 24 * 60 * 60 * 1000, max: 3, label: 'account deletions per day' }),
 });

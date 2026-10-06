@@ -155,18 +155,22 @@ const asGuest = () => testEnv.authenticatedContext(GUEST, { firebase: { sign_in_
 
 // ── Profiles are private ────────────────────────────────────────────────────────────────────────
 
-test('a visitor who is not signed in can read and write nothing at all', async (t) => {
+test('a signed-out visitor can read public reviews, but no private player or room data', async (t) => {
   if (!ready(t)) return;
   await seed(async (db) => {
     await claimBatch(db, ALICE, 'alice').commit();
     await setDoc(doc(db, 'rooms', 'r1'), waitingRoom(ALICE));
+    await setDoc(doc(db, 'reviews', 'review-1'), { reviewerName: 'Pixel player', rating: 5, message: 'Great arcade games.', assistantReply: 'Thanks for the note!', createdAtMs: 1 });
   });
   const anon = testEnv.unauthenticatedContext().firestore();
+  await ruts.assertSucceeds(getDoc(doc(anon, 'reviews', 'review-1')));
+  await ruts.assertSucceeds(getDocs(collection(anon, 'reviews')));
   await ruts.assertFails(getDoc(doc(anon, 'profiles', ALICE)));
   await ruts.assertFails(getDocs(collection(anon, 'profiles')));
   await ruts.assertFails(getDoc(doc(anon, 'rooms', 'r1')));
   await ruts.assertFails(setDoc(doc(anon, 'profiles', ALICE), { uid: ALICE, username: 'alice' }));
   await ruts.assertFails(setDoc(doc(anon, 'rooms', 'r2'), waitingRoom(ALICE)));
+  await ruts.assertFails(setDoc(doc(anon, 'reviews', 'forged'), { rating: 5, message: 'fake' }), 'review writes go through the agent backend');
 });
 
 test('an ordinary player reads their own profile and nobody else’s', async (t) => {
@@ -366,6 +370,28 @@ test('an admin can still tidy social documents and read reports', async (t) => {
   await ruts.assertSucceeds(deleteDoc(doc(alice, 'friendRequests', 'req1')));
   await ruts.assertSucceeds(deleteDoc(doc(alice, 'gameInvites', 'inv1')));
   await ruts.assertSucceeds(deleteDoc(doc(alice, 'friendships', 'b1_c1')));
+});
+
+test('published reviews are visible to everyone while ownership and training data stay private', async (t) => {
+  if (!ready(t)) return;
+  await seed(async (db) => {
+    await setDoc(doc(db, 'admins', ALICE), { admin: true });
+    await setDoc(doc(db, 'reviews', 'r1'), { reviewerName: 'Player', rating: 4, message: 'Pretty fun game.', assistantReply: 'Thanks for sharing!', createdAtMs: 1 });
+    await setDoc(doc(db, 'reviewOwners', 'r1'), { ownerUid: BOB });
+    await setDoc(doc(db, 'reviewAnnotations', 'r1'), { sentiment: 'positive' });
+    await setDoc(doc(db, 'reviewAgentModels', 'active'), { classes: ['positive', 'negative'], weights: {} });
+  });
+  const publicReader = testEnv.unauthenticatedContext().firestore();
+  await ruts.assertSucceeds(getDocs(collection(publicReader, 'reviews')));
+  await ruts.assertSucceeds(getDoc(doc(asGuest(), 'reviews', 'r1')));
+  await ruts.assertFails(getDoc(doc(asUser(BOB), 'reviewOwners', 'r1')));
+  await ruts.assertFails(getDoc(doc(asUser(BOB), 'reviewAnnotations', 'r1')));
+  await ruts.assertFails(getDoc(doc(asUser(BOB), 'reviewAgentModels', 'active')));
+  await ruts.assertSucceeds(getDoc(doc(asUser(ALICE), 'reviewAnnotations', 'r1')));
+  await ruts.assertSucceeds(getDoc(doc(asUser(ALICE), 'reviewAgentModels', 'active')));
+  await ruts.assertFails(updateDoc(doc(asUser(ALICE), 'reviews', 'r1'), { sentiment: 'fake' }));
+  await ruts.assertFails(setDoc(doc(asUser(ALICE), 'reviewAnnotations', 'r2'), { sentiment: 'positive' }));
+  await ruts.assertFails(setDoc(doc(asUser(ALICE), 'reviewAgentModels', 'active'), { weights: {} }));
 });
 
 test('rate-limit bookkeeping is invisible to every client', async (t) => {

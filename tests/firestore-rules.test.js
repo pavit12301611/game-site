@@ -116,10 +116,10 @@ test('every Firestore collection the app touches has a rule', () => {
   // A floor so the scan cannot silently match nothing if the call style ever changes. `usernames`,
   // `blocks`, `reports` and `rateLimits` are deliberately absent: the browser no longer touches
   // them at all (they belong to the trusted backend), and the rules still describe every one.
-  for (const known of ['admins', 'profiles', 'friendRequests', 'friendships', 'gameInvites', 'rooms']) {
+  for (const known of ['admins', 'profiles', 'friendRequests', 'friendships', 'gameInvites', 'rooms', 'reviews', 'reviewAnnotations', 'reviewAgentModels']) {
     assert.ok(used.has(known), `expected src/ to use the "${known}" collection`);
   }
-  for (const backendOnly of ['usernames', 'blocks', 'reports', 'rateLimits', 'secrets', 'views']) {
+  for (const backendOnly of ['usernames', 'blocks', 'reports', 'reviewOwners', 'rateLimits', 'secrets', 'views']) {
     assert.ok(code.includes(`match /${backendOnly}/{`), `${backendOnly} must still be described in firestore.rules`);
   }
   const uncovered = [...used].filter((name) => !code.includes(`match /${name}/{`));
@@ -129,11 +129,27 @@ test('every Firestore collection the app touches has a rule', () => {
 test('no rule is open to the world and none can be used without signing in', () => {
   assert.doesNotMatch(code, /{\s*document\s*=\s*\*\*\s*}/, 'no recursive wildcard match');
   const offenders = allowStatements()
-    .filter(({ condition }) => condition !== 'false')
+    .filter(({ condition, methods }) => condition !== 'false' && !(condition === 'true' && methods.every((method) => ['get', 'list'].includes(method))))
     .filter(({ condition }) => !/\bsignedIn\(\)|\bisAdmin\(\)|request\.auth\b/.test(condition))
     .map(({ methods, condition }) => `${methods.join(', ')}: if ${condition}`);
-  assert.deepEqual(offenders, [], 'allow rules that do not require an authenticated user');
+  assert.deepEqual(offenders, [], 'allow rules that do not require sign-in, except read-only public reviews');
   assert.ok(allowStatements().length > 20, 'the statement parser must see the rules');
+});
+
+test('reviews are world-readable but only the backend can create, change or remove them', () => {
+  const statements = ownStatements('reviews');
+  const read = statements.find(({ methods }) => methods.includes('get') && methods.includes('list'));
+  assert.equal(read?.condition, 'true', 'everyone, including signed-out visitors, can read published reviews');
+  for (const write of statements.filter(({ methods }) => methods.some((method) => ['create', 'update', 'delete'].includes(method)))) {
+    assert.equal(write.condition, 'false', 'the backend must validate and reply before a review is public');
+  }
+  for (const name of ['reviewOwners']) {
+    assert.ok(allowStatements(matchBlock(name)).every(({ condition }) => condition === 'false'), `${name} never exposes review authorship`);
+  }
+  for (const name of ['reviewAnnotations', 'reviewAgentModels']) {
+    const readRule = allowStatements(matchBlock(name)).find(({ methods }) => methods.includes('get'));
+    assert.equal(readRule?.condition, 'isAdmin()', `${name} is private to the admin studio`);
+  }
 });
 
 test('admin flags: owners read theirs, admins manage access, and nobody mints a first flag from the client', () => {

@@ -58,8 +58,17 @@ export const state = {
   blocked: [],
   adminData: null,
   adminLoading: false,
-  /** Which admin studio section is open: overview | rooms | players | social | access. */
+  /** Which admin studio section is open: overview | rooms | players | social | reviews | access. */
   adminTab: 'overview',
+  /** Public reviews are readable without sign-in; new review writes still require a guest session. */
+  reviews: [],
+  featuredReview: null,
+  featuredReviewError: '',
+  reviewsLoading: false,
+  reviewsHasMore: true,
+  reviewsError: '',
+  reviewSubmitting: false,
+  reviewModelStatus: '',
   selectedBattleTarget: '',
   codeDraft: [...DEFAULT_CODE_DRAFT],
   displayName: localStorage.getItem(DISPLAY_NAME_STORAGE_KEY) || '',

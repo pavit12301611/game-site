@@ -43,6 +43,17 @@ import {
   validateUsername,
 } from '../vendor/shared/online/identity.js';
 import { RECENT_AUTH_WINDOW_MS } from '../vendor/shared/online/retention.js';
+import {
+  REVIEW_AGENT_VERSION,
+  REVIEW_MESSAGE_MAX,
+  REVIEW_NAME_MAX,
+  REVIEW_SENTIMENTS,
+  REVIEW_TITLE_MAX,
+  analyzeReview,
+  createAssistantReply,
+  reviewFeaturedScore,
+  trainDistilledReviewModel,
+} from '../vendor/shared/reviews/agent.js';
 import { paths, text } from './store.js';
 
 export { RoomError };
@@ -702,6 +713,114 @@ export function createHandlers(deps) {
   }
 
   /**
+   * Publish a player review and its automatic reply as one trusted backend operation. The public
+   * document contains no Firebase UID; a separate, backend-only owner record lets account deletion
+   * remove the review without exposing identity to other readers.
+   * @param {Record<string, any>} payload @param {any} context
+   */
+  async function createReview(payload, context) {
+    const uid = requireUser(context.uid);
+    const rating = Number(payload?.rating);
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+      throw new PolicyError('invalid-review-rating', 'Choose a star rating from 1 to 5.');
+    }
+    const title = safeMessage(payload?.title, REVIEW_TITLE_MAX);
+    const message = safeMessage(payload?.message, REVIEW_MESSAGE_MAX);
+    if (message.length < 8) throw new PolicyError('review-too-short', 'Add a little more detail (at least 8 characters) before posting.');
+    const requestedGameId = text(payload, 'gameId') || 'arcade';
+    const game = requestedGameId === 'arcade' ? null : findGame(games, requestedGameId);
+    if (requestedGameId !== 'arcade' && !game) throw new PolicyError('invalid-review-game', 'Choose a game from the list or review the whole arcade.');
+    await spendRateLimit(uid, 'review');
+
+    const profile = await store.get(paths.profile(uid));
+    const proposedName = profile.exists ? profile.data.username : payload?.reviewerName;
+    const reviewerName = safeDisplayName(proposedName, 'Guest player').slice(0, REVIEW_NAME_MAX);
+    const modelSnapshot = await store.get(paths.reviewAgentModel('active'));
+    const model = modelSnapshot.exists ? modelSnapshot.data : null;
+    // Only the tiny, version-pinned classifier result crosses this boundary; analyzeReview validates
+    // its model id, revision, sentiment and confidence. Review text is never sent to a model host.
+    const analysis = analyzeReview({ title, text: message, rating, model, pretrainedPrediction: payload?.pretrainedPrediction });
+    const assistantReply = createAssistantReply({
+      ...analysis,
+      reviewerName,
+      gameTitle: game?.title || 'the arcade',
+    });
+    const reviewId = randomId(20);
+    const createdAtMs = deps.timestampMs;
+    const review = {
+      reviewerName,
+      title,
+      message,
+      rating,
+      gameId: requestedGameId,
+      sentiment: analysis.sentiment,
+      sentimentConfidence: analysis.confidence,
+      topics: analysis.topics,
+      assistantReply,
+      assistantName: 'Arcade Review Agent',
+      assistantMode: analysis.source,
+      assistantVersion: REVIEW_AGENT_VERSION,
+      featuredScore: reviewFeaturedScore({ rating, title, message, gameId: requestedGameId, topics: analysis.topics }),
+      createdAtMs,
+    };
+    await store.batch([
+      { type: 'set', path: paths.review(reviewId), data: review },
+      { type: 'set', path: paths.reviewOwner(reviewId), data: { ownerUid: uid, createdAtMs } },
+    ]);
+    return { reviewId, sentiment: analysis.sentiment, assistantReply, assistantName: review.assistantName };
+  }
+
+  /** Admin correction label used as human supervision for the local review model. */
+  async function adminLabelReview(payload, context) {
+    const adminUid = await requireAdmin(context);
+    const reviewId = text(payload, 'reviewId').slice(0, 64);
+    const label = text(payload, 'sentiment');
+    if (!reviewId || !REVIEW_SENTIMENTS.includes(label)) {
+      throw new PolicyError('invalid-review-label', 'Choose a review and one of the supported sentiment labels.');
+    }
+    const review = await store.get(paths.review(reviewId));
+    if (!review.exists) throw new PolicyError('review-not-found', 'That review is no longer available. Refresh the review list.');
+    await store.set(paths.reviewAnnotation(reviewId), {
+      reviewId,
+      sentiment: label,
+      createdByUid: adminUid,
+      createdAtMs: deps.timestampMs,
+    });
+    return { reviewId, sentiment: label };
+  }
+
+  /**
+   * Train the compact no-key model from actual community reviews after an admin has checked their
+   * sentiment labels. The review text is read for training but never copied into the model document.
+   */
+  async function adminTrainReviewAgent(payload, context) {
+    const adminUid = await requireAdmin(context);
+    const [reviews, annotations] = await Promise.all([
+      store.query('reviews', { limit: 500 }),
+      store.query('reviewAnnotations', { limit: 500 }),
+    ]);
+    const reviewById = new Map(reviews.map((review) => [review.id, review.data]));
+    const examples = annotations.flatMap((annotation) => {
+      const review = reviewById.get(annotation.id);
+      if (!review || !REVIEW_SENTIMENTS.includes(annotation.data.sentiment)) return [];
+      return [{ text: review.message, title: review.title, label: annotation.data.sentiment }];
+    });
+    const distilled = trainDistilledReviewModel(examples);
+    if (!distilled.ok) throw new PolicyError('review-agent-needs-labels', distilled.error, { classCounts: distilled.classCounts });
+    await store.set(paths.reviewAgentModel('active'), {
+      ...distilled.model,
+      trainedAtMs: deps.timestampMs,
+      trainedByUid: adminUid,
+    });
+    return {
+      trainingSize: distilled.trainingSize,
+      vocabularySize: distilled.vocabularySize,
+      classCounts: distilled.classCounts,
+      trainedAtMs: deps.timestampMs,
+    };
+  }
+
+  /**
    * Self-service account deletion.
    *
    * The data is removed in one transaction plus a bounded sweep, the Firebase Auth user is deleted
@@ -733,6 +852,7 @@ export function createHandlers(deps) {
       invites: 0,
       rooms: 0,
       blocks: 0,
+      reviews: 0,
     };
 
     // Rooms first: a waiting room gives the seat back, a running room keeps its seats and expires.
@@ -757,7 +877,7 @@ export function createHandlers(deps) {
       deleted.rooms += 1;
     }
 
-    const [friendships, fromRequests, toRequests, fromInvites, toInvites, outgoingBlocks, incomingBlocks] = await Promise.all([
+    const [friendships, fromRequests, toRequests, fromInvites, toInvites, outgoingBlocks, incomingBlocks, ownedReviews] = await Promise.all([
       store.query('friendships', { where: [['memberUids', 'array-contains', uid]], limit: 200 }),
       store.query('friendRequests', { where: [['fromUid', '==', uid]], limit: 200 }),
       store.query('friendRequests', { where: [['toUid', '==', uid]], limit: 200 }),
@@ -765,6 +885,7 @@ export function createHandlers(deps) {
       store.query('gameInvites', { where: [['toUid', '==', uid]], limit: 200 }),
       store.query('blocks', { where: [['blockerUid', '==', uid]], limit: 200 }),
       store.query('blocks', { where: [['blockedUid', '==', uid]], limit: 200 }),
+      store.query('reviewOwners', { where: [['ownerUid', '==', uid]], limit: 1200 }),
     ]);
 
     const ops = [];
@@ -778,6 +899,13 @@ export function createHandlers(deps) {
       deleted.invites += 1;
     }
     for (const doc of [...outgoingBlocks, ...incomingBlocks]) { ops.push({ type: 'delete', path: `blocks/${doc.id}` }); deleted.blocks += 1; }
+    for (const owned of ownedReviews) {
+      ops.push({ type: 'delete', path: paths.review(owned.id) });
+      ops.push({ type: 'delete', path: paths.reviewOwner(owned.id) });
+      ops.push({ type: 'delete', path: paths.reviewAnnotation(owned.id) });
+      deleted.reviews += 1;
+    }
+    if (ownedReviews.length) ops.push({ type: 'delete', path: paths.reviewAgentModel('active') });
     ops.push({ type: 'delete', path: paths.profile(uid) });
     ops.push({ type: 'delete', path: paths.rateLimit(uid) });
     if (adminFlag.exists) ops.push({ type: 'delete', path: paths.admin(uid) });
@@ -869,6 +997,9 @@ export function createHandlers(deps) {
     blockUser,
     unblockUser,
     reportProblem,
+    createReview,
+    adminLabelReview,
+    adminTrainReviewAgent,
     deleteAccount,
     adminRoomAction,
     adminRemovePlayer,
