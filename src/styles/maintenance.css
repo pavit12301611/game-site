@@ -19,7 +19,12 @@
   background: linear-gradient(var(--page-wash), var(--page-wash)), var(--scanlines), var(--bg);
   color: var(--ink);
 }
-.maintenance-inner { display: grid; gap: var(--sp-4); width: min(760px, 100%); }
+.maintenance-inner {
+  display: grid;
+  gap: var(--sp-4);
+  width: min(760px, 100%);
+  margin-inline: auto;
+}
 
 .maintenance-brand { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-3); }
 .maintenance-brand-lockup { display: inline-flex; align-items: center; gap: var(--sp-3); color: var(--ink); }
