@@ -22,6 +22,7 @@ import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { setGlobalOptions } from 'firebase-functions/v2';
 
+import { CALLABLE_CORS_ORIGINS } from './cors.js';
 import { GAMES } from '../vendor/shared/games.js';
 import { onlineItemsForGame } from '../vendor/shared/content/quiz-banks.js';
 import * as engineRegistry from '../vendor/src/engines/index.js';
@@ -113,7 +114,7 @@ function toHttpsError(error) {
  * @param {string} name
  */
 export function callableFor(name) {
-  return onCall(async (request) => {
+  return onCall({ cors: CALLABLE_CORS_ORIGINS }, async (request) => {
     const store = createFirestoreStore(db, { now: () => Date.now() });
     const handler = makeHandlers(store)[name];
     if (typeof handler !== 'function') throw new HttpsError('internal', `Unknown handler ${name}`, { code: 'unknown-handler' });

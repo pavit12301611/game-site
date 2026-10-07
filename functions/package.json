@@ -9,7 +9,7 @@
   },
   "scripts": {
     "sync": "node ../scripts/sync-shared.mjs",
-    "test": "node ../scripts/sync-shared.mjs && node --test test/*.test.js",
+    "test": "node ../scripts/sync-shared.mjs && node --test test/*.test.js integration/cors-preflight.mjs",
     "serve": "npm run sync && firebase emulators:start --only functions,firestore,auth",
     "deploy": "npm run sync && firebase deploy --only functions"
   },

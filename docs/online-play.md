@@ -1,12 +1,10 @@
 # Online play: the trusted backend
 
-> **Status: the backend is implemented and tested; the browser has not been switched over yet.**
-> `functions/` holds the callable API, the validation policy and the tests (36, green). The browser
-> still performs the older client-side Firestore transactions, and `firestore.rules` still permits
-> them. **Do not publish the rules in this document's "locked" form until the client migration in
-> `src/online/rooms.js`, `src/social.js` and `src/accounts.js` has landed**, or online play breaks
-> for everyone mid-session. Nothing here has been deployed; the deploy commands below were never run
-> from this repository.
+> **Status: the browser uses callable Cloud Functions for online mutations.** `functions/` holds
+> the callable API, validation policy and tests. A live Firebase project still has to deploy those
+> functions (and the current Firestore rules); this repository cannot confirm which code is currently
+> deployed. If the browser reports a CORS failure, deploy the latest functions and verify the Vercel
+> origin/project as described below.
 
 ## Why a backend at all
 
@@ -48,6 +46,31 @@ imports (`../../shared/...`) resolve identically on both sides because the layou
 `firebase.json` runs the sync as a `predeploy` hook, `functions/npm test` runs it first, and CI runs
 `node scripts/sync-shared.mjs --check` so a stale mirror cannot ship.
 
+## Callable CORS and deployment troubleshooting
+
+`functions/src/index.js` explicitly applies the origin policy in `functions/src/cors.js` to every
+callable. It allows `https://psd-gaming.vercel.app`, this project's Vercel preview hostnames, and
+localhost for development. Firebase Auth is still required; CORS is only the browser's cross-origin
+permission check.
+
+A browser message saying the preflight has no `Access-Control-Allow-Origin` header usually means
+the endpoint is missing, stale, deployed to a different project, or the request's origin is outside
+the allowlist. The source cannot change a live Cloud Function until it is redeployed. Check that the
+Vercel build's `VITE_FIREBASE_PROJECT_ID` is the same Firebase project you deploy to, that the
+function is in `us-central1`, deploy the functions with the command below, and verify the browser's
+`Origin` matches an allowed host. Do not try to fix this with a permissive Vercel page header: CORS
+headers must come from the function handling the preflight. After deploying, verify the live endpoint:
+
+```bash
+curl -i -X OPTIONS 'https://us-central1-psd-gaming.cloudfunctions.net/createRoom' \
+  -H 'Origin: https://psd-gaming.vercel.app' \
+  -H 'Access-Control-Request-Method: POST' \
+  -H 'Access-Control-Request-Headers: authorization,content-type,x-firebase-appcheck'
+```
+
+The response should be `204` and include
+`Access-Control-Allow-Origin: https://psd-gaming.vercel.app`.
+
 ## Local development
 
 The emulator suite needs **Java 11 or newer** (the Firestore emulator is a JVM app) and the Firebase
@@ -83,11 +106,10 @@ Raising a project from zero, in order:
    Email/Password, Anonymous for guests).
 3. Provision the first admin: create the account, then add `admins/{uid} = { admin: true }` in the
    Firebase console. Nobody can mint an admin flag from the client.
-4. Deploy the rules and functions (review the migration status above first):
+4. Deploy the current rules and functions. The functions command syncs the shared source before upload:
 
    ```bash
-   firebase deploy --only firestore:rules          # only after the client migration lands
-   firebase deploy --only functions                # runs scripts/sync-shared.mjs as a predeploy hook
+   firebase deploy --only firestore:rules,functions
    firebase functions:log
    ```
 
@@ -138,6 +160,9 @@ are publishing the locked rules). Every line is something the automated suites c
 - [ ] Leave a room and wait for the scheduled cleanup: room, secrets, views and presence documents
       are deleted within the 15-minute window.
 - [ ] Local practice still works with the Firebase config removed (and says why online is off).
+- [ ] The deployed `createRoom` preflight from `https://psd-gaming.vercel.app` returns
+      `Access-Control-Allow-Origin` for that origin; the function is in `us-central1` and belongs to
+      the same Firebase project as the Vercel build.
 - [ ] The deployment's CSP allows callable endpoints: `https://*.cloudfunctions.net` is in
       `connect-src` in `vercel.json` (asserted by `tests/vercel-headers.test.js`). A missing wildcard
       shows up as a CSP violation in the browser console and breaks every online action.
