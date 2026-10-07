@@ -1,25 +1,12 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // ---------------------------------------------------------------------------------------------
-    // Who may do what
-    //
-    // The browser reads; the trusted backend (`functions/`) writes. Every online mutation - claim a
-    // username, send/answer a request or invite, create/join/start/leave a room, make a move, rematch,
-    // block, report, delete an account, kick or close a room - is a callable Cloud Function that
-    // re-checks identity, membership, room status, room lifetime, turn order and action shape with
-    // the Admin SDK. The Admin SDK ignores these rules, which is exactly why the privacy and
-    // integrity decisions live in `functions/src/handlers.js` and `shared/online/room.js` instead of
-    // here: a rule can only refuse; it cannot validate a move against the engine.
-    //
-    // Consequences a reader should know:
-    //   * `allow create, update, delete: if false` below is deliberate, not an oversight.
-    //   * The exceptions that stay client-writable are the ones that are not security decisions:
-    //     presence heartbeats (a client saying "I am here"), admin access management, and the
-    //     maintenance switch (an admin closing the site - see the maintenance block below).
-    //   * Deploy the functions and these rules together. With these rules and no deployed backend,
-    //     online play would stop working (and the app says so; see `src/online/callables.js`).
-    // ---------------------------------------------------------------------------------------------
+
+    // ============================================================
+    // PSD Gaming - Production Firestore Rules
+    // Philosophy: Browser sirf READ karta hai, WRITE sab backend (Vercel /api/* + Admin SDK) karta hai
+    // Isliye yahan allow create,update,delete = false hai - ye bug nahi, security hai
+    // ============================================================
 
     function signedIn() {
       return request.auth != null;
@@ -37,33 +24,21 @@ service cloud.firestore {
         && roomData.playerUids.hasAny([request.auth.uid]);
     }
 
+    // ---------- ADMINS ----------
+    // Pehla admin manually console se banta hai, uske baad admin studio se manage hota hai
     match /admins/{uid} {
-      // The first flag is provisioned manually in the Firebase console (nobody can mint one from
-      // the client without already being an admin). After that, admins manage access from the
-      // admin studio: a document holds exactly one boolean field, and a flag can never lock itself
-      // out by deleting its own document - revoke someone else, or use the console.
       allow get: if signedIn() && (request.auth.uid == uid || isAdmin());
       allow list: if isAdmin();
       allow create, update: if isAdmin()
         && request.resource.data.keys().hasOnly(['admin'])
         && request.resource.data.admin is bool;
-      allow delete: if isAdmin() && request.auth.uid != uid;
+      allow delete: if isAdmin() && request.auth.uid != uid; // khud ko delete nahi kar sakta
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // Maintenance mode (docs/maintenance-mode.md)
-    //
-    // One public document says whether the site is closed and why. Every visitor reads it without
-    // signing in, so the notice works even with no backend deployed. Rewriting it is admin-only and
-    // pinned to one exact shape, and the access code never appears in it: only the salted digest
-    // does, so a 16-digit code cannot be read out of what a visitor is allowed to fetch. The code
-    // itself lives in maintenanceAccess/active, which a non-admin cannot read at all.
-    // ---------------------------------------------------------------------------------------------
-
+    // ---------- MAINTENANCE MODE ----------
+    // Public notice - bina login ke sab padh sakte hain
+    // FIX: is int -> is number (JS SDK kabhi double bhej deta hai, isliye number accept karo)
     match /siteStatus/{document} {
-      // Readable by the world (that is the point of a notice), writable only by a verified admin, and
-      // never deletable from a client: switching maintenance off sets enabled = false, so the document
-      // that the rules above describe always exists and says "closed" or "open".
       allow get: if true;
       allow list: if false;
       allow create, update: if isAdmin()
@@ -73,23 +48,21 @@ service cloud.firestore {
         && request.resource.data.enabled is bool
         && request.resource.data.reason is string
         && request.resource.data.reason.size() <= 500
-        && request.resource.data.updatedAtMs is int
+        && request.resource.data.updatedAtMs is number
         && request.resource.data.updatedByUid == request.auth.uid
         && request.resource.data.pinHash is string
         && request.resource.data.pinHash.size() <= 96
         && request.resource.data.pinSalt is string
         && request.resource.data.pinSalt.size() <= 32
-        && request.resource.data.pinExpiresAtMs is int
+        && request.resource.data.pinExpiresAtMs is number
         && request.resource.data.pinExpiresAtMs >= 0
-        && request.resource.data.pinSetAtMs is int
+        && request.resource.data.pinSetAtMs is number
         && request.resource.data.pinSetAtMs >= 0;
       allow delete: if false;
     }
 
+    // 16-digit code - sirf admin padh sakta hai, public kabhi nahi
     match /maintenanceAccess/{document} {
-      // The one document an admin needs to be able to re-read (so the studio can show the code again
-      // after a page reload) and the one that must stay invisible to everyone else. Exactly 16 digits,
-      // one document, expiring on its own.
       allow get: if isAdmin() && document == 'active';
       allow list: if false;
       allow create, update: if isAdmin()
@@ -102,55 +75,43 @@ service cloud.firestore {
         && request.resource.data.pinHash.size() <= 96
         && request.resource.data.pinSalt is string
         && request.resource.data.pinSalt.size() <= 32
-        && request.resource.data.expiresAtMs is int
+        && request.resource.data.expiresAtMs is number
         && request.resource.data.expiresAtMs > 0
-        && request.resource.data.setAtMs is int
-        && request.resource.data.hours is int
+        && request.resource.data.setAtMs is number
+        && request.resource.data.hours is number
         && request.resource.data.hours >= 1
         && request.resource.data.hours <= 720
         && request.resource.data.updatedByUid == request.auth.uid;
       allow delete: if isAdmin();
     }
 
+    // ---------- PROFILES & USERNAMES ----------
+    // Profile private hai - sirf owner + admin dekh sakta hai, list sirf admin
+    // Username claim backend se hota hai (claimUsername callable)
     match /profiles/{uid} {
-      // A profile document is not public: it is readable by its owner and by admins only, and it
-      // cannot be listed by anyone but an admin. Friend search goes through the `lookupUser`
-      // callable, which is an exact username lookup with a per-user rate limit, so the player
-      // directory cannot be enumerated from a browser.
       allow get: if signedIn() && (request.auth.uid == uid || isAdmin());
       allow list: if isAdmin();
-      // Claiming a username is `claimUsername` (one transaction over usernames/{lower} +
-      // profiles/{uid}); removal is `deleteAccount` or the admin's `adminRemovePlayer`. A client
-      // cannot edit a profile, so a username cannot be renamed, spoofed or duplicated.
       allow create, update, delete: if false;
     }
 
     match /usernames/{usernameLower} {
-      // A reservation is server-only state: clients never read or write it. The unique-name
-      // guarantee is the `claimUsername` transaction, and `lookupUser` is the only way a browser
-      // learns that a name exists.
+      // Reservation server-only, client kabhi read/write nahi karta
       allow read, write: if false;
     }
 
+    // ---------- SOCIAL ----------
     match /friendRequests/{requestId} {
-      // Participants may read their own requests (the app queries with `toUid ==` / `fromUid ==`),
-      // and admins may read the collection for the dashboard. Nothing is writable from a client
-      // except an admin's cleanup delete: `sendFriendRequest`, `respondFriendRequest`,
-      // `cancelFriendRequest`, `blockUser` and the rate limits behind them all live in the backend.
       allow get: if signedIn()
         && (resource == null || resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid)
         || isAdmin();
       allow list: if (signedIn()
           && (resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid))
         || isAdmin();
-      allow create, update: if false;
+      allow create, update: if false; // backend: sendFriendRequest, respondFriendRequest
       allow delete: if isAdmin();
     }
 
     match /friendships/{friendshipId} {
-      // Members read their own friendships (array-contains on memberUids); admins may read them for
-      // the connection count. A friendship is created by the `respondFriendRequest` transaction,
-      // which is the only thing that can accept a request.
       allow get, list: if (signedIn() && request.auth.uid in resource.data.memberUids)
         || isAdmin();
       allow create, update: if false;
@@ -158,7 +119,6 @@ service cloud.firestore {
     }
 
     match /gameInvites/{inviteId} {
-      // As with friend requests: participants read, players never write.
       allow get: if signedIn()
         && (resource == null || resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid)
         || isAdmin();
@@ -170,69 +130,51 @@ service cloud.firestore {
     }
 
     match /blocks/{blockId} {
-      // A block list is private to the person who created it (blockId is `blocker_blocked`).
       allow get, list: if signedIn() && request.auth.uid == resource.data.blockerUid
         || isAdmin();
-      allow create, update, delete: if false;
+      allow create, update, delete: if false; // backend: blockUser, unblockUser
     }
 
     match /reports/{reportId} {
-      // Reports are for the operator. A player never reads another player's report, and only the
-      // backend writes one (`reportProblem`).
       allow get, list: if isAdmin();
-      allow create, update, delete: if false;
+      allow create, update, delete: if false; // backend: reportProblem
     }
 
+    // ---------- REVIEWS ----------
+    // Public review wall - bina login ke sab padh sakte hain, likhna sirf backend se
     match /reviews/{reviewId} {
-      // Public community feedback is intentionally readable without an account. It contains only
-      // the reviewer's chosen display name, rating, text, sentiment and the local agent's reply;
-      // author UIDs and training annotations live in separate private collections. The backend is
-      // the only writer, so every published review is validated, analysed and answered first.
       allow get, list: if true;
       allow create, update, delete: if false;
     }
 
     match /reviewOwners/{reviewId} {
-      // Private owner mapping used only to remove a person's public reviews on account deletion.
-      allow read, write: if false;
+      allow read, write: if false; // private owner mapping
     }
 
     match /reviewAnnotations/{reviewId} {
-      // Admins may inspect human-corrected labels for local model distillation. Writes stay in the
-      // admin callable so forged client data cannot train or poison the assistant.
       allow get, list: if isAdmin();
       allow create, update, delete: if false;
     }
 
     match /reviewAgentModels/{modelId} {
-      // The trained compact model is admin-visible for diagnostics, but only trusted functions
-      // may replace it. Public submissions use it only inside createReview.
       allow get, list: if isAdmin();
       allow create, update, delete: if false;
     }
 
     match /rateLimits/{uid} {
-      // Per-user rate-limit documents are backend bookkeeping and contain nothing a client needs.
-      allow read, write: if false;
+      allow read, write: if false; // backend bookkeeping
     }
 
+    // ---------- ROOMS (CORE) ----------
     match /rooms/{roomId} {
-      // A room cannot be listed or discovered: the invite URL carries its random document ID. A
-      // member of the room reads it (that is the live game snapshot), an admin reads any, and a
-      // missing document reads as "not found" instead of permission-denied so the app can say
-      // "this invite link is invalid or has expired".
-      //
-      // There is no write path: rooms are created, joined, started, played, rematched and deleted
-      // by the callables, which keeps secret state and hidden information on the server and makes
-      // every move a validated one.
+      // Room ID random hai, list nahi ho sakta - invite link se hi join hota hai
+      // Missing room ko "not found" dikhao, permission-denied nahi
       allow get: if signedIn() && (resource == null || isRoomMember(resource.data) || isAdmin());
       allow list: if isAdmin();
-      allow create, update, delete: if false;
+      allow create, update, delete: if false; // backend: createRoom, joinRoom, startRoom, playMove, rematch, leaveRoom
 
+      // Presence - kaun room me hai
       match /presence/{uid} {
-        // "Who is still in this room": one heartbeat per member, written only by that member and
-        // read by the room's members. A heartbeat is not a security boundary, so it stays a direct
-        // client write; everything else about the room does not.
         function roomData() {
           return get(/databases/$(database)/documents/rooms/$(roomId)).data;
         }
@@ -242,37 +184,29 @@ service cloud.firestore {
           && isRoomMember(roomData())
           && request.resource.data.keys().hasOnly(['status', 'lastSeenAt'])
           && request.resource.data.status in ['here', 'left']
-          && request.resource.data.lastSeenAt == request.time;
+          && request.resource.data.lastSeenAt == request.time; // server time only
         allow delete: if signedIn() && (request.auth.uid == uid || isAdmin());
       }
 
+      // Private view - Sea Battle fleet etc, sirf owner dekh sakta hai
       match /views/{uid} {
-        // A player's private projection (Sea Battle fleets): readable by that player only. Written
-        // by the backend, never by the browser, so a client cannot invent its own fleet.
         allow get: if signedIn() && (request.auth.uid == uid || isAdmin());
         allow list: if isAdmin();
         allow create, update, delete: if false;
       }
 
+      // Secret - codebreaker code, fleet positions, quiz answers - koi client nahi padh sakta
       match /secrets/{document} {
-        // The authoritative engine state: codebreaker codes, fleets, quiz answer keys, unopened
-        // card faces. No client may read or write it, admin included - the operator's tools go
-        // through the callables, which return only projections that are safe to show.
         allow read, write: if false;
       }
 
+      // Chat - ephemeral, match khatam hote hi delete ho jata hai
       match /chat/{messageId} {
-        // In-match chat. Members of the room may read it in real time while the match is live.
-        // The trusted backend (the `sendChat` callable) writes every message - it re-checks
-        // membership, rate limits, block lists and message length - so there is no client write
-        // path. Chat is permanently deleted the moment the match ends (`purgeRoomChat` in
-        // handlers.js runs when status becomes `finished` and on every rematch); the room's 1-hour
-        // TTL is a secondary safety net via `recursiveDelete(rooms/{roomId})`.
         function roomData() {
           return get(/databases/$(database)/documents/rooms/$(roomId)).data;
         }
         allow get, list: if signedIn() && (isRoomMember(roomData()) || isAdmin());
-        allow create, update, delete: if false;
+        allow create, update, delete: if false; // backend: sendChat
       }
     }
   }
