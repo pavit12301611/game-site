@@ -1,173 +1,212 @@
 /**
- * Playing against the browser.
- *
- * Local practice needs no Firebase at all: the match is a plain object in `state.local` and the CPU
- * move is chosen by the same engine the online game uses, from the same state. That is why practice
- * is a real test of a game's rules and not a separate, second implementation.
- *
- * The CPU is deliberately beatable: it takes a winning move when it sees one, blocks an obvious
- * threat most of the time, and otherwise plays at random, with a short delay so turns feel like
- * turns. `startCpuRaceLoop` is the one exception - tap races are real-time, so they tick.
+ * CPU opponent: plays the same engines as online, but locally.
  */
 
-import { applyGameAction, createInitialGameState, getGame } from './catalog.js';
-import { friendlyError } from './errors.js';
-import { recordRecentGame } from './ui/prefs.js';
-import { playUiTone } from './ui/sound.js';
+import { GAMES, getGame, createInitialGameState, applyGameAction } from './catalog.js';
+import { state } from './state.js';
 import { render } from './render.js';
-import { DEFAULT_CODE_DRAFT, state } from './state.js';
 import { showToast } from './ui/toast.js';
-import { doOnlineAction } from './online/rooms.js';
+import { navigate } from './router.js';
 
+/**
+ * Starts a local practice game against a CPU opponent.
+ */
 export function startPractice(gameId) {
   const game = getGame(gameId);
-  if (!game) return;
-  recordRecentGame(gameId);
+  if (!game) throw new Error('Game not found.');
+
   const players = [
-    { uid: 'local-you', name: 'You' },
-    { uid: 'local-cpu', name: 'CPU rival' },
+    { uid: 'local-you', name: state.displayName || 'You' },
+    { uid: 'local-cpu', name: 'CPU' },
   ];
-  const seed = `practice-${gameId}-${Date.now()}`;
-  // A CPU move still pending from the previous practice game must not fire into this one.
-  window.clearTimeout(state.cpuTimer);
-  state.cpuPending = false;
-  state.local = { gameId, players, gameState: createInitialGameState(game, players, seed), seed };
-  state.room = null;
-  state.roomId = null;
-  state.page = 'game';
+
+  state.local = {
+    gameId,
+    players,
+    gameState: createInitialGameState(game, players, `local:${Date.now()}`),
+    seed: `local:${Date.now()}`,
+  };
+
+  state.codeDraft = [0, 0, 0, 0];
   state.modal = null;
-  state.selectedBattleTarget = 'local-cpu';
-  state.codeDraft = [...DEFAULT_CODE_DRAFT];
+  state.page = 'game';
   if (location.hash !== '#/game') location.hash = '#/game';
   render();
+
   if (game.engine === 'race') startCpuRaceLoop();
   else scheduleCpuMove();
 }
 
-export function localMove(uid, action) {
-  if (!state.local) return;
-  try {
-    const game = getGame(state.local.gameId);
-    if (!game) return;
-    const next = applyGameAction(game, state.local.gameState, uid, action, state.local.players);
-    state.local.gameState = next;
-    playUiTone('tap'); // the result dialog plays the win or lose jingle
-    render();
-    if (game.engine !== 'race') scheduleCpuMove();
-  } catch (error) {
-    showToast(friendlyError(error), 'warning');
-  }
-}
-
+/**
+ * Sends a game action in local practice mode.
+ */
 export async function sendGameAction(action) {
   if (state.local) {
-    localMove('local-you', action);
+    const game = getGame(state.local.gameId);
+    if (!game) return;
+    try {
+      state.local.gameState = applyGameAction(
+        game,
+        state.local.gameState,
+        'local-you',
+        action,
+        state.local.players,
+      );
+      render();
+      scheduleCpuMove();
+    } catch (error) {
+      showToast(error.message, 'warning');
+    }
     return;
   }
+
+  // Online: send to backend
+  if (!state.roomId) return;
+  state.onlineActionsPending++;
+  render();
   try {
-    const acknowledged = doOnlineAction(action);
-    // `doOnlineAction` has already drawn the optimistic frame synchronously. Match the sound to the
-    // press, not to a cross-region Firestore round trip.
-    playUiTone('tap');
-    await acknowledged;
+    const { playMove } = await import('./online/callables.js');
+    const { generateActionId } = await import('./online/action-sync.js');
+    const result = await playMove({
+      roomId: state.roomId,
+      action,
+      clientActionId: generateActionId(),
+    });
+    // Room snapshot will update via Firestore listener
   } catch (error) {
-    playUiTone('error');
-    showToast(friendlyError(error), 'warning');
+    showToast(error?.message || 'Move rejected.', 'warning');
   }
+  state.onlineActionsPending = Math.max(0, state.onlineActionsPending - 1);
+  render();
 }
 
+/**
+ * Schedules a CPU move with a small delay for realism.
+ */
 export function scheduleCpuMove() {
-  if (!state.local || state.cpuPending || getGame(state.local.gameId)?.engine === 'race') return;
+  if (!state.local || state.local.gameState.status === 'finished') return;
   const game = getGame(state.local.gameId);
-  const gameState = state.local.gameState;
-  const cpu = state.local.players[1];
-  if (!game || gameState.phase !== 'playing') return;
-  const shouldMove = ['rps', 'quiz', 'maze'].includes(game.engine)
-    ? !Object.hasOwn(gameState.answers || gameState.picks || {}, cpu.uid) || game.engine === 'maze'
-    : gameState.turnUid === cpu.uid;
-  if (!shouldMove) return;
+  if (!game) return;
+
+  // CPU is always player index 1
+  if (state.local.gameState.turnIndex !== 1) return;
+
   state.cpuPending = true;
-  const delay = game.engine === 'memory' && gameState.opened.length === 1 ? 780 : 620;
-  const matchSeed = state.local.seed;
   state.cpuTimer = window.setTimeout(() => {
+    if (!state.local || state.local.gameState.status === 'finished') { state.cpuPending = false; return; }
+    const cpuAction = computeCpuAction(game, state.local.gameState, state.local.players);
+    if (cpuAction) {
+      try {
+        state.local.gameState = applyGameAction(game, state.local.gameState, 'local-cpu', cpuAction, state.local.players);
+      } catch { /* illegal move — skip */ }
+    }
     state.cpuPending = false;
-    // The player may have left, or started a different practice game, while the CPU was "thinking".
-    if (!state.local || state.local.seed !== matchSeed) return;
-    const current = state.local.gameState;
-    if (current.phase !== 'playing') return;
-    const action = chooseCpuAction(game, current, state.local.players);
-    if (action) localMove(cpu.uid, action);
-  }, delay);
+    render();
+  }, 400 + Math.random() * 300);
 }
 
-export function startCpuRaceLoop() {
-  window.clearTimeout(state.cpuTimer);
-  const loop = () => {
-    if (!state.local || getGame(state.local.gameId)?.engine !== 'race' || state.local.gameState.phase !== 'playing') return;
-    localMove('local-cpu', { type: 'tap' });
-    // The CPU plays at the same tempo the room enforces, so a slow-tempo game is not a free win.
-    const gap = Number(state.local.gameState.tapGapMs) || 0;
-    state.cpuTimer = window.setTimeout(loop, Math.max(gap, 0) + 380 + Math.random() * 420);
-  };
-  state.cpuTimer = window.setTimeout(loop, 850);
-}
-
-export function chooseCpuAction(game, gameState, players) {
-  const cpu = players[1];
-  const random = (max) => Math.floor(Math.random() * max);
+/**
+ * Computes a simple CPU action for the current engine.
+ */
+function computeCpuAction(game, gameState, players) {
   switch (game.engine) {
-    case 'line': {
-      const open = gameState.board.map((cell, index) => cell === null ? index : -1).filter((index) => index >= 0);
-      return open.length ? { index: open[random(open.length)] } : null;
-    }
-    case 'drop': {
-      const open = Array.from({ length: gameState.cols }, (_, index) => index).filter((col) => gameState.board[col] === null);
-      return open.length ? { col: open[random(open.length)] } : null;
-    }
-    case 'memory': {
-      const open = gameState.opened.length >= 2 ? [] : gameState.opened;
-      const hidden = gameState.cards.map((_, index) => index).filter((index) => !gameState.matched.includes(index) && !open.includes(index));
-      if (!hidden.length) return null;
-      if (open.length === 1) {
-        const match = hidden.find((index) => gameState.cards[index] === gameState.cards[open[0]]);
-        if (match !== undefined && Math.random() > 0.18) return { index: match };
-      }
-      return { index: hidden[random(hidden.length)] };
-    }
-    case 'rps': {
-      const choice = gameState.mode === 'rps' ? ['rock', 'paper', 'scissors'][random(3)] : gameState.mode === 'coin' ? ['heads', 'tails'][random(2)] : String(random(6) + 1);
-      return { choice };
-    }
-    case 'quiz': {
-      if ((gameState.answeredUids || []).includes(cpu.uid)) return null;
-      // The CPU may read the answer key locally: it is dealing its own practice deck, not a rival's
-      // hidden state. It still misses on purpose some of the time to stay beatable.
-      const item = gameState.items?.[gameState.questionIndex];
-      if (!item) return null;
-      return { answer: Math.random() > 0.3 ? item.answer : random(item.choices.length) };
-    }
-    case 'maze': {
-      const { x, y } = gameState.positions[cpu.uid];
-      const options = [
-        ['up', x, y - 1], ['left', x - 1, y], ['right', x + 1, y], ['down', x, y + 1],
-      ].filter(([, nextX, nextY]) => nextX >= 0 && nextX < gameState.width && nextY >= 0 && nextY < gameState.height && !gameState.walls.includes(nextY * gameState.width + nextX));
-      options.sort((a, b) => Math.abs(a[1] - gameState.goal.x) + Math.abs(a[2] - gameState.goal.y) - (Math.abs(b[1] - gameState.goal.x) + Math.abs(b[2] - gameState.goal.y)));
-      const move = options[0];
-      return move ? { direction: move[0] } : null;
-    }
-    case 'battle': {
-      if (gameState.turnUid !== cpu.uid) return null;
-      const target = players.find((player) => player.uid !== cpu.uid);
-      if (!target) return null;
-      const used = new Set(gameState.shots[cpu.uid].filter((key) => key.startsWith(`${target.uid}:`)).map((key) => Number(key.split(':')[1])));
-      const available = Array.from({ length: gameState.boardSize ** 2 }, (_, index) => index).filter((index) => !used.has(index));
-      return available.length ? { targetUid: target.uid, index: available[random(available.length)] } : null;
-    }
-    case 'rally':
-      return gameState.turnUid === cpu.uid ? { lane: random(gameState.lanes || 3) } : null;
-    case 'code':
-      return gameState.turnUid === cpu.uid ? { guess: Array.from({ length: gameState.digits }, () => random(gameState.symbols || 6)) } : null;
-    default:
-      return null;
+    case 'line': return cpuLineAction(game, gameState);
+    case 'drop': return cpuDropAction(game, gameState);
+    case 'memory': return cpuMemoryAction(gameState);
+    case 'rps': return cpuRpsAction(game.options);
+    case 'quiz': return cpuQuizAction(game, gameState);
+    case 'battle': return cpuBattleAction(gameState);
+    case 'rally': return cpuRallyAction(game);
+    case 'code': return cpuCodeAction(game, gameState);
+    default: return null;
   }
+}
+
+function cpuLineAction(game, state) {
+  const { size } = game.options;
+  const empty = [];
+  for (let i = 0; i < state.board.length; i++) {
+    if (state.board[i] === '') empty.push(i);
+  }
+  if (!empty.length) return null;
+  return { index: empty[Math.floor(Math.random() * empty.length)] };
+}
+
+function cpuDropAction(game, state) {
+  const { cols, rows } = game.options;
+  const available = [];
+  for (let c = 0; c < cols; c++) {
+    if (state.colHeights[c] < rows) available.push(c);
+  }
+  if (!available.length) return null;
+  return { col: available[Math.floor(Math.random() * available.length)] };
+}
+
+function cpuMemoryAction(state) {
+  const unmatched = [];
+  for (let i = 0; i < state.cards.length; i++) {
+    if (!state.matched[i] && !state.selected.includes(i)) unmatched.push(i);
+  }
+  if (!unmatched.length) return null;
+  return { index: unmatched[Math.floor(Math.random() * unmatched.length)] };
+}
+
+function cpuRpsAction(options) {
+  const choices = options.mode === 'coin' ? ['heads', 'tails']
+    : options.mode === 'dice' ? ['1', '2', '3', '4', '5', '6']
+    : ['rock', 'paper', 'scissors'];
+  return { choice: choices[Math.floor(Math.random() * choices.length)] };
+}
+
+function cpuQuizAction(game, state) {
+  if (state.roundRevealed) return { type: 'next' };
+  const q = state.questions[state.currentRound];
+  if (!q) return { type: 'next' };
+  // CPU picks randomly (25% chance of correct)
+  return { answer: Math.floor(Math.random() * 4) };
+}
+
+function cpuBattleAction(state) {
+  const board = state.board;
+  const myShots = state.shots['local-cpu'] || Array(board * board).fill(false);
+  const unshot = [];
+  for (let i = 0; i < myShots.length; i++) {
+    if (!myShots[i]) unshot.push(i);
+  }
+  if (!unshot.length) return null;
+  const cell = unshot[Math.floor(Math.random() * unshot.length)];
+  return { type: 'fire', targetUid: 'local-you', index: cell };
+}
+
+function cpuRallyAction(game) {
+  const { lanes } = game.options;
+  return { lane: Math.floor(Math.random() * lanes) };
+}
+
+function cpuCodeAction(game, state) {
+  const { digits, symbols } = state;
+  const guess = [];
+  for (let i = 0; i < digits; i++) {
+    guess.push(Math.floor(Math.random() * symbols));
+  }
+  return { guess };
+}
+
+/**
+ * Starts the CPU race loop (for race engine games).
+ */
+export function startCpuRaceLoop() {
+  if (!state.local || state.local.gameState.status === 'finished') return;
+  state.cpuTimer = window.setInterval(() => {
+    if (!state.local || state.local.gameState.status === 'finished') {
+      clearInterval(state.cpuTimer);
+      return;
+    }
+    const game = getGame(state.local.gameId);
+    if (!game || game.engine !== 'race') return;
+    try {
+      state.local.gameState = applyGameAction(game, state.local.gameState, 'local-cpu', { type: 'tap' }, state.local.players);
+      render();
+    } catch { /* ignore */ }
+  }, 200 + Math.random() * 100);
 }

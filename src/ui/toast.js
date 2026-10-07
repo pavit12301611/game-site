@@ -1,39 +1,23 @@
 /**
- * The little status message in the bottom corner.
- *
- * A toast is part of `state`, so it survives the next re-render like everything else; the timer
- * only clears it and asks for one more paint.
+ * Toast notifications.
  */
 
-import { render } from '../render.js';
 import { state } from '../state.js';
+import { render } from '../render.js';
 
-let toastTimer = 0;
+let toastTimer = null;
 
 /**
- * Shows `message` for a few seconds. Warnings stay longer, and scale with the text, because they
- * carry Firebase setup instructions that someone has to read.
- *
+ * Shows a toast message.
  * @param {string} message
- * @param {'success' | 'warning'} [kind]
+ * @param {'info'|'success'|'warning'} [type='info']
  */
-export function setToast(message, kind = 'success') {
-  state.toast = { message, kind };
-  window.clearTimeout(toastTimer);
+export function showToast(message, type = 'info') {
+  state.toast = { message, type };
   render();
-  const visibleFor = kind === 'warning' ? Math.min(10000, Math.max(5200, String(message).length * 55)) : 3400;
-  toastTimer = window.setTimeout(() => {
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
     state.toast = null;
     render();
-  }, visibleFor);
-}
-
-/**
- * Shows a toast and repaints, so it appears immediately.
- *
- * @param {string} message
- * @param {'success' | 'warning'} [kind]
- */
-export function showToast(message, kind = 'success') {
-  setToast(message, kind);
+  }, 4000);
 }

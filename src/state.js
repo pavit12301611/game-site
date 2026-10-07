@@ -1,10 +1,9 @@
 /**
- * The single app state object and the four things derived from it.
+ * The single app state object and derived getters.
  *
- * It is a plain mutable object on purpose: the whole UI is re-rendered from it with `render()`. This
- * module owns the shape; the modules that change it (`src/app.js` today, the room/account/social
- * modules later) import the same reference.
+ * Plain mutable object: the whole UI re-renders from it with `render()`.
  */
+
 import {
   DISPLAY_NAME_STORAGE_KEY,
   FAVORITES_STORAGE_KEY,
@@ -18,22 +17,16 @@ import { GAMES, getGame } from './catalog.js';
 import { presenceVerdicts } from './presence-status.js';
 import { isMaintenanceLocked, maintenancePassIsValid, MAINTENANCE_PIN_DEFAULT_HOURS } from '../shared/online/maintenance.js';
 
-/** The starting digits of a code-breaking guess row; the real range comes from the game's `symbols`. */
+/** Starting digits of a code-breaking guess row. */
 export const DEFAULT_CODE_DRAFT = Object.freeze([0, 0, 0, 0]);
 
-/**
- * The shape is documented by the literal below. Individual fields get precise types as the modules
- * that own them are extracted.
- * @type {Record<string, any>}
- */
+/** @type {Record<string, any>} */
 export const state = {
   page: 'home',
-  /** Set when a hash route does not exist, so the recovery screen can say what happened. */
   routeNotice: '',
   query: '',
   focusSearchAfterRoute: false,
   category: 'All games',
-  /** The real shelf filters: duration bucket, difficulty and input style (see views/pages.js). */
   filters: { duration: 'Any length', difficulty: 'Any difficulty', input: 'Any input' },
   user: null,
   profile: null,
@@ -41,21 +34,13 @@ export const state = {
   room: null,
   roomId: null,
   roomError: '',
-  /** Inputs already drawn locally but not acknowledged by the room transaction yet. */
   onlineActionsPending: 0,
-  /** uid -> { lastSeenMs, status } for the current online room (src/online/presence.js). */
   presence: {},
-  /** In-match chat messages for the current live room (src/online/chat.js). Oldest first. */
   chatMessages: [],
-  /** Whether the chat side-panel is currently open. */
   chatOpen: false,
-  /** Number of new chat messages that arrived while the panel was closed (for the badge). */
   chatUnreadCount: 0,
-  /** True while a chat message is being sent through the backend. */
   chatSending: false,
-  /** Inline error shown under the chat input, if any. */
   chatError: '',
-  /** Server clock minus local clock, measured from our own heartbeat; 0 until known. */
   presenceClockOffsetMs: 0,
   local: null,
   modal: null,
@@ -65,13 +50,10 @@ export const state = {
   friends: [],
   requests: [],
   invites: [],
-  /** Blocks this account created: { id, blockerUid, blockedUid, createdAtMs } (owner-readable only). */
   blocked: [],
   adminData: null,
   adminLoading: false,
-  /** Which admin studio section is open: overview | rooms | players | social | reviews | access. */
   adminTab: 'overview',
-  /** Public reviews are readable without sign-in; new review writes still require a guest session. */
   reviews: [],
   featuredReview: null,
   featuredReviewError: '',
@@ -86,8 +68,8 @@ export const state = {
   themePreference: getStoredThemePreference(),
   resolvedTheme: resolveTheme(getStoredThemePreference(), window.matchMedia?.('(prefers-color-scheme: light)').matches ?? false),
   soundEnabled: localStorage.getItem(SOUND_STORAGE_KEY) === 'true',
-  favorites: loadStoredGameIds(localStorage, FAVORITES_STORAGE_KEY, new Set(GAMES.map((game) => game.id))),
-  recentGames: loadStoredGameIds(localStorage, RECENT_STORAGE_KEY, new Set(GAMES.map((game) => game.id))),
+  favorites: loadStoredGameIds(localStorage, FAVORITES_STORAGE_KEY, new Set(GAMES.map(game => game.id))),
+  recentGames: loadStoredGameIds(localStorage, RECENT_STORAGE_KEY, new Set(GAMES.map(game => game.id))),
   online: navigator.onLine !== false,
   redirectChecked: false,
   authError: '',
@@ -95,45 +77,28 @@ export const state = {
   liveCheck: null,
   cpuTimer: null,
   cpuPending: false,
-  /**
-   * Maintenance mode (src/maintenance.js, docs/maintenance-mode.md): a mirror of the public
-   * `siteStatus/maintenance` document plus what this device remembers about it.
-   *
-   * `status` says how much to trust the rest: 'pending' before anything has been read, 'cached' when
-   * the picture came from this browser's last visit, 'live' once Firestore answered, 'error' when the
-   * read failed and 'unavailable' when Firebase never started (local practice mode).
-   */
   maintenance: {
     status: 'pending',
     enabled: false,
     reason: '',
     updatedAtMs: 0,
     updatedByUid: '',
-    /** The salted digest of the access code: what a typed code is compared with. Never the code. */
     pinHash: '',
     pinSalt: '',
     pinExpiresAtMs: 0,
     pinSetAtMs: 0,
     pinExpired: false,
     error: '',
-    /** `{ digest, expiresAtMs }` for this device, or null. */
     pass: null,
-    /** Wrong codes typed here, and any cooldown they earned. */
     attempts: { count: 0, lockedUntilMs: 0 },
     checking: false,
-    /** True while the studio is writing either document. */
     saving: false,
-    /** What is in the code box right now, so a repaint mid-typing does not swallow the digits. */
     pinDraft: '',
-    /** The last answer to a typed code, shown under the box. */
     unlockMessage: '',
     unlockOk: false,
-    /** An admin deliberately looking at the notice. */
     preview: false,
-    /** Admin-only: the code itself, read from `maintenanceAccess/active` on demand. */
     access: null,
     accessError: '',
-    /** What is in the studio's form right now, so a repaint does not lose a half-typed reason. */
     draft: { reason: '', hours: MAINTENANCE_PIN_DEFAULT_HOURS },
   },
 };
@@ -160,13 +125,6 @@ export function currentGameState() {
   return (/** @type {any} */ (state.local)?.gameState) || (/** @type {any} */ (state.room)?.state) || null;
 }
 
-/**
- * Must this viewer be shown the maintenance notice instead of the arcade?
- *
- * Three facts decide it, all of them already in `state`: the site is closed, this account is a
- * verified admin (or asked to preview the notice), and otherwise whether this device holds a pass
- * that still matches the current code. See `isMaintenanceLocked` for the order they are applied in.
- */
 export function maintenanceBlocks() {
   return isMaintenanceLocked(state.maintenance, {
     isAdmin: state.isAdmin,
@@ -174,14 +132,11 @@ export function maintenanceBlocks() {
   });
 }
 
-/** The server clock, as well as this client can tell: what presence ages are measured against. */
 export function presenceNow() {
   return Date.now() + (state.presenceClockOffsetMs || 0);
 }
 
 /**
- * Who is still in the current online room, keyed by uid. Empty in local practice and before the
- * first presence snapshot, which renders exactly like the room did before presence existed.
  * @returns {Record<string, import('./presence-status.js').PresenceVerdict>}
  */
 export function currentPresence() {

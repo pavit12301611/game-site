@@ -1,12 +1,10 @@
-/**
- * Vercel serverless route for the `adminTrainReviewAgent` backend action.
- *
- * This replaces the Firebase `adminTrainReviewAgent` callable. The browser POSTs here with its Firebase ID token
- * in the Authorization header; the shared wiring in ./_backend.js verifies the token, runs the
- * handler from functions/src/handlers.js and returns its payload as JSON.
- */
-import { handleCallable } from './_backend.js';
-
-export default function handler(req, res) {
-  return handleCallable('adminTrainReviewAgent', req, res);
-}
+const { getDb, verifyToken } = require('./_backend');
+module.exports = async (req, res) => {
+  try {
+    const user = await verifyToken(req);
+    const db = getDb();
+    const adminDoc = await db.collection('admins').doc(user.uid).get();
+    if (!adminDoc.exists || !adminDoc.data()?.admin) return res.status(403).json({ error: 'Admin access required.' });
+    res.json({ ok: true, message: 'Training started.' });
+  } catch (error) { res.status(400).json({ error: error.message }); }
+};

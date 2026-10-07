@@ -1,49 +1,50 @@
 /**
- * Two tiny synthesised UI tones. There are no audio files to download, nothing plays until the
- * player turns sound on in Settings, and it stays off by default.
+ * Sound effects: simple audio feedback using Web Audio API.
  */
 
 import { SOUND_STORAGE_KEY } from '../helpers.js';
-import { state } from '../state.js';
 
-export function setSoundEnabled(enabled) {
-  state.soundEnabled = Boolean(enabled);
+const audioCtx = typeof AudioContext !== 'undefined' ? new AudioContext() : null;
+
+/**
+ * Plays a short beep for game actions.
+ */
+export function playSound(type = 'click') {
+  if (!audioCtx) return;
   try {
-    localStorage.setItem(SOUND_STORAGE_KEY, String(state.soundEnabled));
-  } catch {
-    // Sound is optional; a blocked localStorage must not keep the setting from taking effect.
-  }
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    gain.gain.value = 0.1;
+
+    if (type === 'win') {
+      osc.frequency.value = 600;
+      osc.type = 'sine';
+      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.3);
+    } else if (type === 'move') {
+      osc.frequency.value = 400;
+      osc.type = 'sine';
+      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.1);
+    } else {
+      osc.frequency.value = 500;
+      osc.type = 'sine';
+      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.05);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.05);
+    }
+  } catch { /* ignore audio errors */ }
 }
 
-/** Notes (Hz) per tone: one for a tap, a rising arpeggio for a win, a falling pair for a loss. */
-const TONES = {
-  tap: [420],
-  error: [180],
-  win: [523, 659, 784, 1047],
-  lose: [392, 311, 233],
-  draw: [440, 440],
-};
-
-export function playUiTone(kind = 'tap') {
-  if (!state.soundEnabled || !window.AudioContext) return;
+/**
+ * Sets sound enabled/disabled.
+ */
+export function setSoundEnabled(enabled) {
   try {
-    const context = new window.AudioContext();
-    const notes = TONES[kind] || TONES.tap;
-    const step = notes.length > 1 ? 0.12 : 0;
-    notes.forEach((frequency, index) => {
-      const oscillator = context.createOscillator();
-      const gain = context.createGain();
-      const start = context.currentTime + index * step;
-      oscillator.type = kind === 'win' ? 'triangle' : 'sine';
-      oscillator.frequency.value = frequency;
-      gain.gain.setValueAtTime(notes.length > 1 ? 0.03 : 0.018, start);
-      gain.gain.exponentialRampToValueAtTime(0.0001, start + (notes.length > 1 ? 0.22 : 0.08));
-      oscillator.connect(gain).connect(context.destination);
-      oscillator.start(start);
-      oscillator.stop(start + (notes.length > 1 ? 0.24 : 0.09));
-      if (index === notes.length - 1) oscillator.addEventListener('ended', () => void context.close(), { once: true });
-    });
-  } catch {
-    // Audio is a progressive enhancement; never block a game move.
-  }
+    localStorage.setItem(SOUND_STORAGE_KEY, enabled ? 'true' : 'false');
+  } catch { /* ignore */ }
 }

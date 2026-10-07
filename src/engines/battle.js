@@ -1,78 +1,90 @@
 /**
- * battle engine — turn-based fleet hunt. Each player fires at one rival board per turn and wins by
- * sinking every rival's fleet first. Shots are keyed `targetUid:index` per shooter, and the result
- * of every shot is written to `marks` (public) at the moment it happens — that is what the board
- * renders, so a client never needs the opponent's `ships` list to draw it.
+ * Battle engine: fleet radar games (sea battle, pixel fleet, alien skirmish).
  *
- * `ships` is the hidden half of the state. In online play the trusted backend keeps it in a
- * server-only document and each player's own fleet is exposed through their private view.
- * Games: Sea Battle (6×6, 4 cells), Pixel Fleet (5×5, 3 cells), Alien Skirmish (7×7, 5 cells).
+ * Options: { board: number, fleet: number }
+ * Players place hidden ships, then take turns firing at each other's grids.
  */
 
-/** @typedef {import('../types.js').Game} Game */
-/** @typedef {import('../types.js').Player} Player */
-/** @typedef {import('../types.js').GameState} GameState */
-/** @typedef {import('../types.js').Action} Action */
+import { seededRandom, assertPlaying, currentPlayer, advanceTurn, declareWinner, assertTurn } from './shared.js';
 
-import { advanceTurn, assertPlaying, assertTurn, makeRandom, newBase } from './shared.js';
-
-/**
- * @param {Game} game
- * @param {Player[]} players
- * @param {string} [seed]
- * @returns {GameState}
- */
 export function createInitialState(game, players, seed) {
-  const boardSize = game.options.board;
-  const random = makeRandom(`${seed}:${game.id}:fleet`);
-  const ships = {};
-  for (const player of players) {
-    const positions = new Set();
-    while (positions.size < game.options.fleet) positions.add(Math.floor(random() * boardSize * boardSize));
-    ships[player.uid] = [...positions];
+  const rng = seededRandom(seed);
+  const { board, fleet } = game.options;
+
+  const grids = {};
+  const shots = {};
+
+  for (const p of players) {
+    // Place fleet randomly
+    const shipCells = new Set();
+    while (shipCells.size < fleet) {
+      const cell = Math.floor(rng() * board * board);
+      shipCells.add(cell);
+    }
+    grids[p.uid] = {
+      ships: [...shipCells], // hidden: only sent via private view
+      hits: Array(board * board).fill(false),
+    };
+    shots[p.uid] = Array(board * board).fill(false); // shots this player has fired
   }
+
   return {
-    ...newBase(players),
-    boardSize,
-    ships,
-    fleet: game.options.fleet,
-    shots: Object.fromEntries(players.map((player) => [player.uid, []])),
-    marks: {},
-    lastShot: null,
+    engine: 'battle',
+    board,
+    fleet,
+    grids,
+    shots,
+    turnIndex: 0,
+    status: 'playing',
+    winner: '',
+    lastShot: null, // { shooter, target, cell, hit }
+    seed,
   };
 }
 
-/**
- * @param {Game} game
- * @param {GameState} state
- * @param {string} uid
- * @param {Action} action
- * @param {Player[]} players
- * @returns {GameState}
- */
 export function applyAction(game, state, uid, action, players) {
   assertPlaying(state);
-  assertTurn(state, uid);
-  const targetUid = String(action.targetUid ?? '');
-  const index = Number(action.index);
-  if (!players.some((player) => player.uid === targetUid) || targetUid === uid) throw new Error('Choose another player’s board.');
-  if (!Number.isInteger(index) || index < 0 || index >= state.boardSize * state.boardSize) throw new Error('Choose a square on the board.');
-  const key = `${targetUid}:${index}`;
-  if (state.shots[uid].includes(key)) throw new Error('You have already fired at that square.');
-  state.shots[uid] = [...state.shots[uid], key];
-  const hit = state.ships[targetUid].includes(index);
-  state.marks = { ...state.marks, [key]: hit ? 'hit' : 'miss' };
-  state.lastShot = { shooterUid: uid, targetUid, index, hit };
-  state.moves += 1;
-  const allSunk = players.filter((player) => player.uid !== uid).every((opponent) =>
-    state.ships[opponent.uid].every((shipIndex) => state.shots[uid].includes(`${opponent.uid}:${shipIndex}`))
-  );
-  if (allSunk) {
-    state.phase = 'finished';
-    state.winnerUid = uid;
-    state.result = 'winner';
-  } else {
-    advanceTurn(state, players, uid);
+  const current = currentPlayer(state, players);
+  assertTurn(uid, current);
+
+  if (action.type !== 'fire') throw new Error('Use the fire action.');
+  const { targetUid, index } = action;
+
+  if (!players.some(p => p.uid === targetUid)) throw new Error('Invalid target.');
+  if (targetUid === uid) throw new Error('You cannot fire at yourself.');
+  if (index < 0 || index >= state.board * state.board) throw new Error('Invalid cell.');
+
+  if (state.shots[uid]?.[index]) throw new Error('You already fired at that cell.');
+
+  state.shots[uid] = state.shots[uid] || Array(state.board * state.board).fill(false);
+  state.shots[uid][index] = true;
+
+  const hit = (state.grids[targetUid]?.ships || []).includes(index);
+  if (hit) {
+    state.grids[targetUid].hits[index] = true;
   }
+
+  state.lastShot = { shooter: uid, target: targetUid, cell: index, hit };
+
+  // Check if all of target's ships are sunk
+  const targetShips = state.grids[targetUid]?.ships || [];
+  const targetHits = state.grids[targetUid]?.hits || [];
+  const allSunk = targetShips.every(cell => targetHits[cell]);
+
+  if (allSunk) {
+    // Check if this shooter is the last one standing
+    const alivePlayers = players.filter(p => {
+      const ships = state.grids[p.uid]?.ships || [];
+      const hits = state.grids[p.uid]?.hits || [];
+      return !ships.every(cell => hits[cell]);
+    });
+
+    if (alivePlayers.length <= 1) {
+      declareWinner(state, uid);
+      return state;
+    }
+  }
+
+  advanceTurn(state, players.length);
   return state;
 }

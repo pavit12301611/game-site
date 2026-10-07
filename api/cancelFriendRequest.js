@@ -1,12 +1,5 @@
-/**
- * Vercel serverless route for the `cancelFriendRequest` backend action.
- *
- * This replaces the Firebase `cancelFriendRequest` callable. The browser POSTs here with its Firebase ID token
- * in the Authorization header; the shared wiring in ./_backend.js verifies the token, runs the
- * handler from functions/src/handlers.js and returns its payload as JSON.
- */
-import { handleCallable } from './_backend.js';
-
-export default function handler(req, res) {
-  return handleCallable('cancelFriendRequest', req, res);
-}
+const { getDb, verifyToken } = require('./_backend');
+module.exports = async (req, res) => {
+  try { const user = await verifyToken(req); const db = getDb(); await db.collection('friendRequests').doc(req.body.requestId).delete(); res.json({ ok: true }); }
+  catch (error) { res.status(400).json({ error: error.message }); }
+};

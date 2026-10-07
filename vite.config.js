@@ -4,8 +4,6 @@ import { firebaseEnvCheckPlugin } from './scripts/firebase-env-check.js';
 export default defineConfig(({ mode }) => ({
   plugins: [firebaseEnvCheckPlugin()],
   define: {
-    // Shown in the setup dialog so you can tell WHICH deployment you are looking at.
-    // Contains no config values and no secrets.
     __PSD_BUILD__: JSON.stringify({
       mode,
       vercelEnv: process.env.VERCEL_ENV || '',
@@ -17,7 +15,8 @@ export default defineConfig(({ mode }) => ({
     rollupOptions: {
       output: {
         manualChunks(id) {
-          if (id.includes('/node_modules/@firebase/') || id.includes('/node_modules/firebase/')) return 'firebase-vendor';
+          if (id.includes('/node_modules/@firebase/') || id.includes('/node_modules/firebase/'))
+            return 'firebase-vendor';
         },
       },
     },

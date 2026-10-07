@@ -1,45 +1,33 @@
 /**
- * The invite link: how a room becomes something you can send to a friend.
- *
- * `navigator.share` is used when the browser has it (phones), and falls back to the clipboard
- * everywhere else. The link is just the current origin plus `#/room/<id>`, so it works on a local
- * dev server, a Vercel preview, and production without any configuration.
+ * Room link helpers: copy and share.
  */
 
 import { state } from '../state.js';
-import { getGame } from '../catalog.js';
 import { showToast } from './toast.js';
 
-export function formatGameLink(roomId = state.room?.id) {
-  return `${location.origin}${location.pathname}#/room/${roomId}`;
-}
-
+/**
+ * Copies the room link to clipboard.
+ */
 export async function copyRoomLink() {
-  if (!state.room?.id) return;
+  const url = `${location.origin}${location.pathname}#/room/${state.roomId}`;
   try {
-    await navigator.clipboard.writeText(formatGameLink());
-    showToast('Invite link copied. Send it to your crew.');
+    await navigator.clipboard.writeText(url);
+    showToast('Room link copied.', 'success');
   } catch {
-    const field = document.createElement('textarea');
-    field.value = formatGameLink();
-    field.style.position = 'fixed'; field.style.opacity = '0';
-    document.body.append(field); field.select();
-    const copied = document.execCommand('copy'); field.remove();
-    showToast(copied ? 'Invite link copied. Send it to your crew.' : formatGameLink(), copied ? 'success' : 'warning');
+    showToast(url, 'warning');
   }
 }
 
+/**
+ * Shares the room link using the Web Share API when available.
+ */
 export async function shareRoomLink() {
-  if (!state.room?.id) return copyRoomLink();
-  const url = formatGameLink();
+  const url = `${location.origin}${location.pathname}#/room/${state.roomId}`;
   if (navigator.share) {
     try {
-      await navigator.share({ title: `${getGame(state.room.gameId)?.title || 'PSD-gaming'} room`, text: 'Join my PSD-gaming room.', url });
-      showToast('Invite shared.');
-      return;
-    } catch (error) {
-      if (/** @type {any} */ (error)?.name === 'AbortError') return;
-    }
+      await navigator.share({ title: 'Join my game!', url });
+    } catch { /* user cancelled */ }
+  } else {
+    await copyRoomLink();
   }
-  await copyRoomLink();
 }

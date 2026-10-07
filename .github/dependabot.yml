@@ -1,27 +1,10 @@
-# Weekly dependency updates. Patch and minor bumps arrive grouped into one PR; anything major
-# (firebase 12, vite 8, ...) arrives alone so it can be reviewed and tested on its own.
 version: 2
 updates:
   - package-ecosystem: npm
     directory: /
     schedule:
       interval: weekly
-      day: monday
-      time: '04:00'
-      timezone: 'Asia/Kolkata'
-    open-pull-requests-limit: 5
-    commit-message:
-      prefix: 'chore(deps)'
     groups:
-      patch-and-minor:
-        applies-to: version-updates
-        update-types:
-          - patch
-          - minor
-
-  - package-ecosystem: github-actions
-    directory: /
-    schedule:
-      interval: monthly
-    commit-message:
-      prefix: 'chore(ci)'
+      minor-and-patch:
+        update-types: [minor, patch]
+    open-pull-requests-limit: 10

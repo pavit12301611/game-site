@@ -1,90 +1,91 @@
 /**
- * rps engine — everyone locks in a hidden choice, the round resolves when the last one lands.
- * Games: Rock Paper Scissors, Laser Duel (mode rps), Coin Flip Clash (mode coin), Dice Duel (mode dice).
+ * RPS engine: simultaneous pick games (rock-paper-scissors, coin flip, dice duel).
+ *
+ * Options: { target: number, mode: 'rps'|'coin'|'dice' }
+ * All players pick simultaneously, then the round resolves.
  */
 
-/** @typedef {import('../types.js').Game} Game */
-/** @typedef {import('../types.js').Player} Player */
-/** @typedef {import('../types.js').GameState} GameState */
-/** @typedef {import('../types.js').Action} Action */
+import { seededRandom, assertPlaying, declareWinner } from './shared.js';
 
-import { assertPlaying, finishByScore, hashNumber, newBase, scoresFor } from './shared.js';
-
-/** @param {string} mode @returns {string[]} the legal choices for this game. */
-export function choicesForMode(mode) {
-  if (mode === 'rps') return ['rock', 'paper', 'scissors'];
-  if (mode === 'coin') return ['heads', 'tails'];
-  return ['1', '2', '3', '4', '5', '6'];
-}
-
-/**
- * @param {Game} game
- * @param {Player[]} players
- * @returns {GameState}
- */
-export function createInitialState(game, players) {
-  const ids = players.map((player) => player.uid);
+export function createInitialState(game, players, seed) {
   return {
-    ...newBase(players),
-    turnUid: null,
-    mode: game.options.mode,
-    picks: {},
-    scores: scoresFor(ids),
-    target: game.options.target,
+    engine: 'rps',
     round: 1,
-    lastRound: null,
+    scores: Object.fromEntries(players.map(p => [p.uid, 0])),
+    picks: {}, // uid -> choice
+    roundResult: null, // { winners: [], losers: [], ties: [] }
+    turnIndex: 0,
+    status: 'playing',
+    winner: '',
+    seed,
   };
 }
 
-/**
- * @param {Game} game
- * @param {GameState} state
- * @param {string} uid
- * @param {Action} action
- * @param {Player[]} players
- * @returns {GameState}
- */
+const BEATS = { rock: 'scissors', paper: 'rock', scissors: 'paper' };
+
 export function applyAction(game, state, uid, action, players) {
   assertPlaying(state);
-  return checkRpsRound(game, state, players, uid, action);
+  if (!players.some(p => p.uid === uid)) throw new Error('You are not in this game.');
+  if (state.picks[uid] !== undefined) throw new Error('You already picked this round.');
+
+  const { choice } = action;
+  state.picks[uid] = choice;
+
+  // Check if everyone has picked
+  if (Object.keys(state.picks).length < players.length) return state;
+
+  // Resolve the round
+  const result = resolveRound(game.options, state.picks, players);
+  state.roundResult = result;
+
+  for (const uid of result.winners) {
+    state.scores[uid] = (state.scores[uid] || 0) + 1;
+    if (state.scores[uid] >= game.options.target) {
+      declareWinner(state, uid);
+      return state;
+    }
+  }
+
+  // Reset for next round
+  state.picks = {};
+  state.round++;
+  return state;
 }
 
-function checkRpsRound(game, state, players, uid, action) {
-  const picks = { ...state.picks };
-  if (Object.hasOwn(picks, uid)) throw new Error('Your choice is already locked in.');
-  const choice = action.choice;
-  const available = choicesForMode(state.mode);
-  if (!available.includes(String(choice))) throw new Error('Choose one of the options on screen.');
-  picks[uid] = String(choice);
-  state.picks = picks;
-  state.moves += 1;
-  if (players.every((player) => Object.hasOwn(picks, player.uid))) {
-    const scoreMap = { ...state.scores };
-    let winners = [];
-    if (state.mode === 'rps') {
-      const beats = { rock: 'scissors', paper: 'rock', scissors: 'paper' };
-      const points = Object.fromEntries(players.map((player) => [player.uid, 0]));
-      for (const player of players) {
-        for (const opponent of players) {
-          if (player.uid !== opponent.uid && beats[picks[player.uid]] === picks[opponent.uid]) points[player.uid] += 1;
-        }
-      }
-      const max = Math.max(...Object.values(points));
-      if (max > 0) winners = players.filter((player) => points[player.uid] === max);
-    } else if (state.mode === 'dice') {
-      const max = Math.max(...players.map((player) => Number(picks[player.uid])));
-      winners = players.filter((player) => Number(picks[player.uid]) === max);
-    } else {
-      // Two-sided coin, three callers: the flip is derived from the round so every client agrees.
-      const result = hashNumber(`${game.id}:${state.round}:${players.map((player) => picks[player.uid]).join(':')}`) % 2 === 0 ? 'heads' : 'tails';
-      winners = players.filter((player) => picks[player.uid] === result);
-    }
-    if (winners.length === 1) scoreMap[winners[0].uid] = (scoreMap[winners[0].uid] ?? 0) + 1;
-    state.scores = scoreMap;
-    state.lastRound = { picks, winnerUids: winners.map((player) => player.uid), round: state.round };
-    state.picks = {};
-    state.round += 1;
-    if (Math.max(...Object.values(scoreMap)) >= state.target) finishByScore(state, players, scoreMap);
+function resolveRound(options, picks, players) {
+  const { mode } = options;
+  const uids = Object.keys(picks);
+
+  if (mode === 'coin') {
+    // The flip is fixed per round (seeded)
+    const rng = seededRandom(String(Date.now()));
+    const flip = rng() > 0.5 ? 'heads' : 'tails';
+    const winners = uids.filter(uid => picks[uid] === flip);
+    return { winners, flip };
   }
-  return state;
+
+  if (mode === 'dice') {
+    // Highest unique roll wins
+    const values = {};
+    for (const uid of uids) values[uid] = Number(picks[uid]) || 0;
+    const max = Math.max(...Object.values(values));
+    const topPickers = uids.filter(uid => values[uid] === max);
+    if (topPickers.length === 1) return { winners: topPickers };
+    return { winners: [] }; // Tie at the top
+  }
+
+  // Default: rock-paper-scissors
+  const uniquePicks = [...new Set(uids.map(uid => picks[uid]))];
+  if (uniquePicks.length === 1) return { winners: [] }; // Everyone picked the same
+
+  if (uniquePicks.length === 2) {
+    const [a, b] = uniquePicks;
+    const winner = BEATS[a] === b ? a : BEATS[b] === a ? b : null;
+    if (!winner) return { winners: [] };
+    const winners = uids.filter(uid => picks[uid] === winner);
+    return { winners };
+  }
+
+  // Three-way: each pick beats one other — it's a tie
+  return { winners: [] };
 }

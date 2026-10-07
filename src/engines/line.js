@@ -1,56 +1,73 @@
 /**
- * line engine — place a mark on a square grid and connect N in a row.
- * Games: Pixel Tic-Tac-Toe (3x3, connect 3), Neon Gomoku (9x9, connect 5).
+ * Line engine: tic-tac-toe and gomoku (grid tactics).
+ *
+ * Options: { size: number, connect: number }
+ * Board is a flat array of size×size, values are '' or player uid.
  */
 
-/** @typedef {import('../types.js').Game} Game */
-/** @typedef {import('../types.js').Player} Player */
-/** @typedef {import('../types.js').GameState} GameState */
-/** @typedef {import('../types.js').Action} Action */
+import { seededRandom, copy, assertPlaying, currentPlayer, advanceTurn, declareWinner, declareDraw, assertTurn, assertInRange } from './shared.js';
 
-import { advanceTurn, assertPlaying, assertTurn, newBase, resolveLineWinner } from './shared.js';
-
-/**
- * @param {Game} game
- * @param {Player[]} players
- * @returns {GameState}
- */
-export function createInitialState(game, players) {
-  const size = game.options.size;
+export function createInitialState(game, players, seed) {
+  const { size } = game.options;
   return {
-    ...newBase(players),
-    board: Array(size * size).fill(null),
-    size,
-    connect: game.options.connect,
+    engine: 'line',
+    board: Array(size * size).fill(''),
+    turnIndex: 0,
+    moveCount: 0,
+    status: 'playing',
+    winner: '',
+    lastMove: -1,
+    winLine: [],
+    seed,
   };
 }
 
-/**
- * @param {Game} game
- * @param {GameState} state
- * @param {string} uid
- * @param {Action} action
- * @param {Player[]} players
- * @returns {GameState}
- */
 export function applyAction(game, state, uid, action, players) {
   assertPlaying(state);
-  assertTurn(state, uid);
-  const index = Number(action.index);
-  if (!Number.isInteger(index) || index < 0 || index >= state.board.length || state.board[index] !== null) {
-    throw new Error('That square is not available.');
-  }
+  const { size, connect } = game.options;
+  const current = currentPlayer(state, players);
+  assertTurn(uid, current);
+  const { index } = action;
+  assertInRange(index, 0, size * size);
+  if (state.board[index] !== '') throw new Error('That cell is already taken.');
+
   state.board[index] = uid;
-  state.moves += 1;
-  if (resolveLineWinner(state.board, state.size, index, uid, state.connect)) {
-    state.phase = 'finished';
-    state.winnerUid = uid;
-    state.result = 'winner';
-  } else if (state.board.every(Boolean)) {
-    state.phase = 'finished';
-    state.result = 'draw';
-  } else {
-    advanceTurn(state, players, uid);
+  state.lastMove = index;
+  state.moveCount++;
+
+  // Check for a winner
+  const win = findWinLine(state.board, size, connect, uid);
+  if (win.length >= connect) {
+    state.winLine = win;
+    declareWinner(state, uid);
+    return state;
   }
+
+  // Check for draw
+  if (state.moveCount >= size * size) {
+    declareDraw(state);
+    return state;
+  }
+
+  advanceTurn(state, players.length);
   return state;
+}
+
+function findWinLine(board, size, connect, uid) {
+  const dirs = [1, size, size + 1, size - 1]; // horizontal, vertical, diag-down-right, diag-down-left
+  for (let i = 0; i < board.length; i++) {
+    if (board[i] !== uid) continue;
+    for (const dir of dirs) {
+      const line = [i];
+      for (let step = 1; step < connect; step++) {
+        const next = i + dir * step;
+        // Prevent horizontal wrap: if dir is 1, check same row
+        if (dir === 1 && Math.floor(next / size) !== Math.floor((i + step * dir - dir) / size)) break;
+        if (next < 0 || next >= board.length || board[next] !== uid) break;
+        line.push(next);
+      }
+      if (line.length >= connect) return line;
+    }
+  }
+  return [];
 }

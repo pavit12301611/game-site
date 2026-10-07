@@ -1,31 +1,31 @@
 /**
- * How a Firebase error becomes a sentence a player can act on.
- *
- * `friendlyError` wraps `describeFirebaseError` with the two facts the wording needs (is the
- * browser online, and which host is this), so no caller has to remember them. `reportAuthError`
- * picks where the message goes: inside the sign-in dialog when it is open, otherwise a toast.
+ * Error handling: turns errors into player-facing messages.
  */
 
+import { friendlyFirebaseError } from './firebase-errors.js';
 import { state } from './state.js';
-import { render } from './render.js';
-import { showToast } from './ui/toast.js';
-import { describeFirebaseError } from './firebase-errors.js';
 
-export function friendlyError(error, context = {}) {
-  // Errors from the trusted backend (`src/online/callables.js`) already carry a sentence written for
-  // the player, plus the backend's own code. Passing them through keeps that wording instead of
-  // guessing from an SDK code.
-  if (error?.playerFacing && typeof error.message === 'string' && error.message) return error.message;
-  return describeFirebaseError(error, { online: navigator.onLine !== false, hostname: location.hostname, ...context });
+/**
+ * Turns any error into a sentence a player can act on.
+ * @param {any} error
+ * @returns {string}
+ */
+export function friendlyError(error) {
+  if (!error) return 'Something went wrong.';
+  if (error.code && typeof error.code === 'string') {
+    const fb = friendlyFirebaseError(error);
+    if (fb !== error.message) return fb;
+  }
+  return error.message || 'Something went wrong.';
 }
 
-/** Sign-in errors stay visible inside the sign-in dialog; anywhere else they are a toast. */
-export function reportAuthError(error, context = {}) {
-  const message = friendlyError(error, context);
-  if (state.modal?.type === 'auth') {
-    state.authError = message;
-    render();
-  } else {
-    showToast(message, 'warning');
-  }
+/**
+ * Reports an auth error: sets the authError state and re-renders.
+ * @param {any} error
+ * @param {{ method: string }} context
+ */
+export function reportAuthError(error, context) {
+  const message = friendlyError(error);
+  state.authError = message;
+  console.error(`[PSD-gaming] ${context.method} sign-in failed:`, error);
 }

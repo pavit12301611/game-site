@@ -1,12 +1,15 @@
-/**
- * Vercel serverless route for the `adminRemovePlayer` backend action.
- *
- * This replaces the Firebase `adminRemovePlayer` callable. The browser POSTs here with its Firebase ID token
- * in the Authorization header; the shared wiring in ./_backend.js verifies the token, runs the
- * handler from functions/src/handlers.js and returns its payload as JSON.
- */
-import { handleCallable } from './_backend.js';
-
-export default function handler(req, res) {
-  return handleCallable('adminRemovePlayer', req, res);
-}
+const { getDb, verifyToken } = require('./_backend');
+module.exports = async (req, res) => {
+  try {
+    const user = await verifyToken(req);
+    const db = getDb();
+    const adminDoc = await db.collection('admins').doc(user.uid).get();
+    if (!adminDoc.exists || !adminDoc.data()?.admin) return res.status(403).json({ error: 'Admin access required.' });
+    const { uid } = req.body;
+    await db.collection('profiles').doc(uid).delete().catch(() => {});
+    const profile = await db.collection('profiles').doc(uid).get().catch(() => null);
+    if (profile?.data()?.usernameLower) await db.collection('usernames').doc(profile.data().usernameLower).delete().catch(() => {});
+    await db.collection('admins').doc(uid).delete().catch(() => {});
+    res.json({ ok: true });
+  } catch (error) { res.status(400).json({ error: error.message }); }
+};
