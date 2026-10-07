@@ -1,0 +1,52 @@
+# The 15-minute expiry sweep, without a paid scheduler.
+#
+# The backend's cleanup endpoint (/api/cron/cleanup) is hosted on Vercel, and Vercel's Hobby (free)
+# plan only runs its own cron jobs once a day (see vercel.json). This workflow restores the
+# original cadence — Cloud Scheduler's "every 15 minutes" needed the Firebase Blaze plan — by
+# calling the same endpoint from GitHub Actions, which is free for a repository this size.
+#
+# One-time setup (optional; without it this workflow skips cleanly and Vercel's daily run remains):
+#   1. Pick a random secret and add it to Vercel → Settings → Environment Variables as
+#      CRON_SECRET (all environments), then redeploy.
+#   2. Add the same value as a repository secret PSD_CLEANUP_SECRET.
+#   3. Add the endpoint URL as a repository secret PSD_CLEANUP_ENDPOINT
+#      (for this project: https://psd-gaming.vercel.app/api/cron/cleanup).
+#
+# The endpoint refuses to run without a matching secret, and the sweep is idempotent, so a delayed
+# or overlapping run is harmless: every step treats "already gone" as success.
+
+name: Expiry sweep
+
+on:
+  schedule:
+    # Every 15 minutes, offset from the clock's quarter hours to avoid the busiest minutes.
+    - cron: '7,22,37,52 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: expiry-sweep
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    name: Call the backend cleanup endpoint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sweep expired rooms, invites and stale documents
+        env:
+          ENDPOINT: ${{ secrets.PSD_CLEANUP_ENDPOINT }}
+          SECRET: ${{ secrets.PSD_CLEANUP_SECRET }}
+        run: |
+          if [ -z "$ENDPOINT" ] || [ -z "$SECRET" ]; then
+            echo "Skipping: set the repository secrets PSD_CLEANUP_ENDPOINT and PSD_CLEANUP_SECRET"
+            echo "(the same value as the Vercel CRON_SECRET variable) to enable the 15-minute sweep."
+            echo "Until then, Vercel's own once-a-day cron still runs the cleanup."
+            exit 0
+          fi
+          summary=$(curl -fsS --retry 3 --retry-delay 5 --retry-all-errors -X POST \
+            -H "Authorization: Bearer $SECRET" \
+            "$ENDPOINT") || {
+            echo "::error::The cleanup endpoint refused the call. Check that CRON_SECRET in Vercel matches PSD_CLEANUP_SECRET, and that FIREBASE_SERVICE_ACCOUNT is set."
+            exit 1
+          }
+          echo "Cleanup summary: $summary"

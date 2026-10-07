@@ -95,12 +95,22 @@ export default [
     },
   },
   {
-    // Modules shared verbatim between the browser and Cloud Functions run in both worlds.
+    // Modules shared verbatim between the browser and the backend run in both worlds.
     files: ['shared/**/*.js', 'functions/src/**/*.js', 'functions/test/**/*.{js,mjs}'],
     languageOptions: {
       ecmaVersion: 'latest',
       sourceType: 'module',
       globals: { ...browserGlobals, ...nodeGlobals },
+    },
+  },
+  {
+    // The Vercel serverless functions in api/ are the backend's third home: Node-only, ESM,
+    // thin adapters over functions/src/http-backend.js.
+    files: ['api/**/*.js'],
+    languageOptions: {
+      ecmaVersion: 'latest',
+      sourceType: 'module',
+      globals: { ...nodeGlobals },
     },
   },
   {
