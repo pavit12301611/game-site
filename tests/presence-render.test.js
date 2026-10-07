@@ -170,3 +170,17 @@ test('the server-clock offset is applied: a laptop 90 s behind the server still 
     assert.ok(slot.classList.contains('is-here'), slot.outerHTML);
   }
 });
+
+test('the online match view renders no in-match chat controls', () => {
+  // Chat was removed from the website: even while a match is live, the match rail must not draw
+  // the panel, its toggle, the form, the log or the input, and state carries no chat fields.
+  state.room = room('playing');
+  const screen = parse(renderGameScreen());
+  assert.equal(screen.querySelector('.chat-panel'), null);
+  assert.equal(screen.querySelector('[data-action="toggle-chat"]'), null);
+  assert.equal(screen.querySelector('[data-form="chat"]'), null);
+  assert.equal(screen.querySelector('.chat-log'), null);
+  assert.equal(screen.querySelector('.chat-input'), null);
+  assert.equal(screen.querySelector('#chat-panel-body'), null);
+  assert.deepEqual(Object.keys(state).filter((key) => key.toLowerCase().includes('chat')), []);
+});
