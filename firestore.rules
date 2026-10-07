@@ -150,6 +150,36 @@ service cloud.firestore {
 
     match /rateLimits/{uid} {
       // Per-user rate-limit documents are backend bookkeeping and contain nothing a client needs.
+      // The tester PIN gate's bucket lives here too (`rateLimits/gate-maintenance-pin`), because it
+      // must count attempts from visitors who have not signed in and so has no uid to key on.
+      allow read, write: if false;
+    }
+
+    match /maintenance/{docId} {
+      // The maintenance notice: the only document in this installation that a signed-out visitor
+      // may read. It holds exactly the flag, the message, who changed it and which PIN generation is
+      // current - no PIN, and no hash of one (`maintenanceGate` below holds that, closed to all
+      // clients). `list` is denied, so the collection cannot be enumerated, and a browser never
+      // creates or removes these documents: `adminSetMaintenance` does, with the Admin SDK.
+      allow get: if true;
+      allow list: if false;
+      allow create, delete: if false;
+      // An admin may also flip the switch straight from the studio. The field whitelist means a hand
+      // edit can never smuggle anything into a document every visitor reads, and `enabled`/`message`
+      // keep the types the maintenance page expects.
+      allow update: if isAdmin()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['enabled', 'message', 'updatedAtMs', 'updatedBy'])
+        && request.resource.data.enabled is bool
+        && request.resource.data.message is string
+        && request.resource.data.message.size() <= 400;
+    }
+
+    match /maintenanceGate/{docId} {
+      // The current tester PIN, as a salted SHA-256 hash. It is a credential even though it only
+      // unlocks a notice page, so no client reads it - not even an admin in the studio - and only
+      // the backend writes it (`adminSetMaintenance`). Verification happens inside the
+      // `redeemMaintenancePin` callable, which answers "right digits" or "wrong digits" and nothing
+      // more.
       allow read, write: if false;
     }
 

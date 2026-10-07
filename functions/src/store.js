@@ -139,6 +139,12 @@ export const paths = Object.freeze({
   reviewOwner: (reviewId) => `reviewOwners/${reviewId}`,
   reviewAnnotation: (reviewId) => `reviewAnnotations/${reviewId}`,
   reviewAgentModel: (modelId = 'active') => `reviewAgentModels/${modelId}`,
+  /** The public maintenance document: the flag and the message every visitor may read. */
+  maintenanceStatus: () => 'maintenance/status',
+  /** The server-only tester PIN: a salted hash. No client rule allows reading or writing this. */
+  maintenanceGate: (docId = 'active') => `maintenanceGate/${docId}`,
+  /** A rate-limit document that is not tied to one uid (the PIN gate before sign-in). */
+  gateRateLimit: (key) => `rateLimits/gate-${key}`,
 });
 
 /** @param {Record<string, any>} payload @param {string} key @returns {string} */

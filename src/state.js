@@ -16,6 +16,7 @@ import {
 } from './helpers.js';
 import { GAMES, getGame } from './catalog.js';
 import { presenceVerdicts } from './presence-status.js';
+import { safeMaintenanceStatus } from '../shared/online/maintenance.js';
 
 /** The starting digits of a code-breaking guess row; the real range comes from the game's `symbols`. */
 export const DEFAULT_CODE_DRAFT = Object.freeze([0, 0, 0, 0]);
@@ -37,6 +38,19 @@ export const state = {
   user: null,
   profile: null,
   isAdmin: false,
+  /**
+   * The public maintenance document (`maintenance/status`), already normalised by
+   * `safeMaintenanceStatus`: a missing or malformed document reads as `enabled: false`, so a broken
+   * read can never close the arcade. `maintenanceUnlocked` is true for this tab after the backend
+   * accepted a tester PIN; `maintenancePass` is that session's pass.
+   */
+  maintenance: safeMaintenanceStatus(null),
+  maintenanceUnlocked: false,
+  maintenancePass: null,
+  /** What the maintenance page shows after a wrong or rate-limited PIN ('' when there is nothing). */
+  maintenanceError: '',
+  /** Shown once, right after the admin mints a PIN: the digits are never stored again. */
+  adminMaintenancePin: null,
   room: null,
   roomId: null,
   roomError: '',

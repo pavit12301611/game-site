@@ -242,7 +242,7 @@ test('the admin studio renders every section with its action buttons for a flagg
   };
   try {
     setHash('#/admin');
-    assert.equal(all('.admin-tabs [data-action="admin-tab"]').length, 6, 'all six studio sections exist');
+    assert.equal(all('.admin-tabs [data-action="admin-tab"]').length, 7, 'all seven studio sections exist (the maintenance switch included)');
     assert.ok($('.admin-metrics'), 'the overview metrics render');
     assert.match($('#page-content').textContent, /What this studio can do/);
 

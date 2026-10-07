@@ -10,6 +10,8 @@
 
 import { renderShell } from './views/shell.js';
 import { renderFatal } from './views/fatal.js';
+import { renderMaintenancePage } from './views/maintenance.js';
+import { maintenanceIsActive } from '../shared/online/maintenance.js';
 import { state } from './state.js';
 import { applyFx } from './ui/fx.js';
 import { trackResult } from './result-popup.js';
@@ -30,8 +32,15 @@ let paintedPage = null;
 export function render() {
   if (!appRoot) return;
   const before = captureFocus(appRoot);
+  // Maintenance mode replaces the whole screen - no sidebar, topbar or mobile nav - for every
+  // visitor except a verified admin (who needs the studio to switch it back off) and a tester who
+  // redeemed the current PIN. Everything else about the app is untouched.
+  const maintenance = maintenanceIsActive(state.maintenance, {
+    isAdmin: state.isAdmin,
+    unlocked: state.maintenanceUnlocked,
+  });
   try {
-    appRoot.innerHTML = renderShell();
+    appRoot.innerHTML = maintenance ? renderMaintenancePage() : renderShell();
   } catch (error) {
     console.error('[PSD-gaming] The page could not be drawn:', error);
     appRoot.innerHTML = renderFatal(error);
