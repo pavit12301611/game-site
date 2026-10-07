@@ -77,6 +77,21 @@ export class PolicyError extends Error {
 // drift apart. Re-exported here because the tests and `cleanup.js` read them from this module.
 export { RECENT_AUTH_WINDOW_MS, REPORT_MAX_AGE_MS } from '../vendor/shared/online/retention.js';
 
+/** Maintenance mode: what the admin may put in front of the arcade, and how testers get in. */
+export const MAINTENANCE_MESSAGE_MAX = 280;
+/** The tester PIN is exactly this many decimal digits (generated server-side, never shipped to a client). */
+export const MAINTENANCE_PIN_LENGTH = 16;
+/** A PIN-verified tester stays in until the maintenance window ends, with a hard 24h ceiling. */
+export const MAINTENANCE_BYPASS_TTL_MS = 24 * 60 * 60 * 1000;
+
+/** Constant-time string compare for the tester PIN (equal lengths, XOR-accumulated: no early exit). */
+function constantTimeEquals(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i += 1) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
 /**
  * @typedef {{
  *   store: import('./store.js').Store,
@@ -84,6 +99,7 @@ export { RECENT_AUTH_WINDOW_MS, REPORT_MAX_AGE_MS } from '../vendor/shared/onlin
  *   engines: { createInitialGameState: Function, applyGameAction: Function },
  *   onlineBankFor: (gameId: string) => Array<Record<string, any>>,
  *   randomId: (length?: number) => string,
+ *   randomDigits: (length: number) => string,
  *   timestampMs: number,
  *   deleteAuthUser?: (uid: string) => Promise<void>,
  * }} BackendDeps
@@ -99,7 +115,7 @@ function findGame(games, gameId) {
  * @param {BackendDeps} deps
  */
 export function createHandlers(deps) {
-  const { store, games, engines, randomId } = deps;
+  const { store, games, engines, randomId, randomDigits } = deps;
 
   /** A registry that keeps the engines module's API shape for the shared room transitions. */
   const engineRegistry = {
@@ -979,6 +995,103 @@ export function createHandlers(deps) {
     return { removed: targetUid, hadProfile: profile.exists };
   }
 
+  /**
+   * Every pass issued in an earlier moment is a pass into this one only while it matches what
+   * the operator just saved: maintenance saves (on or off) therefore clear the bypass tokens,
+   * and a tester who was previewing re-enters with the current PIN.
+   * @returns {Promise<void>}
+   */
+  async function clearMaintenanceBypasses() {
+    const tokens = await store.query('maintenance/status/bypasses', { limit: 1000 });
+    if (tokens.length) await store.batch(tokens.map((record) => ({ type: 'delete', path: paths.maintenanceBypass(record.id) })));
+  }
+
+  /**
+   * Toggle maintenance mode and edit the visitor message. Admin-only.
+   *
+   * A maintenance WINDOW (disabled -> enabled) always gets a FRESH 16-digit tester PIN, stored
+   * in `maintenance/secrets/status` - a document no client can read. Re-saving inside the same
+   * window (editing the message, or re-showing the PIN) keeps the active PIN. The public
+   * `maintenance/status` document gets only the safe fields, so a signed-out visitor can read
+   * "closed + message" without ever learning the PIN. The current PIN is returned to this one
+   * admin caller so it can be shared out-of-band with testers; it is never logged and never
+   * stored anywhere a client can reach.
+   * @param {Record<string, any>} payload @param {any} context
+   */
+  async function adminSetMaintenance(payload, context) {
+    const adminUid = await requireAdmin(context);
+    const enabled = payload?.enabled;
+    if (enabled !== true && enabled !== false) {
+      throw new PolicyError('invalid-maintenance', 'Maintenance mode must be turned on or off, nothing else.');
+    }
+    const message = safeMessage(payload?.message, MAINTENANCE_MESSAGE_MAX);
+    let pin = '';
+    if (enabled) {
+      const secret = await store.get(paths.maintenanceSecret());
+      pin = secret.exists && typeof secret.data.pin === 'string' && secret.data.pin
+        ? secret.data.pin
+        : randomDigits(MAINTENANCE_PIN_LENGTH);
+    }
+    const ops = [{
+      type: 'set',
+      path: paths.maintenanceStatus(),
+      data: { enabled, message, updatedAtMs: deps.timestampMs, updatedBy: adminUid },
+    }];
+    if (enabled) {
+      ops.push({ type: 'set', path: paths.maintenanceSecret(), data: { pin, updatedAtMs: deps.timestampMs } });
+    } else {
+      // The secret goes with the window: an old PIN must never open a later one.
+      ops.push({ type: 'delete', path: paths.maintenanceSecret() });
+    }
+    await clearMaintenanceBypasses();
+    await store.batch(ops);
+    return { enabled, message, pin };
+  }
+
+  /**
+   * The maintenance screen's only door: a visitor (signed in or not) submits the 16-digit
+   * tester PIN. The comparison happens here, against the client-invisible secret, behind a tight
+   // per-person rate limit (signed-in: per UID, anonymous: per IP), so the PIN cannot be
+   * brute-forced. A correct PIN is exchanged for a short random bypass token that this same
+   * backend later re-checks - the PIN itself never has to travel again.
+   * @param {Record<string, any>} payload @param {any} context
+   */
+  async function verifyMaintenancePin(payload, context) {
+    const key = context.uid ? context.uid : `ip:${text(context, 'ip') || 'anonymous'}`;
+    await spendRateLimit(key, 'maintenancePin');
+    const status = await store.get(paths.maintenanceStatus());
+    if (!status.exists || status.data.enabled !== true) return { valid: false, reason: 'not-in-maintenance' };
+    const secret = await store.get(paths.maintenanceSecret());
+    const expected = secret.exists && typeof secret.data.pin === 'string' ? secret.data.pin : '';
+    const pin = text(payload, 'pin');
+    if (!expected || !constantTimeEquals(pin, expected)) return { valid: false, reason: 'wrong-pin' };
+    const token = randomId(32);
+    const expiresAtMs = deps.timestampMs + MAINTENANCE_BYPASS_TTL_MS;
+    await store.set(paths.maintenanceBypass(token), { createdAtMs: deps.timestampMs, expiresAtMs });
+    return { valid: true, token, expiresAtMs };
+  }
+
+  /**
+   * Re-check a stored bypass token server-side before the browser trusts it on a later load.
+   * The token is the credential: anyone may ask, but only a live, unexpired, still-in-maintenance
+   * pass answers true. Expired passes are pruned on the way out.
+   * @param {Record<string, any>} payload
+   */
+  async function checkMaintenanceBypass(payload) {
+    const token = text(payload, 'token');
+    if (!/^[A-Za-z0-9_-]{8,64}$/.test(token)) return { valid: false, reason: 'bad-token' };
+    const status = await store.get(paths.maintenanceStatus());
+    if (!status.exists || status.data.enabled !== true) return { valid: false, reason: 'not-in-maintenance' };
+    const record = await store.get(paths.maintenanceBypass(token));
+    if (!record.exists) return { valid: false, reason: 'unknown-token' };
+    const expiresAtMs = Number(record.data.expiresAtMs);
+    if (!Number.isFinite(expiresAtMs) || deps.timestampMs > expiresAtMs) {
+      await store.delete(paths.maintenanceBypass(token));
+      return { valid: false, reason: 'expired' };
+    }
+    return { valid: true, expiresAtMs };
+  }
+
   return {
     claimUsername,
     lookupUser,
@@ -1003,6 +1116,9 @@ export function createHandlers(deps) {
     deleteAccount,
     adminRoomAction,
     adminRemovePlayer,
+    adminSetMaintenance,
+    verifyMaintenancePin,
+    checkMaintenanceBypass,
     // exported for the scheduled cleanup and the tests
     loadPresence,
     persistRoom,
