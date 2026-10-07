@@ -15,17 +15,6 @@
     "ui": {
       "enabled": false
     },
-    "singleProjectMode": false,
-    "functions": {
-      "host": "127.0.0.1",
-      "port": 5001
-    }
-  },
-  "functions": {
-    "source": "functions",
-    "predeploy": [
-      "node scripts/sync-shared.mjs"
-    ],
-    "runtime": "nodejs22"
+    "singleProjectMode": false
   }
 }

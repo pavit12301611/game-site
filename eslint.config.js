@@ -104,6 +104,16 @@ export default [
     },
   },
   {
+    // Vercel serverless functions under api/. Plain Node ESM handlers with the (req, res)
+    // signature, so only Node globals apply (no DOM). api/_backend.js is shared wiring, not a route.
+    files: ['api/**/*.js'],
+    languageOptions: {
+      ecmaVersion: 'latest',
+      sourceType: 'module',
+      globals: { ...nodeGlobals },
+    },
+  },
+  {
     files: ['tests/**/*.{js,mjs}', 'scripts/**/*.{js,mjs}', 'vite.config.js', 'eslint.config.js'],
     languageOptions: {
       ecmaVersion: 'latest',

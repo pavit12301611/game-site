@@ -65,10 +65,14 @@ test('the CSP allows Firebase and static model-weight endpoints without opening 
     );
   }
   assert.match(CONNECT, /wss:\/\/\*\.firebaseio\.com/, 'Firestore also streams over a websocket');
-  assert.match(
+  assert.ok(
+    CONNECT.includes("'self'"),
+    "the backend runs as same-origin Vercel api functions (/api/*), so connect-src must allow 'self'",
+  );
+  assert.doesNotMatch(
     CONNECT,
-    /https:\/\/\*\.cloudfunctions\.net/,
-    'every online mutation is a callable, which the SDK reaches at https://<region>-<project>.cloudfunctions.net',
+    /cloudfunctions\.net/,
+    'the callable Cloud Functions are gone; online mutations go to same-origin /api/* routes',
   );
   assert.match(CONNECT, /https:\/\/\*\.firebaseapp\.com/, 'the auth domain is used by redirect sign-in');
   for (const origin of [

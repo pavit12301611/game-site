@@ -1,12 +1,15 @@
 # Online play: the trusted backend
 
-> **Status: the backend is implemented and tested; the browser has not been switched over yet.**
-> `functions/` holds the callable API, the validation policy and the tests (36, green). The browser
-> still performs the older client-side Firestore transactions, and `firestore.rules` still permits
-> them. **Do not publish the rules in this document's "locked" form until the client migration in
-> `src/online/rooms.js`, `src/social.js` and `src/accounts.js` has landed**, or online play breaks
-> for everyone mid-session. Nothing here has been deployed; the deploy commands below were never run
-> from this repository.
+> **Status: the backend runs as Vercel serverless functions.** The policy and the tests live in
+> [`functions/`](functions/) (`functions/src/handlers.js`, 36 tests, green); the HTTP surface lives in
+> [`api/`](api/) — one route per action (e.g. [`api/createRoom.js`](api/createRoom.js)) plus the shared
+> wiring in [`api/_backend.js`](api/_backend.js). The browser calls them as same-origin `/api/*` POSTs
+> that carry its Firebase ID token, and each function verifies that token and runs the *same* handler
+> the Cloud Functions used to. **The Firebase Cloud Functions deployment is disabled**
+> ([`functions/src/index.js`](functions/src/index.js) exports nothing, and the `functions` block is gone
+> from [`firebase.json`](../firebase.json)); `firebase deploy --only functions` is a no-op now. Nothing
+> here has been deployed; the runbook below was never run from this repository.
+
 
 ## Why a backend at all
 
@@ -35,13 +38,17 @@ The backend moves the decisions to a place the browser cannot edit:
 
 | Path | What it is |
 | --- | --- |
-| `functions/src/index.js` | Callable wrappers (20 of them) plus the `cleanupExpired` schedule. Maps our error codes to `HttpsError` statuses. |
+| `api/_backend.js` | The shared Vercel wiring: Admin-SDK init, ID-token verification, the Firestore store, dispatch and the error-code → HTTP-status map. Every route below is a one-line wrapper around `handleCallable(name)`. |
+| `api/<name>.js` | One route per action (`createRoom`, `joinRoom`, `playMove`, …). Replaces the old `onCall` wrappers. |
+| `api/cleanup.js` | The scheduled cleanup as a Vercel Cron route (replaces the `cleanupExpired` Cloud Scheduler function). |
+| `functions/src/index.js` | **Disabled.** Exports no functions; the Cloud Functions entry point now only documents the move. |
+| `functions/src/backend.js` | The handler binding (engine registry + `makeHandlers`) shared by the api routes and, if ever re-enabled, the Cloud Functions. |
 | `functions/src/handlers.js` | All policy: identity, social, rooms, moves, blocks, reports, deletion, admin. Pure functions of (payload, auth context, store). |
 | `functions/src/store.js` | The narrow Firestore adapter the handlers use (`get`/`set`/`query`/`transaction`/`batch`/`recursiveDelete`). |
 | `functions/src/cleanup.js` | Expired-room, finished-room, invite, request, rate-limit and report purging. Idempotent by construction. |
 | `functions/test/` | The backend tests (in-memory `Store` double — no emulator, no Java, no network). |
-| `shared/online/` | Room transitions, projections, identity rules, rate limits and the maintenance switch. Imported by **both** the browser and the functions. |
-| `functions/vendor/` | Generated mirror of `shared/**` and `src/engines/**`. Never edit; run `node scripts/sync-shared.mjs`. |
+| `shared/online/` | Room transitions, projections, identity rules, rate limits and the maintenance switch. Imported by **both** the browser and the backend. |
+| `functions/vendor/` | Generated mirror of `shared/**` and `src/engines/**`. Never edit; run `node scripts/sync-shared.mjs` (the api routes import it, and `npm run build` regenerates it via `prebuild`). |
 
 ### The one exception: maintenance mode writes Firestore directly
 
@@ -78,10 +85,12 @@ node scripts/sync-shared.mjs         # refresh the mirror after editing shared/ 
 cd functions && npm test             # backend tests: no emulator, no Java, no network
 node scripts/sync-shared.mjs --check # fail when the mirror is stale (CI does this)
 
-firebase emulators:start --only functions,firestore,auth \
-  --project psd-gaming-local         # functions on 127.0.0.1:5001
+firebase emulators:start --only firestore,auth \
+  --project psd-gaming-local         # Firestore + Auth only; the Cloud Functions emulator is gone
 npm run test:rules                   # firestore.rules against the Firestore emulator
 ```
+
+The `api/` routes are Vercel functions. To exercise them locally, run `vercel dev` (the Vercel CLI), which serves the SPA and the `api/` routes together and reads `FIREBASE_SERVICE_ACCOUNT` from your environment; otherwise point the browser at a deployed Vercel environment.
 
 If Java is unavailable the rules suite is **skipped locally, never silently "passing"**; the
 `FIRESTORE_EMULATOR_HOST` contract makes it fail instead of skipping inside `npm run test:rules`, so
@@ -89,30 +98,37 @@ the CI job is the real gate.
 
 ## Deploying (operator steps — not run here)
 
-Raising a project from zero, in order:
+The backend is now Vercel serverless functions, so it deploys with the site — no Blaze plan, no
+`firebase deploy --only functions`. Raising a project from zero, in order:
 
-1. **Upgrade the Firebase project to the Blaze (pay-as-you-go) plan.** Cloud Functions, Cloud
-   Scheduler (`cleanupExpired` runs every 15 minutes) and outbound network calls are not available on
-   the free Spark plan. Costs for a hobby deployment are normally inside the free monthly allowance,
-   but a billing account and a budget alert are required; nothing in this repository can verify your
-   actual usage.
+1. **Set the Admin SDK credentials for the api functions.** On Vercel → Settings → Environment
+   Variables, add `FIREBASE_SERVICE_ACCOUNT` (the service-account JSON, minified onto one line; see
+   `.env.example`) for **Production** and **Preview**. On Vercel there are no Application Default
+   Credentials, so without it the api functions cannot reach Firestore or verify tokens.
 2. Enable the sign-in providers you want in **Authentication → Sign-in method** (Google,
    Email/Password, Anonymous for guests).
 3. Provision the first admin: create the account, then add `admins/{uid} = { admin: true }` in the
    Firebase console. Nobody can mint an admin flag from the client.
-4. Deploy the rules and functions (review the migration status above first):
+4. Deploy the site (which builds and ships the api routes with it):
 
    ```bash
-   firebase deploy --only firestore:rules          # only after the client migration lands
-   firebase deploy --only functions                # runs scripts/sync-shared.mjs as a predeploy hook
-   firebase functions:log
+   git push                       # Vercel builds `npm run build` and deploys dist/ + api/
+   firebase deploy --only firestore:rules   # publish the locked rules from firestore.rules
    ```
 
+   The `api/` routes are ordinary Vercel functions; the build's `prebuild` step regenerates
+   `functions/vendor/` so the routes can import the shared handlers. The scheduled cleanup runs from
+   `vercel.json`'s `crons` (`/api/cleanup`, every 15 minutes) — note Vercel Cron's frequency depends on
+   the plan.
 5. Optional second expiry mechanism: in the Firebase console, **Firestore → Time-to-live**, add a TTL
    policy on the `expiresAtDate` field. The store adapter writes it next to the numeric `expiresAt`
-   the cleanup function queries, so the two never disagree.
-6. App Check is not required by this design but is worth enabling: the functions are protected by
-   Firebase Auth, and every rate limit is enforced per uid.
+   the cleanup route queries, so the two never disagree.
+6. App Check is not required by this design but is worth enabling: the routes are protected by Firebase
+   Auth (the ID token is verified on every call), and every rate limit is enforced per uid.
+
+> To go back to Firebase Cloud Functions instead, restore the `callableFor(name)` wrappers in
+> `functions/src/index.js`, re-add the `functions` block to `firebase.json`, and point
+> `src/online/callables.js` back at `httpsCallable`.
 
 ### What the operator must still decide (labelled, not invented here)
 
@@ -163,9 +179,11 @@ are publishing the locked rules). Every line is something the automated suites c
       or read `maintenanceAccess/active` (the rules, not the UI, are the boundary), and that the admin's
       own tab is never locked out.
 - [ ] Local practice still works with the Firebase config removed (and says why online is off).
-- [ ] The deployment's CSP allows callable endpoints: `https://*.cloudfunctions.net` is in
-      `connect-src` in `vercel.json` (asserted by `tests/vercel-headers.test.js`). A missing wildcard
-      shows up as a CSP violation in the browser console and breaks every online action.
+- [ ] The api routes are deployed and reachable: creating a room POSTs to same-origin `/api/createRoom`
+      and succeeds (or fails with a readable message). `connect-src 'self'` in `vercel.json` covers
+      them (asserted by `tests/vercel-headers.test.js`); a CSP that blocks `'self'` shows up as a
+      violation in the browser console and breaks every online action. A missing `FIREBASE_SERVICE_ACCOUNT`
+      makes every route answer `internal` — set it in the Vercel environment and redeploy.
 - [ ] The privacy and safety pages are reachable from the sidebar, the sign-in dialog, the account
       menu and settings; the operator launch-checklist block is actually filled in for this deployment.
 - [ ] Block a player from the friends page: they vanish from search, their pending requests and
