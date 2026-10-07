@@ -57,7 +57,7 @@ export async function purgeRoom(store, roomId) {
 
 /**
  * @param {CleanupDeps} deps
- * @returns {Promise<Record<string, number>>} what this run removed, for the scheduler log
+ * @returns {Promise<Record<string, number | string[]>>} what this run removed, for the scheduler log
  */
 export async function cleanupExpiredData({ store, nowMs }) {
   const summary = {
@@ -68,67 +68,93 @@ export async function cleanupExpiredData({ store, nowMs }) {
     rateLimits: 0,
     reports: 0,
     reviews: 0,
+    errors: [],
   };
 
-  const expired = await store.query('rooms', { where: [['expiresAt', '<=', nowMs]], limit: CLEANUP_LIMITS.rooms });
-  for (const room of expired) {
-    const result = await purgeRoom(store, room.id);
-    summary.expiredRooms += 1;
-    summary.invites += result.invites;
-  }
+  // One failed step must not abort the sweep: a missing composite index, one unreachable document
+  // or a transient Firestore error is recorded and the remaining steps still run. Every step is
+  // idempotent, so the next run simply continues where this one stopped.
+  const step = async (label, work) => {
+    try {
+      await work();
+    } catch (error) {
+      summary.errors.push(`${label}: ${error?.message || error}`);
+    }
+  };
 
-  const finished = await store.query('rooms', {
-    where: [['status', '==', 'finished'], ['expiresAt', '>', nowMs]],
-    limit: CLEANUP_LIMITS.finishedRooms,
-    orderBy: ['updatedAt', 'asc'],
-  });
-  for (const room of finished) {
-    const finishedAt = Number(room.data.finishedAt ?? room.data.updatedAt ?? 0);
-    if (!finishedAt || nowMs - finishedAt > FINISHED_ROOM_GRACE_MS) {
+  await step('expired rooms', async () => {
+    const expired = await store.query('rooms', { where: [['expiresAt', '<=', nowMs]], limit: CLEANUP_LIMITS.rooms });
+    for (const room of expired) {
       const result = await purgeRoom(store, room.id);
-      summary.finishedRooms += 1;
+      summary.expiredRooms += 1;
       summary.invites += result.invites;
     }
-  }
+  });
+
+  await step('finished rooms', async () => {
+    const finished = await store.query('rooms', {
+      where: [['status', '==', 'finished'], ['expiresAt', '>', nowMs]],
+      limit: CLEANUP_LIMITS.finishedRooms,
+      orderBy: ['updatedAt', 'asc'],
+    });
+    for (const room of finished) {
+      const finishedAt = Number(room.data.finishedAt ?? room.data.updatedAt ?? 0);
+      if (!finishedAt || nowMs - finishedAt > FINISHED_ROOM_GRACE_MS) {
+        const result = await purgeRoom(store, room.id);
+        summary.finishedRooms += 1;
+        summary.invites += result.invites;
+      }
+    }
+  });
 
   // Invites whose room no longer exists (or that are long past the share window) go too.
-  const invites = await store.query('gameInvites', { where: [['createdAtMs', '<', nowMs - INVITE_MAX_AGE_MS]], limit: CLEANUP_LIMITS.invites });
-  for (const invite of invites) {
-    await store.delete(`gameInvites/${invite.id}`);
-    summary.invites += 1;
-  }
-
-  const requests = await store.query('friendRequests', { where: [['createdAtMs', '<', nowMs - FRIEND_REQUEST_MAX_AGE_MS]], limit: CLEANUP_LIMITS.requests });
-  for (const request of requests) {
-    await store.delete(`friendRequests/${request.id}`);
-    summary.requests += 1;
-  }
-
-  const rateLimits = await store.query('rateLimits', { where: [['updatedAtMs', '<', nowMs - RATE_LIMIT_MAX_AGE_MS]], limit: CLEANUP_LIMITS.rateLimits });
-  for (const record of rateLimits) {
-    await store.delete(`rateLimits/${record.id}`);
-    summary.rateLimits += 1;
-  }
-
-  const reports = await store.query('reports', { where: [['createdAtMs', '<', nowMs - REPORT_MAX_AGE_MS]], limit: CLEANUP_LIMITS.requests });
-  for (const report of reports) {
-    await store.delete(`reports/${report.id}`);
-    summary.reports += 1;
-  }
-
-  const reviews = await store.query('reviews', {
-    where: [['createdAtMs', '<', nowMs - REVIEW_MAX_AGE_MS]],
-    limit: CLEANUP_LIMITS.reviews,
+  await step('stale invites', async () => {
+    const invites = await store.query('gameInvites', { where: [['createdAtMs', '<', nowMs - INVITE_MAX_AGE_MS]], limit: CLEANUP_LIMITS.invites });
+    for (const invite of invites) {
+      await store.delete(`gameInvites/${invite.id}`);
+      summary.invites += 1;
+    }
   });
-  for (const review of reviews) {
-    await store.delete(`reviews/${review.id}`);
-    await store.delete(`reviewOwners/${review.id}`);
-    await store.delete(`reviewAnnotations/${review.id}`);
-    summary.reviews += 1;
-  }
-  // A trained vocabulary is derived from first-party reviews; reset it when its source examples
-  // expire so the next submission falls back to the bundled local lexicon until it is retrained.
-  if (reviews.length) await store.delete('reviewAgentModels/active');
+
+  await step('stale friend requests', async () => {
+    const requests = await store.query('friendRequests', { where: [['createdAtMs', '<', nowMs - FRIEND_REQUEST_MAX_AGE_MS]], limit: CLEANUP_LIMITS.requests });
+    for (const request of requests) {
+      await store.delete(`friendRequests/${request.id}`);
+      summary.requests += 1;
+    }
+  });
+
+  await step('stale rate-limit documents', async () => {
+    const rateLimits = await store.query('rateLimits', { where: [['updatedAtMs', '<', nowMs - RATE_LIMIT_MAX_AGE_MS]], limit: CLEANUP_LIMITS.rateLimits });
+    for (const record of rateLimits) {
+      await store.delete(`rateLimits/${record.id}`);
+      summary.rateLimits += 1;
+    }
+  });
+
+  await step('expired reports', async () => {
+    const reports = await store.query('reports', { where: [['createdAtMs', '<', nowMs - REPORT_MAX_AGE_MS]], limit: CLEANUP_LIMITS.requests });
+    for (const report of reports) {
+      await store.delete(`reports/${report.id}`);
+      summary.reports += 1;
+    }
+  });
+
+  await step('expired reviews', async () => {
+    const reviews = await store.query('reviews', {
+      where: [['createdAtMs', '<', nowMs - REVIEW_MAX_AGE_MS]],
+      limit: CLEANUP_LIMITS.reviews,
+    });
+    for (const review of reviews) {
+      await store.delete(`reviews/${review.id}`);
+      await store.delete(`reviewOwners/${review.id}`);
+      await store.delete(`reviewAnnotations/${review.id}`);
+      summary.reviews += 1;
+    }
+    // A trained vocabulary is derived from first-party reviews; reset it when its source examples
+    // expire so the next submission falls back to the bundled local lexicon until it is retrained.
+    if (reviews.length) await store.delete('reviewAgentModels/active');
+  });
 
   return summary;
 }

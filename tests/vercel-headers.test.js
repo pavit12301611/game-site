@@ -31,9 +31,25 @@ const CONNECT = directive('connect-src');
 
 test('the deployment config installs browser-only dependencies and builds a Vite app from dist', () => {
   assert.equal(config.outputDirectory, 'dist');
-  assert.equal(config.installCommand, 'npm ci --ignore-scripts');
   assert.equal(config.buildCommand, 'npm run build');
   assert.equal(config.framework, 'vite');
+  // The api/ serverless functions import functions/src/**, which imports the functions/vendor
+  // mirror — generated and gitignored, so the mirror must be built before anything else runs.
+  assert.equal(config.installCommand, 'node scripts/sync-shared.mjs && npm ci --ignore-scripts');
+});
+
+test('the trusted backend ships with the site as same-origin serverless functions', () => {
+  // The backend must be part of every deployment: without it, every online action fails (and an
+  // undeployed function reads as a CORS error in the browser console). Vercel's Hobby plan allows
+  // cron jobs only once per day, so the schedule must stay daily (the 15-minute cadence comes from
+  // the free GitHub Actions workflow in .github/workflows/cleanup.yml instead).
+  assert.ok(config.crons?.length >= 1, 'the cleanup sweep must be scheduled');
+  for (const cron of config.crons ?? []) {
+    assert.equal(cron.path, '/api/cron/cleanup');
+    assert.match(cron.schedule, /^(\S+ \S+ \* \* \*)$/, 'the schedule must run at most once a day (Hobby plan)');
+  }
+  assert.ok(config.functions?.['api/backend/**'], 'the backend route needs its own function settings');
+  assert.ok(config.functions?.['api/cron/**'], 'the cleanup route needs its own function settings');
 });
 
 test('every response carries the baseline security headers', () => {

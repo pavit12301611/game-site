@@ -2,7 +2,7 @@
 
 A lightweight, responsive browser arcade for laptops and phones. The shelf contains **40 original retro-style mini-games** with ten compact rulesets, local practice against a browser rival, private 2–3 player rooms, username friends, direct game invites, optional email accounts, guest play, a public player-review wall with automatic no-key replies, and a UID-gated admin area.
 
-Online play is **server-authoritative**: every room mutation, friend request, invite, report, review submission and account deletion runs through callable Cloud Functions in [`functions/`](functions/) using the Firebase Admin SDK. [`firestore.rules`](firestore.rules) allows public reads of published reviews but denies every browser write to them; the review wall uses a pretrained DistilBERT sentiment model in the browser (no inference API or API key), then the backend attaches a reply before publication. The quantized weights download on first use; the model is not game-review-trained, and the review form, in-app privacy notice and [model guide](docs/reviews-and-local-agent.md) explain the download and limitations. Hidden game state (the codebreaker code, fleet positions, quiz answer keys) never reaches a browser that should not see it. Local practice still works with no Firebase configuration at all.
+Online play is **server-authoritative**: every room mutation, friend request, invite, report, review submission and account deletion runs through the trusted backend in [`functions/`](functions/), hosted as **same-origin Vercel serverless functions in [`api/`](api/)** (free tier, no Firebase Blaze plan) — with the identical handlers also available as Firebase callable Cloud Functions for a Blaze project. [`firestore.rules`](firestore.rules) allows public reads of published reviews but denies every browser write to them; the review wall uses a pretrained DistilBERT sentiment model in the browser (no inference API or API key), then the backend attaches a reply before publication. The quantized weights download on first use; the model is not game-review-trained, and the review form, in-app privacy notice and [model guide](docs/reviews-and-local-agent.md) explain the download and limitations. Hidden game state (the codebreaker code, fleet positions, quiz answer keys) never reaches a browser that should not see it. Local practice still works with no Firebase configuration at all.
 
 The games are original mini-games and variations, not bundled copyrighted ROMs or downloaded emulators. That keeps the app small, quick to load, and safe to deploy.
 
@@ -86,7 +86,7 @@ Two things to know: the flag is **ignored by a production build** (`vite build`)
 | `src/cpu.js` | Local practice and the CPU opponent, using the same engines as online play. |
 | `src/diagnostics.js` | The setup dialog's "Run check" button. |
 | `src/online/session.js` | `ensureOnlineUser()`: guests are anonymous accounts, so a link never forces a sign-up. |
-| `src/online/callables.js` | The one bridge to the backend: `httpsCallable` wrappers plus the error mapping that turns a missing deployment, a rate limit or a refused move into a sentence (see [docs/online-play.md](docs/online-play.md)). |
+| `src/online/callables.js` | The one bridge to the backend: same-origin `/api/backend/<name>` by default (or Firebase callables when `VITE_BACKEND_URL=firebase`), plus the error mapping that turns a missing deployment, a rate limit or a refused move into a sentence (see [docs/online-play.md](docs/online-play.md)). |
 | `src/reviews.js` | Public paged review reads, top-review query, on-device inference handoff and callable submission path. |
 | `src/review-model*.js` | Quantized DistilBERT module worker and output adapter; weights are downloaded lazily and cached by the browser. |
 | `shared/reviews/agent.js` | Dependency-free prediction validation, fallback sentiment logic, automatic reply templates, evidence-counted ideas and first-party trainer. |
@@ -126,14 +126,17 @@ is drawn anyway. The collaborators are passed in from `src/app.js`, which is wha
 a `ReferenceError` in that branch: two functions called in `src/app.js` without an import, which
 stopped the first paint on Vercel only - every local run has `firebaseReady === false`.
 
-> **The backend is written, tested and not deployed by this repository.** `functions/` owns every
-> online mutation, the hidden state, the rate limits, account deletion and the expiry cleanup, and
-> its suite passes locally (`cd functions && npm test`, 36 tests). The browser talks to it only
-> through callables. **Nothing here has been deployed, and nothing here can be verified against a
-> live Firebase project**: callable Functions require the Blaze plan, `firebase deploy --only functions`,
-> and the rules published from [`firestore.rules`](firestore.rules). Until an operator does that, the
-> app says so honestly (a missing deployment reads as an actionable setup message, not a broken move).
-> Read [docs/online-play.md](docs/online-play.md) before touching a real project.
+> **The backend now ships with the site, on the free plan.** `functions/` owns every online
+> mutation, the hidden state, the rate limits, account deletion and the expiry cleanup (its suite:
+> `cd functions && npm test`, 53 tests, both transports), and Vercel deploys it **together with the
+> site** as same-origin serverless functions from [`api/`](api/) — `POST /api/backend/<name>`, no
+> CORS preflight at all, no Firebase Blaze plan required. The one server-side setup step is the
+> `FIREBASE_SERVICE_ACCOUNT` environment variable in Vercel (plus `CRON_SECRET` for the cleanup
+> sweep); until it exists, every online action fails with the exact fix in the message. The earlier
+> production breakage — `createRoom` "blocked by CORS" — was the old design calling Firebase
+> callable functions that had never been deployed: their 404 carries no
+> `Access-Control-Allow-Origin` header, so the browser masked the missing deployment as a CORS
+> preflight failure. Read [docs/online-play.md](docs/online-play.md) for the deploy runbook.
 
 ### Fast online moves on top of a server-owned room
 
@@ -375,7 +378,7 @@ After you click **Publish**, check the rules against the real app once. It takes
 
 If a step reports *permission-denied*, the rules were not published as-is. Paste the whole file again; partial copies are the usual cause. The Firebase Console **Rules → Rules Playground** can replay a single request if you need to dig deeper.
 
-There are no composite indexes to create for the current queries. `firebase.json` and `firestore.indexes.json` are included if you later choose to manage Firebase from the CLI.
+There is one composite index (for the backend's finished-rooms cleanup query), defined in `firestore.indexes.json`. If you manage Firebase from the CLI, `firebase deploy --only firestore:rules,firestore:indexes` publishes both the rules and the index in one go — free on the Spark plan. Without the index the cleanup still runs; it records the skipped step and continues.
 
 ### 4. Add the Vercel environment variables, then redeploy
 
@@ -415,7 +418,7 @@ There are no composite indexes to create for the current queries. `firebase.json
 
 Optional strictness: set `REQUIRE_FIREBASE_CONFIG=1` (a plain build variable, **not** a `VITE_` one) for the Production environment to make a missing or invalid config fail the build instead of only warning. Local-only hosting without Firebase stays supported when it is unset.
 
-> Firebase Web config is designed to be present in browser code. Do not put service-account JSON, Admin SDK credentials, private keys, OAuth client secrets, or Firestore rules in any of these variables. The rules are published in Firebase Console, not stored as an environment variable. If a true server-side secret is ever needed, add a separate Vercel Functions/Admin SDK architecture; do not put it in a `VITE_*` variable.
+> Firebase Web config is designed to be present in browser code. Do not put service-account JSON, Admin SDK credentials, private keys, OAuth client secrets, or Firestore rules in any of the **`VITE_*`** variables. The server-side `FIREBASE_SERVICE_ACCOUNT` variable above is exactly where a true server-side secret belongs: a plain (non-`VITE_`) Vercel variable is only ever injected into the serverless functions in `api/`, never into the browser bundle, and the repository's secret scan and the build both refuse a credential pasted into a `VITE_*` value.
 
 Google's Firebase-managed provider setup does not require adding a Google client secret to this repository. The selected support email is shown to users in Google's consent flow and must be configured in the provider panel.
 
@@ -458,12 +461,15 @@ One deliberate `'unsafe-inline'` entry, and why:
   now live in the same-origin external `public/theme-preload.js`, so `script-src` does not need
   `'unsafe-inline'`.
 
-The CSP allows `https://*.googleapis.com`, `https://*.cloudfunctions.net`, `https://*.firebaseapp.com`,
-`https://*.firebaseio.com` (plus `wss://`) and `https://apis.google.com`: Firebase Auth, Firestore and
-the callable endpoints the online backend runs on. The callable origin matters — the SDK reaches
-`https://<region>-<project>.cloudfunctions.net/<name>`, so a CSP without that wildcard blocks every
-online mutation with a console violation. `tests/vercel-headers.test.js` asserts it, which is how the
-omission was caught before a deploy.
+The CSP allows `'self'`, `https://*.googleapis.com`, `https://*.cloudfunctions.net`,
+`https://*.firebaseapp.com`, `https://*.firebaseio.com` (plus `wss://`) and
+`https://apis.google.com`: Firebase Auth, Firestore, and the backend's two transports. `'self'` is
+the one that matters now — the default backend is the same-origin `/api/backend/<name>` route, so
+every online mutation is a same-origin fetch. The `cloudfunctions.net` wildcard only serves a build
+with `VITE_BACKEND_URL=firebase` (the Blaze-plan transport), where the SDK reaches
+`https://<region>-<project>.cloudfunctions.net/<name>`; a CSP without that wildcard would block that
+transport with a console violation. `tests/vercel-headers.test.js` asserts all of it, which is how
+omissions were caught before a deploy.
 
 If a deployment ever loses Google sign-in or goes quiet on Firestore, open the browser console: a CSP
 violation names the exact directive and origin, and the fix is one word in `vercel.json` (then
@@ -473,6 +479,10 @@ redeploy). Headers only apply to Vercel deployments, never to `npm run dev`.
 
 | What you see | Likely cause | Fix |
 | --- | --- | --- |
+| Console shows a **CORS** error on `…cloudfunctions.net/createRoom` ("No 'Access-Control-Allow-Origin' header") and rooms are never created | The deployment predates the same-origin backend: the build is still calling Firebase callable functions, which were never deployed (their 404 carries no CORS header, so the browser masks the missing function as a preflight failure). | Redeploy from the current `main` — the browser now calls same-origin `/api/backend/<name>`, which has no preflight at all. (Only a build with `VITE_BACKEND_URL=firebase` talks to `cloudfunctions.net`; that transport needs the Blaze plan and `firebase deploy --only functions`.) |
+| Every online action says **"The backend is not configured: set FIREBASE_SERVICE_ACCOUNT…"** | The backend is deployed with the site but has no credentials, so it refuses every call instead of pretending. | Vercel → Settings → Environment Variables → add `FIREBASE_SERVICE_ACCOUNT` (service-account key JSON, Production **and** Preview) → Redeploy. |
+| Every online action says **"The online service is not answering."** | The backend route is missing or unreachable: `/api/backend/<name>` answered 404 or nothing. A 404 without CORS headers is also what the console shows as a CORS error. | Confirm the deployment is current (the backend ships with the site) and that nothing rewrites `/api` in front of the app. Local `npm run dev` without `vercel dev` also reports this — run `vercel dev` for online play locally. |
+| Rooms work but stick around; the cleanup never seems to run | `/api/cron/cleanup` refuses to run without `CRON_SECRET`, or Vercel's Hobby cron (once a day) simply has not fired yet. Expired rooms are *refused* at their 1-hour mark either way; only the physical delete waits. | Add `CRON_SECRET` in Vercel (any long random string) and redeploy; for the 15-minute cadence set the `PSD_CLEANUP_ENDPOINT` and `PSD_CLEANUP_SECRET` repository secrets so the **Expiry sweep** GitHub Actions workflow calls the endpoint. |
 | Deployed site shows **Local practice mode** and "Firebase config is missing from this deployment…" | The `VITE_FIREBASE_*` variables were not present when this deployment was built. They were never added, are not ticked for this environment, or were added after the build. | Vercel → Settings → Environment Variables → add them for **Production** and **Preview**, then **Redeploy**. |
 | The build log says `Found other Firebase-looking variable name(s): FIREBASE_API_KEY …` | A variable is misnamed (missing the `VITE_` prefix, wrong capitals, or a stray space), so Vite never exposes it to the app. Only the exact names in the table in step 4 (and the older `VITE_FIREBASE_CONFIG`) are read. | Rename it to exactly e.g. `VITE_FIREBASE_API_KEY` and redeploy. |
 | It works on Production but a Preview URL shows **Local practice mode** | The variables are not enabled for the **Preview** environment. | Tick **Preview** for each variable, then redeploy that preview. |
@@ -494,7 +504,7 @@ Developer console: a missing or invalid config is always logged (`console.error`
 
 - **40 games:** Pixel Tic-Tac-Toe, Neon Gomoku, Connect Four, Five in a Row, Memory Match, Neon Pairs, Emoji Flip, Arcade Pairs, Pixel Tap Sprint, Button Masher, Turbo Charge, Reaction Rush, Spacebar Showdown, Bug Blaster, Rock Paper Scissors, Laser Duel, Coin Flip Clash, Dice Duel, Retro Trivia, Emoji Decode, Arcade Facts, Pixel Pop Quiz, Movie Mayhem, Word Scramble, Number Chase, Brain Busters, 8-Bit Riddles, Retro Rewind, Maze Runner, Neon Labyrinth, Byte Escape, Star Runner, Sea Battle, Pixel Fleet, Alien Skirmish, Pong Rally, Paddle Wars, Air Hockey, Codebreaker, and Mastermind.
 - **Ten lightweight shared engines:** line boards, drop boards, memory pairs, tap races, simultaneous duels, quiz rounds, maze races, hidden-grid battles, volley scoring, and codebreaking. Each engine is one module in `src/engines/` with its own unit tests; `src/catalog.js` holds the catalog, artwork and how-to-play copy. Each catalog entry can be opened, practiced locally, or used to create an online room.
-- **Firebase:** Auth (Anonymous + Email/Password + Google), Cloud Firestore and callable Cloud Functions. Every online mutation goes through the backend, which validates identity, membership, room status and lifetime, turn order, legal moves and per-account rate limits; the browser can only read what it is a participant of, plus its own presence heartbeat. Hidden state (codebreaker code, fleets, quiz keys) lives in server-only documents. Google popup/redirect handling, guest linking, first-login username setup, and friendly provider/network errors are included.
+- **Firebase:** Auth (Anonymous + Email/Password + Google) and Cloud Firestore, plus the trusted backend (same-origin Vercel serverless functions by default; Firebase callables on a Blaze project). Every online mutation goes through the backend, which validates identity, membership, room status and lifetime, turn order, legal moves and per-account rate limits; the browser can only read what it is a participant of, plus its own presence heartbeat. Hidden state (codebreaker code, fleets, quiz keys) lives in server-only documents. Google popup/redirect handling, guest linking, first-login username setup, and friendly provider/network errors are included.
 - **Setup diagnostics:** one honest connection status everywhere (**Online rooms ready**, **Offline · local play**, **Local practice mode**), a precise setup banner for a missing or invalid `VITE_FIREBASE_*` config, a build-time check that prints the same verdict in the Vercel build log (and refuses secrets), Firebase errors worded as instructions, and an in-app **Run check** for a deployed project.
 - **Local personalization:** Favorites, recently played games, theme preference, subtle sound preference, and guest display name live in localStorage; no extra Firebase collection is required.
 - **Privacy, safety and lifecycle:** a privacy notice and terms/safety page describe the real data flow (and label every operator-specific fact as a launch-checklist item), self-service account deletion removes a profile, its username reservation, friendships, requests, invites, presence, eligible rooms and the sign-in itself, blocking is immediate and unblockable, reports are stored for the operator with no automatic moderation, and a scheduled function cleans up expired rooms, hidden state, presence, invites, requests, rate limits and old reports. No analytics, no cookies, no third-party telemetry.
@@ -516,7 +526,7 @@ The rules themselves are executed by `npm run test:rules`, which runs `firestore
 ## Known limits
 
 - **Casual, not cheat-proof.** Every online mutation, hidden state and room transition is server-validated, but a determined group can still collude, stall, share screens or sit on a room code. There is no ranked, prize or leaderboard play, and the app claims none.
-- **Nothing is deployed or verified against a live project.** Callable Functions need the Blaze plan, `firebase deploy --only functions` and the published rules; Google/OAuth, billing, cross-device behaviour and the Firebase-console steps can only be confirmed in the operator's own project. `docs/online-play.md` carries the runbook and the staging checklist.
+- **The live project is the operator's responsibility.** The backend ships with the site (same-origin Vercel functions; no Blaze plan), but the Firebase-console steps — sign-in providers, the published rules, the `FIREBASE_SERVICE_ACCOUNT` variable, Google/OAuth behaviour, cross-device behaviour — can only be confirmed in the operator's own project. `docs/online-play.md` carries the runbook and the staging checklist.
 - **Reports are read by a human.** Blocking is immediate and local to the arcade; a report is only a stored message for the operator, with no automatic moderation and no uptime promise.
 - **Dev-tooling advisories are tracked, not hidden.** `npm audit` (production, `--omit=dev`) is clean; the full tree reports advisories inside `firebase-tools`' transitive dependencies, which are never shipped to a browser. They are listed in the Tests and CI section rather than fixed with a forced downgrade.
 - Hash/nonce migration for runtime inline styles is deferred; dynamic style attributes still require `style-src 'unsafe-inline'`. Colour contrast is measured from the token values in `tests/design-brief.test.js`; a real-browser pass is a staging-checklist item, because jsdom cannot paint.

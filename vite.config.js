@@ -25,6 +25,17 @@ export default defineConfig(({ mode }) => ({
   server: {
     host: '0.0.0.0',
     allowedHosts: ['.e2b.app'],
+    // Online play's backend lives at the same origin as the site (Vercel serverless functions in
+    // api/). In `npm run dev` there is no such function, so the same-origin calls are forwarded to
+    // `vercel dev`, which runs both the Vite dev server and the api/ functions locally. Plain
+    // `npm run dev` without `vercel dev` still serves local practice; online actions then report
+    // the backend as not answering, which is exactly the honest answer.
+    proxy: {
+      '/api': {
+        target: process.env.API_PROXY_TARGET || 'http://127.0.0.1:3000',
+        changeOrigin: true,
+      },
+    },
   },
   preview: {
     host: '0.0.0.0',
