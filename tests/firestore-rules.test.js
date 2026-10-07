@@ -352,7 +352,7 @@ function assertFields(statement, fields) {
   for (const field of fields) {
     const pattern = field === 'updatedByUid'
       ? new RegExp(`request\\.resource\\.data\\.${field} == request\\.auth\\.uid`)
-      : new RegExp(`request\\.resource\\.data\\.${field} is (?:bool|string|int)`);
+      : new RegExp(`request\\.resource\\.data\\.${field} is (?:bool|string|int|number)`);
     assert.match(statement.condition, pattern, `${field} must be type-checked or pinned in the rules`);
   }
   for (const check of ['hasOnly', 'hasAll']) {

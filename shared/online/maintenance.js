@@ -207,7 +207,7 @@ function fnv1a8Hex(input) {
  * @param {{ enabled: boolean, reason?: string, pinDigest?: string, salt?: string, pinExpiresAtMs?: number, pinSetAtMs?: number, uid: string, nowMs?: number }} input
  */
 export function buildMaintenanceStatusUpdate(input) {
-  const nowMs = Number(input?.nowMs) || Date.now();
+  const nowMs = Math.floor(Number(input?.nowMs) || Date.now());
   const enabled = Boolean(input?.enabled);
   const pinDigest = enabled ? String(input?.pinDigest || '') : '';
   return {
@@ -217,8 +217,8 @@ export function buildMaintenanceStatusUpdate(input) {
     updatedByUid: String(input?.uid || ''),
     pinHash: pinDigest,
     pinSalt: pinDigest ? String(input?.salt || '') : '',
-    pinExpiresAtMs: pinDigest ? Number(input?.pinExpiresAtMs) || 0 : 0,
-    pinSetAtMs: pinDigest ? Number(input?.pinSetAtMs) || nowMs : 0,
+    pinExpiresAtMs: pinDigest ? Math.floor(Number(input?.pinExpiresAtMs) || 0) : 0,
+    pinSetAtMs: pinDigest ? Math.floor(Number(input?.pinSetAtMs) || nowMs) : 0,
   };
 }
 
@@ -227,15 +227,15 @@ export function buildMaintenanceStatusUpdate(input) {
  * @param {{ pin: string, pinDigest: string, salt: string, expiresAtMs: number, hours: number, uid: string, nowMs?: number, setAtMs?: number }} input
  */
 export function buildMaintenanceAccessUpdate(input) {
-  const nowMs = Number(input?.nowMs) || Date.now();
+  const nowMs = Math.floor(Number(input?.nowMs) || Date.now());
   const pin = normalizeMaintenancePin(input?.pin);
   return {
     pin,
     pinHash: String(input?.pinDigest || ''),
     pinSalt: String(input?.salt || ''),
-    expiresAtMs: Number(input?.expiresAtMs) || 0,
-    setAtMs: Number(input?.setAtMs) || nowMs,
-    hours: Number(input?.hours) || MAINTENANCE_PIN_DEFAULT_HOURS,
+    expiresAtMs: Math.floor(Number(input?.expiresAtMs) || 0),
+    setAtMs: Math.floor(Number(input?.setAtMs) || nowMs),
+    hours: Math.floor(Number(input?.hours) || MAINTENANCE_PIN_DEFAULT_HOURS),
     updatedByUid: String(input?.uid || ''),
   };
 }

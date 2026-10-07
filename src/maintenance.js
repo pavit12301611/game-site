@@ -365,14 +365,15 @@ async function commitMaintenance(status, access) {
   const batch = writeBatch(store);
   batch.set(doc(store, MAINTENANCE_STATUS_COLLECTION, MAINTENANCE_STATUS_DOCUMENT), status);
   const accessRef = doc(store, MAINTENANCE_ACCESS_COLLECTION, MAINTENANCE_ACCESS_DOCUMENT);
-  // `undefined` leaves the admin-only document exactly as it is, which is what editing the reason has
-  // to do: the code in there is still opening devices, and a batch that rewrote it from state would
-  // quietly drop it whenever the studio had not loaded it back. `null` is the deliberate end: the
-  // window is over, so the code goes with it and no stale secret is left sitting in the database.
   if (access === undefined) { /* untouched */ }
   else if (access) batch.set(accessRef, access);
   else batch.delete(accessRef);
-  await batch.commit();
+  try {
+    await batch.commit();
+  } catch (error) {
+    console.error('[PSD-gaming] commitMaintenance FAILED:', error?.code, error?.message, { status, access: access ? { ...access, pin: '***' } : access });
+    throw error;
+  }
 }
 
 /**
