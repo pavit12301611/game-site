@@ -31,8 +31,6 @@ export const ICONS = {
   trash: '<path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14ZM10 11v6M14 11v6"/>',
   crown: '<path d="M3 17h18M5 17 3.4 7.6 8 11l4-6.6L16 11l4.6-3.4L19 17H5Z"/>',
   cone: '<path d="M12 3 4 21h16L12 3Z"/><path d="M8.2 14h7.6"/>',
-  chat: '<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.4A8 8 0 1 1 21 12Z"/>',
-  send: '<path d="m22 2-7 20-4-9-9-4 20-7Z"/>',
 };
 
 export function icon(name, className = '') {

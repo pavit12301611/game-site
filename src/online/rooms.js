@@ -31,7 +31,6 @@ import { ensureOnlineUser } from './session.js';
 import { callBackend } from './callables.js';
 import { startPresence, stopPresence } from './presence.js';
 import { roomAfterOnlineActions } from './action-sync.js';
-import { resetChat, subscribeToChat } from './chat.js';
 import { ROOM_CODE_LENGTH } from '../../shared/online/policy.js';
 import {
   DISPLAY_NAME_STORAGE_KEY,
@@ -157,7 +156,6 @@ export async function expireActiveRoom(roomId, storage = globalThis.localStorage
     stopPrivateView();
     stopPrivateView = emptyUnsubscribe;
     if (activeActions?.roomId === roomId) activeActions = null;
-    resetChat();
     state.room = null;
     state.onlineActionsPending = 0;
     state.roomError = EXPIRED_ROOM_MESSAGE;
@@ -362,7 +360,6 @@ export function subscribeToRoom(roomId, uid) {
   clearActiveRoomExpiryTimer();
   stopRoom();
   stopPrivateView();
-  resetChat();
   state.roomId = roomId;
   state.roomError = '';
   if (!activeActions || activeActions.roomId !== roomId || activeActions.uid !== uid) {
@@ -371,11 +368,6 @@ export function subscribeToRoom(roomId, uid) {
   }
   const context = activeActions;
   startPresence(roomId, uid);
-  // Subscribe once to the chat subcollection; the snapshot will be empty in the lobby (chat rules
-  // allow the read regardless of status - the panel is only drawn while playing, and the backend
-  // refuses sends after the game ends). The backend deletes every message when status becomes
-  // `finished` or a rematch starts, so the live query clears itself.
-  subscribeToChat(roomId);
   stopRoom = onSnapshot(doc(store, 'rooms', roomId), (snapshot) => {
     if (!isActiveContext(context)) return;
     if (!snapshot.exists()) {
@@ -384,7 +376,6 @@ export function subscribeToRoom(roomId, uid) {
       context.publicRoom = null;
       state.room = null;
       state.onlineActionsPending = 0;
-      resetChat();
       state.roomError = 'This invite room no longer exists.';
     } else {
       const data = snapshot.data({ serverTimestamps: 'estimate' }) ?? snapshot.data();
@@ -594,7 +585,6 @@ export function stopActiveRoom() {
   stopRoom = emptyUnsubscribe;
   stopPrivateView = emptyUnsubscribe;
   activeActions = null;
-  resetChat();
   state.room = null;
   state.roomId = null;
   state.roomError = '';

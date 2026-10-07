@@ -44,16 +44,6 @@ export const state = {
   onlineActionsPending: 0,
   /** uid -> { lastSeenMs, status } for the current online room (src/online/presence.js). */
   presence: {},
-  /** In-match chat messages for the current live room (src/online/chat.js). Oldest first. */
-  chatMessages: [],
-  /** Whether the chat side-panel is currently open. */
-  chatOpen: false,
-  /** Number of new chat messages that arrived while the panel was closed (for the badge). */
-  chatUnreadCount: 0,
-  /** True while a chat message is being sent through the backend. */
-  chatSending: false,
-  /** Inline error shown under the chat input, if any. */
-  chatError: '',
   /** Server clock minus local clock, measured from our own heartbeat; 0 until known. */
   presenceClockOffsetMs: 0,
   local: null,
