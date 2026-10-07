@@ -13,7 +13,7 @@
  * lives in ./handlers.js and in the shared room transitions.
  */
 
-import { randomInt, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
@@ -64,8 +64,6 @@ function makeHandlers(store, { timestampMs = Date.now() } = {}) {
     engines,
     onlineBankFor: onlineItemsForGame,
     randomId: shortId,
-    // Cryptographically uniform decimal digits for the maintenance tester PIN (never a pattern).
-    randomDigits: (length) => Array.from({ length }, () => randomInt(0, 10)).join(''),
     timestampMs,
     deleteAuthUser: async (uid) => { await auth.deleteUser(uid); },
   });
@@ -86,6 +84,8 @@ const HTTPS_CODE = {
   'room-full': 'failed-precondition',
   'room-started': 'failed-precondition',
   'room-expired': 'failed-precondition',
+  'chat-not-live': 'failed-precondition',
+  'chat-empty': 'invalid-argument',
   'room-not-found': 'not-found',
   'user-not-found': 'not-found',
   'invite-missing': 'not-found',
@@ -118,9 +118,7 @@ export function callableFor(name) {
     const handler = makeHandlers(store)[name];
     if (typeof handler !== 'function') throw new HttpsError('internal', `Unknown handler ${name}`, { code: 'unknown-handler' });
     try {
-      // `ip` lets the backend rate-limit anonymous callers (the maintenance PIN check) per
-      // person instead of per account; it is never stored and never leaves the handler.
-      return await handler(request.data ?? {}, { ...(request.auth ?? { uid: '' }), ip: request.rawRequest?.ip ?? '' });
+      return await handler(request.data ?? {}, request.auth ?? { uid: '' });
     } catch (error) {
       throw toHttpsError(error);
     }
@@ -141,6 +139,7 @@ export const startRoom = callableFor('startRoom');
 export const claimHost = callableFor('claimHost');
 export const playMove = callableFor('playMove');
 export const rematch = callableFor('rematch');
+export const sendChat = callableFor('sendChat');
 export const blockUser = callableFor('blockUser');
 export const unblockUser = callableFor('unblockUser');
 export const reportProblem = callableFor('reportProblem');
@@ -150,9 +149,6 @@ export const adminTrainReviewAgent = callableFor('adminTrainReviewAgent');
 export const deleteAccount = callableFor('deleteAccount');
 export const adminRoomAction = callableFor('adminRoomAction');
 export const adminRemovePlayer = callableFor('adminRemovePlayer');
-export const adminSetMaintenance = callableFor('adminSetMaintenance');
-export const verifyMaintenancePin = callableFor('verifyMaintenancePin');
-export const checkMaintenanceBypass = callableFor('checkMaintenanceBypass');
 
 /**
  * Global cleanup. Runs every 15 minutes; a retry after a timeout continues where the last run

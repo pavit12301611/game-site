@@ -126,3 +126,74 @@ test('every dialog passes, including the new report and delete flows', async () 
   await scan('delete confirmation', () => { state.modal = { type: 'confirm', title: 'Delete this account?', body: 'This cannot be undone.', confirmLabel: 'Delete my account', run: () => {} }; });
   await scan('setup dialog', () => { state.modal = { type: 'setup' }; });
 });
+
+test('the maintenance notice, the tester banner and the admin panel all pass', async () => {
+  // `scan()` resets the fields it knows about and `state.maintenance` is not one of them, so the
+  // fixture is written in full every time and cleared at the end.
+  const closed = {
+    status: 'live',
+    enabled: true,
+    reason: 'Rooms are moving to a new backend.\nBack within the hour.',
+    updatedAtMs: Date.now() - 120000,
+    updatedByUid: 'admin',
+    pinHash: 'sha256:aa',
+    pinSalt: 'bb',
+    pinExpiresAtMs: Date.now() + 3_600_000,
+    pinSetAtMs: Date.now() - 120000,
+    pinExpired: false,
+    error: '',
+    pass: null,
+    attempts: { count: 1, lockedUntilMs: 0 },
+    checking: false,
+    saving: false,
+    pinDraft: '1234 5678 9012 3456',
+    unlockMessage: 'That is not the code. 5 more attempts before a short pause.',
+    unlockOk: false,
+    preview: false,
+    access: { pin: '1234567890123456', expiresAtMs: Date.now() + 86_400_000, hours: 24 },
+    accessError: '',
+    draft: { reason: 'Rooms are moving to a new backend.', hours: 24 },
+  };
+  try {
+    // The page a locked-out visitor gets: the whole document is this, so its headings, labels and
+    // live regions have to be right with nothing else on the page to share the job with.
+    await scan('maintenance notice', () => { state.maintenance = { ...state.maintenance, ...closed }; });
+    await scan('maintenance notice with no code and a failed read', () => {
+      state.maintenance = {
+        ...state.maintenance,
+        ...closed,
+        status: 'error',
+        error: 'Firestore refused that read.',
+        pinHash: '',
+        unlockMessage: '',
+        access: null,
+        pinDraft: '',
+      };
+    });
+    await scan('maintenance notice an admin is previewing', () => {
+      state.maintenance = { ...state.maintenance, ...closed, preview: true };
+      state.isAdmin = true;
+      state.user = { uid: 'admin', isAnonymous: false, email: 'admin@example.com' };
+      state.profile = { uid: 'admin', username: 'operator' };
+    });
+    await scan('the tester banner, over the live arcade', () => {
+      state.maintenance = { ...state.maintenance, ...closed, pass: { digest: 'sha256:aa', expiresAtMs: Date.now() + 3_600_000 } };
+      state.isAdmin = false;
+    });
+    await scan('the admin studio panel', () => {
+      state.page = 'admin';
+      state.isAdmin = true;
+      state.adminData = null;
+      state.maintenance = { ...state.maintenance, ...closed };
+      state.adminTab = 'maintenance';
+    });
+    await scan('the admin studio panel while the site is open', () => {
+      state.page = 'admin';
+      state.isAdmin = true;
+      state.adminTab = 'maintenance';
+      state.maintenance = { ...state.maintenance, ...closed, enabled: false, access: null, pass: null };
+    });
+  } finally {
+    state.maintenance = { ...state.maintenance, enabled: false, preview: false, pass: null, access: null, pinDraft: '', unlockMessage: '', unlockOk: false, attempts: { count: 0, lockedUntilMs: 0 } };
+  }
+});

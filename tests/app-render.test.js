@@ -242,9 +242,14 @@ test('the admin studio renders every section with its action buttons for a flagg
   };
   try {
     setHash('#/admin');
-    assert.equal(all('.admin-tabs [data-action="admin-tab"]').length, 6, 'all six studio sections exist');
+    assert.equal(all('.admin-tabs [data-action="admin-tab"]').length, 7, 'all seven studio sections exist');
     assert.ok($('.admin-metrics'), 'the overview metrics render');
     assert.match($('#page-content').textContent, /What this studio can do/);
+
+    click(button('admin-tab', '[data-tab="maintenance"]'));
+    assert.ok($('#maintenance-reason'), 'the maintenance panel can write the reason visitors read');
+    assert.ok($('select#maintenance-hours'), 'and for how long a temporary code stays valid');
+    assert.match($('#admin-panel').textContent, /Site open to everyone/, 'and it says which way the switch is set');
 
     click(button('admin-tab', '[data-tab="rooms"]'));
     assert.ok(button('admin-delete-room', '[data-room-id="room-waiting"]'), 'each room can be deleted');
@@ -337,4 +342,153 @@ test('a category cover on the landing page opens the catalog filtered to that ca
   assert.ok(all('.filter-pill.is-active').some((node) => node.dataset.category === 'Strategy'), 'the Strategy filter is active');
   assert.ok(all('.game-card').length > 0 && all('.game-card').length < 40);
   click(all('[data-action="filter-category"]').find((node) => node.dataset.category === 'All games'));
+});
+
+/**
+ * Maintenance mode, end to end, in the same place the rest of the UI is tested: the notice really
+ * replaces the site, the operator's reason is what a visitor reads, the code box behaves on a phone,
+ * and one right code turns this device into a tester's device. `src/maintenance.js` is not wired to
+ * Firebase in local practice mode, so the status document is put into `state` by hand - exactly what
+ * the snapshot listener would have done on a real deployment.
+ */
+test('maintenance mode locks visitors out, and the 16-digit code lets one device back in', async () => {
+  const { state } = await import('../src/state.js');
+  const { MAINTENANCE_ATTEMPTS_KEY, MAINTENANCE_CACHE_KEY, MAINTENANCE_PASS_KEY } = await import('../src/maintenance.js');
+  const { formatMaintenancePin, maintenancePinDigest } = await import('../shared/online/maintenance.js');
+  const pin = '491733801256 9042'.replace(/\s/g, '');
+  const salt = 'a1b2c3d4e5f60718';
+  const pinHash = await maintenancePinDigest(salt, pin);
+  const original = { ...state.maintenance };
+  const openForm = () => /** @type {HTMLFormElement} */ (appRoot.querySelector('form[data-form="maintenance-pin"]'));
+  const typeCode = async (value) => {
+    const field = appRoot.querySelector('#maintenance-pin-input');
+    if (!field) throw new Error('the code box is gone');
+    field.value = value;
+    field.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    openForm().dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+    // The check is a real SHA-256 through SubtleCrypto, so wait for it to land rather than guessing.
+    const deadline = Date.now() + 3_000;
+    while (Date.now() < deadline && (state.maintenance.checking || state.maintenance.unlockMessage === '')) {
+      await new Promise((resolve) => { setTimeout(resolve, 10); });
+    }
+    if (state.maintenance.checking) throw new Error('the code never finished being checked');
+  };
+  Object.assign(state.maintenance, {
+    status: 'live',
+    enabled: true,
+    reason: 'Scheduled maintenance: rooms are moving to a new backend. Back within the hour.',
+    updatedAtMs: Date.now() - 120000,
+    pinHash,
+    pinSalt: salt,
+    pinExpiresAtMs: Date.now() + 3_600_000,
+    pinSetAtMs: Date.now() - 120000,
+    pinExpired: false,
+    pass: null,
+    preview: false,
+    pinDraft: '',
+    unlockMessage: '',
+    unlockOk: false,
+    attempts: { count: 0, lockedUntilMs: 0 },
+  });
+  try {
+    setHash('#/home');
+    assert.ok($('.maintenance-screen'), 'a visitor gets the notice instead of the arcade');
+    assert.equal($('.app-shell'), null, 'with no sidebar, no topbar and nothing to wander into');
+    assert.match($('.maintenance-screen').textContent, /this site is under maintenance/i, 'the headline says what happened');
+    assert.match($('.maintenance-screen').textContent, /rooms are moving to a new backend/, 'the operator wrote the reason, the page shows it');
+    assert.ok($('.maintenance-screen').textContent.includes('Live status'), 'and it is honest about where the answer came from');
+
+    const field = $('#maintenance-pin-input');
+    assert.equal(field.getAttribute('inputmode'), 'numeric', 'a phone gets the numeric keypad');
+    assert.equal(field.getAttribute('autocomplete'), 'one-time-code', 'and iOS can offer a pasted code');
+    assert.equal(field.maxLength, 19, '16 digits plus the three spaces the box types for you');
+    assert.equal($('button[data-maintenance-submit]').disabled, true, 'no code typed, no submit');
+
+    setHash('#/catalog');
+    assert.ok($('.maintenance-screen'), 'routing during maintenance stays on the notice…');
+    assert.equal($('.game-card'), null, '…and does not paint the game shelf underneath it');
+
+    // Re-query: every repaint in `#/catalog` above threw the old node away with the rest of it.
+    const typed = $('#maintenance-pin-input');
+    typed.value = '4917 3380 1256';
+    typed.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    assert.equal($('#maintenance-pin-tally').textContent.trim(), '12 of 16 digits typed', 'the tally follows the typing');
+    assert.equal(typed.value, '4917 3380 1256', 'groups stay where the visitor put them');
+    assert.equal($('button[data-maintenance-submit]').disabled, true, 'a partial code cannot be submitted');
+
+    await typeCode('0000000000000000');
+    assert.match($('.maintenance-pin-help').textContent, /that is not the code/i, 'a wrong code is refused in plain words');
+    assert.equal($('.app-shell'), null, 'and opens nothing');
+
+    await typeCode(formatMaintenancePin(pin));
+    assert.ok($('.app-shell'), 'the right code opens this device, spaces and all');
+    assert.ok($('.maintenance-banner.is-pass'), 'with a banner that says the arcade is still closed to everyone else');
+    assert.ok(localStorage.getItem(MAINTENANCE_PASS_KEY), 'the pass lives in this browser, not in an account');
+
+    click($('[data-action="maintenance-end-pass"]'));
+    assert.ok($('.maintenance-screen'), 'ending the pass puts the notice back');
+    assert.equal(localStorage.getItem(MAINTENANCE_PASS_KEY), null, 'and forgets it here');
+
+    state.isAdmin = true;
+    setHash('#/home');
+    assert.ok($('.app-shell'), 'an admin is never locked out of their own site');
+    assert.ok($('.maintenance-banner'), 'and is told, in the strip, that the switch is on');
+    click(button('maintenance-preview-on'));
+    assert.ok($('.maintenance-screen'), 'looking at the visitor view is a button, not a guess');
+    click(button('maintenance-preview-off'));
+    assert.ok($('.app-shell'), 'and one more click comes back');
+  } finally {
+    state.isAdmin = false;
+    Object.assign(state.maintenance, original);
+    for (const key of [MAINTENANCE_PASS_KEY, MAINTENANCE_CACHE_KEY, MAINTENANCE_ATTEMPTS_KEY]) localStorage.removeItem(key);
+    setHash('#/home');
+  }
+});
+
+/**
+ * The first thing a visitor sees of a closed site is the copy this device kept from its last visit,
+ * and the notice has to say so. It is also the only way to look at the maintenance screen without a
+ * Firebase project to switch on, which is why the cache is the one input this test feeds.
+ */
+test('the maintenance notice paints from this device\'s cache, and only when the cache says closed', async () => {
+  const { state } = await import('../src/state.js');
+  const { MAINTENANCE_ATTEMPTS_KEY, MAINTENANCE_CACHE_KEY, MAINTENANCE_PASS_KEY, applyMaintenanceCache } = await import('../src/maintenance.js');
+  const original = { ...state.maintenance };
+  try {
+    // An "open" (or missing) cache must never paint a notice: the default state of the site is open.
+    localStorage.setItem(MAINTENANCE_CACHE_KEY, JSON.stringify({ enabled: false }));
+    Object.assign(state.maintenance, original, { enabled: false, status: 'none' });
+    applyMaintenanceCache();
+    setHash('#/home');
+    assert.ok($('.app-shell'), 'a cached "open" is invisible');
+    assert.equal($('.maintenance-screen'), null);
+
+    localStorage.setItem(MAINTENANCE_CACHE_KEY, JSON.stringify({
+      enabled: true,
+      reason: 'Upgrade in progress.',
+      updatedAtMs: Date.now() - 60000,
+      pinHash: 'sha256:aa',
+      pinSalt: 'bb',
+      pinExpiresAtMs: Date.now() + 3_600_000,
+    }));
+    Object.assign(state.maintenance, original, { enabled: false, status: 'none', reason: '', pass: null });
+    applyMaintenanceCache();
+    setHash('#/home');
+    assert.ok($('.maintenance-screen'), 'a cached "closed" is painted before anything is read');
+    assert.equal(state.maintenance.status, 'cached', 'and the app knows where it came from');
+    assert.match($('.maintenance-flag').textContent, /last visit/i, 'so does the page');
+    assert.match($('.maintenance-screen').textContent, /Upgrade in progress\./);
+    assert.doesNotMatch($('.maintenance-screen').textContent, /Live status/, 'no connection is claimed that has not happened');
+
+    // Garbage in the cache is ignored rather than trusted.
+    localStorage.setItem(MAINTENANCE_CACHE_KEY, '{');
+    Object.assign(state.maintenance, original, { enabled: false, status: 'none', reason: '' });
+    applyMaintenanceCache();
+    setHash('#/home');
+    assert.ok($('.app-shell'), 'an unreadable cache is no status at all');
+  } finally {
+    for (const key of [MAINTENANCE_CACHE_KEY, MAINTENANCE_PASS_KEY, MAINTENANCE_ATTEMPTS_KEY]) localStorage.removeItem(key);
+    Object.assign(state.maintenance, original);
+    setHash('#/home');
+  }
 });

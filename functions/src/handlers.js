@@ -35,6 +35,7 @@ import {
 } from '../vendor/shared/online/room.js';
 import { MAX_STATE_BYTES, jsonBytes, roomCode } from '../vendor/shared/online/view.js';
 import {
+  CHAT_MESSAGE_MAX,
   DISPLAY_NAME_MAX,
   REPORT_MESSAGE_MAX,
   safeDisplayName,
@@ -77,21 +78,6 @@ export class PolicyError extends Error {
 // drift apart. Re-exported here because the tests and `cleanup.js` read them from this module.
 export { RECENT_AUTH_WINDOW_MS, REPORT_MAX_AGE_MS } from '../vendor/shared/online/retention.js';
 
-/** Maintenance mode: what the admin may put in front of the arcade, and how testers get in. */
-export const MAINTENANCE_MESSAGE_MAX = 280;
-/** The tester PIN is exactly this many decimal digits (generated server-side, never shipped to a client). */
-export const MAINTENANCE_PIN_LENGTH = 16;
-/** A PIN-verified tester stays in until the maintenance window ends, with a hard 24h ceiling. */
-export const MAINTENANCE_BYPASS_TTL_MS = 24 * 60 * 60 * 1000;
-
-/** Constant-time string compare for the tester PIN (equal lengths, XOR-accumulated: no early exit). */
-function constantTimeEquals(a, b) {
-  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i += 1) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
-}
-
 /**
  * @typedef {{
  *   store: import('./store.js').Store,
@@ -99,7 +85,6 @@ function constantTimeEquals(a, b) {
  *   engines: { createInitialGameState: Function, applyGameAction: Function },
  *   onlineBankFor: (gameId: string) => Array<Record<string, any>>,
  *   randomId: (length?: number) => string,
- *   randomDigits: (length: number) => string,
  *   timestampMs: number,
  *   deleteAuthUser?: (uid: string) => Promise<void>,
  * }} BackendDeps
@@ -115,7 +100,7 @@ function findGame(games, gameId) {
  * @param {BackendDeps} deps
  */
 export function createHandlers(deps) {
-  const { store, games, engines, randomId, randomDigits } = deps;
+  const { store, games, engines, randomId } = deps;
 
   /** A registry that keeps the engines module's API shape for the shared room transitions. */
   const engineRegistry = {
@@ -185,6 +170,31 @@ export function createHandlers(deps) {
     const snapshot = await store.get(paths.secret(roomId));
     if (!snapshot.exists) return null;
     return snapshot.data;
+  }
+
+  /**
+   * Permanently delete every chat message in this room.
+   *
+   * Chat is ephemeral by design: it is deleted as soon as the match ends so nothing lingers in
+   * Firestore after the game. The room's overall 1-hour TTL is a secondary safety net (every chat
+   * message lives under `rooms/{id}/chat/`, and `recursiveDelete(rooms/{id})` in the cleanup will
+   * sweep anything that somehow survived).
+   * @param {string} roomId
+   * @param {number} [limit]
+   */
+  async function purgeRoomChat(roomId, limit = 200) {
+    // Batched delete so even a long-running match cannot leave a chat subcollection behind.
+    // Firestore batch writes are capped at 500 operations; we loop a bounded number of times.
+    let removed = 0;
+    for (let page = 0; page < 5; page += 1) {
+      const messages = await store.query(paths.chatCollection(roomId), { limit });
+      if (!messages.length) break;
+      const ops = messages.map((message) => ({ type: 'delete', path: paths.chatMessage(roomId, message.id) }));
+      for (let index = 0; index < ops.length; index += 400) await store.batch(ops.slice(index, index + 400));
+      removed += messages.length;
+      if (messages.length < limit) break;
+    }
+    return removed;
   }
 
   /**
@@ -633,6 +643,12 @@ export function createHandlers(deps) {
     }
     result.room.id = roomId;
     await persistRoom(result.room, result.secret);
+    // Chat is ephemeral: the moment a match ends, every message is permanently deleted from
+    // Firestore. The 1-hour room TTL is just a fallback — nothing from an ended game is left to
+    // sweep.
+    if (result.room.status === 'finished') {
+      await purgeRoomChat(roomId);
+    }
     return {
       ...(await roomPayload({ id: roomId, ...result.room }, uid)),
       applied: true,
@@ -659,7 +675,52 @@ export function createHandlers(deps) {
     });
     rematched.room.id = roomId;
     await persistRoom(rematched.room, rematched.secret);
+    // Wipe the previous match's chat so the new game starts with a clean slate.
+    await purgeRoomChat(roomId);
     return roomPayload({ id: roomId, ...rematched.room }, uid);
+  }
+
+  /**
+   * Send one chat message to the room. Chat is ephemeral by design:
+   *   * only members of the room may send (server-checked),
+   *   * messages are short (≤ CHAT_MESSAGE_MAX chars) and stripped of control characters,
+   *   * a per-minute rate limit defeats spam,
+   *   * every message is deleted the moment the match ends or a rematch starts,
+   *   * any straggler is removed by the 1-hour room TTL (chat lives under rooms/{id}/chat/ so
+   *     `recursiveDelete(rooms/{id})` sweeps it too).
+   * @param {Record<string, any>} payload @param {any} context
+   */
+  async function sendChat(payload, context) {
+    const uid = requireUser(context.uid);
+    const roomId = text(payload, 'roomId');
+    await spendRateLimit(uid, 'sendChat');
+    const room = await loadRoom(roomId, deps.timestampMs);
+    if (!room.playerUids.includes(uid)) throw new RoomError('not-in-room', 'You are not in this room.');
+    // Chat is a live-match feature. Once the game is over the panel is gone, and the stored
+    // messages are deleted by `playMove` / `rematch` above. Refusing late posts keeps finished
+    // rooms from accumulating ghost messages.
+    if (room.status !== 'playing') throw new PolicyError('chat-not-live', 'Chat is only available while a match is in progress.');
+    // If either side has blocked the other, no message crosses.
+    for (const other of room.playerUids) {
+      if (other === uid) continue;
+      await assertNotBlocked(uid, other);
+    }
+    const profile = await store.get(paths.profile(uid));
+    const senderName = safeDisplayName(
+      room.playerNames?.[uid] || (profile.exists ? profile.data.username : '') || 'Player',
+      'Player',
+    );
+    const text_ = safeMessage(payload?.text, CHAT_MESSAGE_MAX);
+    if (text_.length < 1) throw new PolicyError('chat-empty', 'Type a message first.');
+    const messageId = deps.randomId(20);
+    const createdAtMs = deps.timestampMs;
+    await store.set(paths.chatMessage(roomId, messageId), {
+      uid,
+      name: senderName,
+      text: text_,
+      createdAtMs,
+    });
+    return { messageId, createdAtMs };
   }
 
   /**
@@ -995,103 +1056,6 @@ export function createHandlers(deps) {
     return { removed: targetUid, hadProfile: profile.exists };
   }
 
-  /**
-   * Every pass issued in an earlier moment is a pass into this one only while it matches what
-   * the operator just saved: maintenance saves (on or off) therefore clear the bypass tokens,
-   * and a tester who was previewing re-enters with the current PIN.
-   * @returns {Promise<void>}
-   */
-  async function clearMaintenanceBypasses() {
-    const tokens = await store.query('maintenance/status/bypasses', { limit: 1000 });
-    if (tokens.length) await store.batch(tokens.map((record) => ({ type: 'delete', path: paths.maintenanceBypass(record.id) })));
-  }
-
-  /**
-   * Toggle maintenance mode and edit the visitor message. Admin-only.
-   *
-   * A maintenance WINDOW (disabled -> enabled) always gets a FRESH 16-digit tester PIN, stored
-   * in `maintenance/secrets/status` - a document no client can read. Re-saving inside the same
-   * window (editing the message, or re-showing the PIN) keeps the active PIN. The public
-   * `maintenance/status` document gets only the safe fields, so a signed-out visitor can read
-   * "closed + message" without ever learning the PIN. The current PIN is returned to this one
-   * admin caller so it can be shared out-of-band with testers; it is never logged and never
-   * stored anywhere a client can reach.
-   * @param {Record<string, any>} payload @param {any} context
-   */
-  async function adminSetMaintenance(payload, context) {
-    const adminUid = await requireAdmin(context);
-    const enabled = payload?.enabled;
-    if (enabled !== true && enabled !== false) {
-      throw new PolicyError('invalid-maintenance', 'Maintenance mode must be turned on or off, nothing else.');
-    }
-    const message = safeMessage(payload?.message, MAINTENANCE_MESSAGE_MAX);
-    let pin = '';
-    if (enabled) {
-      const secret = await store.get(paths.maintenanceSecret());
-      pin = secret.exists && typeof secret.data.pin === 'string' && secret.data.pin
-        ? secret.data.pin
-        : randomDigits(MAINTENANCE_PIN_LENGTH);
-    }
-    const ops = [{
-      type: 'set',
-      path: paths.maintenanceStatus(),
-      data: { enabled, message, updatedAtMs: deps.timestampMs, updatedBy: adminUid },
-    }];
-    if (enabled) {
-      ops.push({ type: 'set', path: paths.maintenanceSecret(), data: { pin, updatedAtMs: deps.timestampMs } });
-    } else {
-      // The secret goes with the window: an old PIN must never open a later one.
-      ops.push({ type: 'delete', path: paths.maintenanceSecret() });
-    }
-    await clearMaintenanceBypasses();
-    await store.batch(ops);
-    return { enabled, message, pin };
-  }
-
-  /**
-   * The maintenance screen's only door: a visitor (signed in or not) submits the 16-digit
-   * tester PIN. The comparison happens here, against the client-invisible secret, behind a tight
-   // per-person rate limit (signed-in: per UID, anonymous: per IP), so the PIN cannot be
-   * brute-forced. A correct PIN is exchanged for a short random bypass token that this same
-   * backend later re-checks - the PIN itself never has to travel again.
-   * @param {Record<string, any>} payload @param {any} context
-   */
-  async function verifyMaintenancePin(payload, context) {
-    const key = context.uid ? context.uid : `ip:${text(context, 'ip') || 'anonymous'}`;
-    await spendRateLimit(key, 'maintenancePin');
-    const status = await store.get(paths.maintenanceStatus());
-    if (!status.exists || status.data.enabled !== true) return { valid: false, reason: 'not-in-maintenance' };
-    const secret = await store.get(paths.maintenanceSecret());
-    const expected = secret.exists && typeof secret.data.pin === 'string' ? secret.data.pin : '';
-    const pin = text(payload, 'pin');
-    if (!expected || !constantTimeEquals(pin, expected)) return { valid: false, reason: 'wrong-pin' };
-    const token = randomId(32);
-    const expiresAtMs = deps.timestampMs + MAINTENANCE_BYPASS_TTL_MS;
-    await store.set(paths.maintenanceBypass(token), { createdAtMs: deps.timestampMs, expiresAtMs });
-    return { valid: true, token, expiresAtMs };
-  }
-
-  /**
-   * Re-check a stored bypass token server-side before the browser trusts it on a later load.
-   * The token is the credential: anyone may ask, but only a live, unexpired, still-in-maintenance
-   * pass answers true. Expired passes are pruned on the way out.
-   * @param {Record<string, any>} payload
-   */
-  async function checkMaintenanceBypass(payload) {
-    const token = text(payload, 'token');
-    if (!/^[A-Za-z0-9_-]{8,64}$/.test(token)) return { valid: false, reason: 'bad-token' };
-    const status = await store.get(paths.maintenanceStatus());
-    if (!status.exists || status.data.enabled !== true) return { valid: false, reason: 'not-in-maintenance' };
-    const record = await store.get(paths.maintenanceBypass(token));
-    if (!record.exists) return { valid: false, reason: 'unknown-token' };
-    const expiresAtMs = Number(record.data.expiresAtMs);
-    if (!Number.isFinite(expiresAtMs) || deps.timestampMs > expiresAtMs) {
-      await store.delete(paths.maintenanceBypass(token));
-      return { valid: false, reason: 'expired' };
-    }
-    return { valid: true, expiresAtMs };
-  }
-
   return {
     claimUsername,
     lookupUser,
@@ -1107,6 +1071,8 @@ export function createHandlers(deps) {
     claimHost,
     playMove,
     rematch,
+    sendChat,
+    purgeRoomChat,
     blockUser,
     unblockUser,
     reportProblem,
@@ -1116,9 +1082,6 @@ export function createHandlers(deps) {
     deleteAccount,
     adminRoomAction,
     adminRemovePlayer,
-    adminSetMaintenance,
-    verifyMaintenancePin,
-    checkMaintenanceBypass,
     // exported for the scheduled cleanup and the tests
     loadPresence,
     persistRoom,

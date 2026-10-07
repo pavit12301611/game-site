@@ -1,68 +1,113 @@
-/**
- * The real Firestore store adapter: its path guards must match Firestore's own model, or every
- * handler crashes the moment it talks to a real database instead of the in-memory fake.
- *
- * Firestore paths alternate collection/document: document references have an EVEN number of
- * segments ('profiles/uid', 'rooms/r1/secrets/engine') and collection paths an ODD one
- * ('admins', 'maintenance/status/bypasses'). These tests pin that down with a stub db so a
- * flipped guard fails loudly here, not in production.
- */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createFirestoreStore, paths } from '../src/store.js';
 
-/** A stub Firestore that records every reference it is asked for instead of hitting the network. */
-function stubDb() {
-  const docs = [];
-  const collections = [];
-  const docRef = () => ({
-    async get() { return { exists: false, id: '', data: () => ({}) }; },
-    set() { return Promise.resolve(); },
-    update() { return Promise.resolve(); },
-    delete() { return Promise.resolve(); },
-  });
-  const collectionRef = {
-    where() { return collectionRef; },
-    orderBy() { return collectionRef; },
-    limit() { return collectionRef; },
-    async get() { return { docs: [] }; },
+function firestoreDouble() {
+  const calls = {
+    documents: [],
+    collections: [],
+    filters: [],
+    orderings: [],
+    limits: [],
+    transactionReads: [],
+    writes: [],
+    batchDeletes: [],
   };
-  return {
-    docs,
-    collections,
-    db: {
-      doc: (path) => { docs.push(path); return docRef(); },
-      collection: (path) => { collections.push(path); return collectionRef; },
-      batch: () => ({ set() {}, update() {}, delete() {}, commit: () => Promise.resolve() }),
+  const db = {
+    doc(path) {
+      calls.documents.push(path);
+      return {
+        path,
+        async get() {
+          return { exists: false, id: path.split('/').at(-1), data: () => undefined };
+        },
+        async set(data) {
+          calls.writes.push([path, data]);
+        },
+      };
+    },
+    collection(path) {
+      calls.collections.push(path);
+      const query = {
+        where(...args) {
+          calls.filters.push(args);
+          return query;
+        },
+        orderBy(...args) {
+          calls.orderings.push(args);
+          return query;
+        },
+        limit(count) {
+          calls.limits.push(count);
+          return query;
+        },
+        async get() {
+          return { docs: [] };
+        },
+      };
+      return query;
+    },
+    async runTransaction(work) {
+      return work({
+        async get(reference) {
+          calls.transactionReads.push(reference.path);
+          return reference.get();
+        },
+      });
+    },
+    batch() {
+      return {
+        delete(reference) {
+          calls.batchDeletes.push(reference.path);
+        },
+        async commit() {},
+      };
     },
   };
+  return { db, calls };
 }
 
-test('document paths must have an even number of segments, collection paths an odd one', async () => {
-  const { db, docs, collections } = stubDb();
+test('Firestore store accepts valid document and collection paths across room and chat operations', async () => {
+  const { db, calls } = firestoreDouble();
   const store = createFirestoreStore(db);
-  await store.get('profiles/uid1');
-  await store.set('rooms/r1/secrets/engine', {});
-  await store.query('admins');
-  await store.query('maintenance/status/bypasses');
-  assert.deepEqual(docs, ['profiles/uid1', 'rooms/r1/secrets/engine']);
-  assert.deepEqual(collections, ['admins', 'maintenance/status/bypasses']);
-  await assert.rejects(() => store.get('admins'), /not a document path/, 'a bare collection is not a document');
-  await assert.rejects(() => store.query('profiles/uid1'), /not a collection path/, 'a document path is not a collection');
+  const chatMessagePath = paths.chatMessage('room-1', 'message-1');
+
+  await store.get(paths.room('room-1'));
+  await store.get(paths.secret('room-1'));
+  await store.transaction((tx) => tx.get(paths.rateLimit('player-1')));
+  await store.set(chatMessagePath, { text: 'hello' });
+  await store.batch([{ type: 'delete', path: chatMessagePath }]);
+  await store.query('rooms', { limit: 3 });
+  await store.query('rooms/room-1/presence', { limit: 5 });
+  await store.query(paths.chatCollection('room-1'), {
+    where: [['uid', '==', 'player-1']],
+    orderBy: ['createdAtMs', 'asc'],
+    limit: 100,
+  });
+
+  assert.deepEqual(calls.documents, [
+    'rooms/room-1',
+    'rooms/room-1/secrets/engine',
+    'rateLimits/player-1',
+    chatMessagePath,
+    chatMessagePath,
+  ]);
+  assert.deepEqual(calls.transactionReads, ['rateLimits/player-1']);
+  assert.deepEqual(calls.writes.map(([path]) => path), [chatMessagePath]);
+  assert.deepEqual(calls.batchDeletes, [chatMessagePath]);
+  assert.deepEqual(calls.collections, ['rooms', 'rooms/room-1/presence', 'rooms/room-1/chat']);
+  assert.deepEqual(calls.filters, [['uid', '==', 'player-1']]);
+  assert.deepEqual(calls.orderings, [['createdAtMs', 'asc']]);
+  assert.deepEqual(calls.limits, [3, 5, 100]);
 });
 
-test('every maintenance path the handlers use is a legal Firestore reference', async () => {
-  const { db, docs, collections } = stubDb();
+test('Firestore store rejects collection paths as documents and document paths as collections', async () => {
+  const { db, calls } = firestoreDouble();
   const store = createFirestoreStore(db);
-  await store.get(paths.maintenanceStatus());
-  await store.get(paths.maintenanceSecret());
-  await store.set(paths.maintenanceBypass('tok123'), {});
-  await store.query('maintenance/status/bypasses');
-  assert.deepEqual(docs, [
-    'maintenance/status',
-    'maintenance/status/secrets/pin',
-    'maintenance/status/bypasses/tok123',
-  ], 'status, the PIN secret and a bypass token are all resolvable document references');
-  assert.deepEqual(collections, ['maintenance/status/bypasses'], 'and the pass list is a legal collection path');
+
+  await assert.rejects(store.get('rooms'), /not a document path/);
+  await assert.rejects(store.query(paths.room('room-1'), { limit: 1 }), /not a collection path/);
+  assert.deepEqual(calls.documents, []);
+  assert.deepEqual(calls.collections, []);
 });

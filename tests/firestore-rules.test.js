@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import * as maintenance from '../shared/online/maintenance.js';
 
 // These are structural guards for firestore.rules. They do NOT evaluate the rules: that is what
 // tests/rules-emulator.test.js does against the Firestore emulator (`npm run test:rules`, needs Java).
@@ -304,46 +305,65 @@ test('presence: heartbeats live with the room, are written only by their owner a
   assert.ok(matchBlock('presence').indexOf('function roomData') < matchBlock('presence').indexOf('allow'), 'one named lookup, so every rule reads the same room document');
 });
 
-// ── Maintenance mode ──────────────────────────────────────────────────────────────────────────
+test('maintenance mode: the notice is public, the code is not, and the field lists cannot drift', () => {
+  // `shared/online/maintenance.js` is what the browser builds its writes from, and this is what keeps
+  // it honest: a field the rules do not type-check, or one the rules require that the builder stopped
+  // sending, is a silently broken "close the site" button.
+  const {
+    MAINTENANCE_STATUS_FIELDS: statusFields,
+    MAINTENANCE_ACCESS_FIELDS: accessFields,
+    MAINTENANCE_STATUS_COLLECTION: statusCollection,
+    MAINTENANCE_ACCESS_COLLECTION: accessCollection,
+    MAINTENANCE_STATUS_DOCUMENT: statusDocument,
+    MAINTENANCE_ACCESS_DOCUMENT: accessDocument,
+  } = maintenance;
 
-/** The text of one top-level `match /name {` block, without its named path (see `matchBlock`). */
-function staticMatchBlock(literal) {
-  const start = code.indexOf(literal);
-  assert.notEqual(start, -1, `firestore.rules has no "${literal}" block`);
-  // The block's opening brace is preceded by a space; a wildcard's `{name}` is preceded by '/'.
-  const open = code.indexOf(' {', start) + 1;
-  let depth = 0;
-  for (let i = open; i < code.length; i += 1) {
-    const char = code[i];
-    if (char === '{') depth += 1;
-    else if (char === '}') { depth -= 1; if (depth === 0) return code.slice(open + 1, i); }
-  }
-  throw new Error(`Unbalanced braces inside "${literal}"`);
-}
-
-test('maintenance: only the safe status is public, nothing else is client-reachable', () => {
-  // Default deny for any document directly under the maintenance collection.
-  const generic = allowStatements(staticMatchBlock('match /maintenance/{document}'));
-  assert.ok(generic.length > 0, 'maintenance/ has a default-deny block');
-  for (const { condition } of generic) {
-    assert.equal(condition, 'false', 'nothing else directly under maintenance/ is readable or writable by a client');
+  for (const name of [statusCollection, accessCollection]) {
+    assert.ok(code.includes(`match /${name}/{`), `${name} must be described in firestore.rules`);
   }
 
-  const statusBlock = staticMatchBlock('match /maintenance/status {');
-  // The PIN and the tester passes live in sub-collections of the status document (the same
-  // shape rooms use for their secrets and presence), and both stay closed to every client.
-  assert.ok(statusBlock.includes('match /secrets/{document}'), 'the PIN lives in a secrets sub-collection of the status document');
-  assert.ok(statusBlock.includes('match /bypasses/{token}'), 'tester passes live in a bypasses sub-collection of the status document');
-  assert.doesNotMatch(statusBlock, /pin/i, 'the rules never name the PIN field');
+  const status = ownStatements(statusCollection);
+  assert.equal(status.find(({ methods }) => methods.includes('get')).condition, 'true', 'a locked-out visitor has to be able to read the notice with no account at all');
+  assert.equal(status.find(({ methods }) => methods.includes('list')).condition, 'false', 'but the collection cannot be enumerated');
+  const statusWrite = status.find(({ methods }) => methods.includes('create') && methods.includes('update'));
+  assert.match(statusWrite.condition, /^isAdmin\(\)/, 'only a verified admin closes the site');
+  assert.equal(statusWrite.condition.includes(`document == '${statusDocument}'`), true, 'one document, with one id');
+  assert.match(statusWrite.condition, /reason\.size\(\) <= 500/, 'the notice cannot be a wall of text');
+  assert.match(statusWrite.condition, /updatedByUid == request\.auth\.uid/, 'nobody signs a notice as somebody else');
+  assert.equal(status.find(({ methods }) => methods.includes('delete')).condition, 'false', 'ending maintenance is a flag, not a delete: the read path must never see a missing document');
+  assertFields(statusWrite, statusFields);
 
-  const statements = allowStatements(statusBlock);
-  const get = statements.find(({ methods }) => methods.length === 1 && methods[0] === 'get');
-  assert.equal(get?.condition, 'true', 'a signed-out visitor reads only the safe status');
-  const list = statements.find(({ methods }) => methods.includes('list'));
-  assert.equal(list?.condition, 'false', 'the collection itself is not listable');
-  const writes = statements.filter(({ methods }) => methods.some((method) => ['create', 'update', 'delete', 'write'].includes(method)));
-  assert.ok(writes.length > 0, 'the status document must say who is refused, not stay silent');
-  for (const { methods, condition } of writes) {
-    assert.equal(condition, 'false', `${methods.join(', ')} on the status and its secrets/bypasses sub-collections must be denied: the adminSetMaintenance, verifyMaintenancePin and checkMaintenanceBypass callables are the only writers`);
-  }
+  const access = ownStatements(accessCollection);
+  const accessRead = access.find(({ methods }) => methods.includes('get'));
+  assert.match(accessRead.condition, /^isAdmin\(\)/, 'the code cannot be read by the person being asked for it');
+  assert.equal(accessRead.condition.includes(`document == '${accessDocument}'`), true);
+  assert.equal(access.find(({ methods }) => methods.includes('list')).condition, 'false', 'and it cannot be listed either');
+  const accessWrite = access.find(({ methods }) => methods.includes('create') && methods.includes('update'));
+  assert.match(accessWrite.condition, /^isAdmin\(\)/, 'only the admin studio mints a code');
+  assert.match(accessWrite.condition, /pin\.matches\('\^\[0-9\]\{16\}\$'\)/, 'exactly sixteen digits, or the write is refused');
+  assert.match(accessWrite.condition, /hours >= 1/, 'a code has to expire');
+  assert.match(accessWrite.condition, /hours <= 720/, 'and a month is the longest window it can ask for');
+  assert.match(accessWrite.condition, /updatedByUid == request\.auth\.uid/);
+  assertFields(accessWrite, accessFields);
 });
+
+/** Every field the shared builder writes is type-checked here, and the two lists are one list. */
+function assertFields(statement, fields) {
+  for (const field of fields) {
+    const pattern = field === 'updatedByUid'
+      ? new RegExp(`request\\.resource\\.data\\.${field} == request\\.auth\\.uid`)
+      : new RegExp(`request\\.resource\\.data\\.${field} is (?:bool|string|int)`);
+    assert.match(statement.condition, pattern, `${field} must be type-checked or pinned in the rules`);
+  }
+  for (const check of ['hasOnly', 'hasAll']) {
+    const at = statement.condition.indexOf(`${check}(['`);
+    assert.notEqual(at, -1, `the rules must state exactly which fields ${check} covers`);
+    const end = statement.condition.indexOf("])", at);
+    const names = statement.condition.slice(at, end).match(/'([^']+)'/g).map((quoted) => quoted.slice(1, -1));
+    assert.deepEqual(
+      [...names].sort(),
+      [...fields].sort(),
+      `${check} and the shared field list must name the same fields, or a write is refused (hasOnly) or a document arrives incomplete (hasAll)`,
+    );
+  }
+}

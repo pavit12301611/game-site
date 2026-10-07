@@ -55,9 +55,8 @@ export function createFirestoreStore(db, { now = () => Date.now(), toTimestamp }
     return { ...data, expiresAtDate: toTimestamp(expiresAt) };
   };
   const documentPath = (path) => path.split('/');
-  // Firestore paths alternate collection/document: a document reference has an EVEN number of
-  // segments ('profiles/uid', 'rooms/r1/secrets/engine') and a collection path an ODD one
-  // ('admins', 'maintenance/status/bypasses').
+  // Firestore paths start with a collection: documents have an even number of segments, while
+  // collections (including nested ones such as rooms/{id}/chat) have an odd number.
   const refOf = (path) => {
     const parts = documentPath(path);
     if (parts.length % 2 !== 0) throw new Error(`"${path}" is not a document path (it has ${parts.length} segments)`);
@@ -132,6 +131,8 @@ export const paths = Object.freeze({
   secret: (roomId) => `rooms/${roomId}/secrets/engine`,
   view: (roomId, uid) => `rooms/${roomId}/views/${uid}`,
   presence: (roomId, uid) => `rooms/${roomId}/presence/${uid}`,
+  chatMessage: (roomId, messageId) => `rooms/${roomId}/chat/${messageId}`,
+  chatCollection: (roomId) => `rooms/${roomId}/chat`,
   friendRequest: (requestId) => `friendRequests/${requestId}`,
   friendship: (a, b) => `friendships/${[a, b].sort().join('_')}`,
   gameInvite: (inviteId) => `gameInvites/${inviteId}`,
@@ -142,12 +143,6 @@ export const paths = Object.freeze({
   reviewOwner: (reviewId) => `reviewOwners/${reviewId}`,
   reviewAnnotation: (reviewId) => `reviewAnnotations/${reviewId}`,
   reviewAgentModel: (modelId = 'active') => `reviewAgentModels/${modelId}`,
-  // Maintenance mode: a public status document (safe fields only), plus - as sub-collections of
-  // that document, the way rooms keep theirs - the client-invisible secret holding the tester
-  // PIN and the server-checked bypass tokens for PIN-verified testers.
-  maintenanceStatus: () => 'maintenance/status',
-  maintenanceSecret: () => 'maintenance/status/secrets/pin',
-  maintenanceBypass: (token) => `maintenance/status/bypasses/${token}`,
 });
 
 /** @param {Record<string, any>} payload @param {string} key @returns {string} */

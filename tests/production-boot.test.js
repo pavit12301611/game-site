@@ -43,8 +43,17 @@ let dom;
 let appRoot;
 /** console.error output, uncaught exceptions and unhandled rejections seen while the bundle booted. */
 const problems = [];
+/**
+ * Firestore's own "I cannot reach the backend, going offline" notice, kept apart from `problems`.
+ * It is the one expected consequence of reading the maintenance status document (the only network
+ * call a first visit makes, and it happens after the paint) in a sandbox that refuses every fetch.
+ * Matching it narrowly is the point: a real start-up error must still land in `problems`.
+ */
+const connectivityNotices = [];
 /** Every URL the bundle tried to fetch while booting. The first paint must need none. */
 const networkCalls = [];
+/** How many of those had happened by the time the shell was in the DOM. Filled in by the wait below. */
+let callsBeforeFirstPaint = null;
 
 /** @param {() => unknown} condition @param {number} timeoutMs */
 async function waitFor(condition, timeoutMs) {
@@ -92,7 +101,11 @@ before(async () => {
   appRoot = window.document.querySelector('#app');
 
   const originalError = console.error;
-  console.error = (...args) => { problems.push(`console.error: ${args.map(String).join(' ')}`); };
+  console.error = (...args) => {
+    const line = args.map(String).join(' ');
+    if (/Could not reach Cloud Firestore backend|operate in offline mode/.test(line)) connectivityNotices.push(line);
+    else problems.push(`console.error: ${line}`);
+  };
   // No network in this test: anything the bundle fetches is recorded and refused, like a captive
   // portal would. Firebase must cope with that, and the first paint must not depend on it.
   const originalFetch = globalThis.fetch;
@@ -110,7 +123,11 @@ before(async () => {
   import(pathToFileURL(path.join(outDir, entry)).href).catch((error) => {
     problems.push(`import failed: ${error?.stack || error}`);
   });
-  await waitFor(() => appRoot.querySelector('.app-shell') || problems.length, 15_000);
+  await waitFor(() => {
+    const painted = Boolean(appRoot.querySelector('.app-shell'));
+    if (painted && callsBeforeFirstPaint === null) callsBeforeFirstPaint = networkCalls.length;
+    return painted || problems.length;
+  }, 15_000);
   // Let late failures (an async callback that throws after the paint) land before judging.
   await new Promise((resolve) => setTimeout(resolve, 300));
 
@@ -143,5 +160,23 @@ test('it really ran the Firebase branch: the bundle reports online rooms, not lo
 test('the first paint needs no network: nothing was fetched while booting', () => {
   // A player on a slow or captive connection still gets the shell; Firebase talks to its backend
   // only once someone signs in or opens a room.
-  assert.deepEqual(networkCalls, []);
+  assert.notEqual(callsBeforeFirstPaint, null, 'the wait loop recorded the paint');
+  assert.deepEqual(networkCalls.slice(0, callsBeforeFirstPaint), []);
+});
+
+test('the only thing the SDK complained about is the refused fetch, not about the app', () => {
+  assert.ok(connectivityNotices.length <= 2, 'the offline notice is bounded, not a retry storm');
+  for (const notice of connectivityNotices) {
+    assert.match(notice, /Could not reach Cloud Firestore backend|operate in offline mode/, notice.slice(0, 120));
+  }
+});
+
+test('the one read the app does make - the maintenance status - happens after the paint', async () => {
+  // The site-wide maintenance switch has to be checked on every load (docs/maintenance-mode.md), and
+  // it has to be checked *after* the page is already drawn: a locked-out visitor paints the notice
+  // from the cache and this read confirms it. A refused fetch must be survivable, which is what the
+  // assertions above (no startup errors) prove while the read fails.
+  const fetched = await waitFor(() => networkCalls.some((url) => /firestore\.googleapis\.com/.test(url)), 4_000);
+  assert.ok(fetched, `the status document was read after the paint (saw: ${networkCalls.join(', ') || 'nothing'})`);
+  assert.ok(callsBeforeFirstPaint === 0, 'and not before it');
 });

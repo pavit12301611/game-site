@@ -57,11 +57,29 @@ import {
   adminKickPlayer,
   adminRemovePlayer,
   adminRevokeAccess,
-  adminSetMaintenance,
   loadAdminData,
 } from './online/admin.js';
-import { initializeMaintenance, verifyMaintenancePin } from './maintenance.js';
 import { loadFeaturedReview, loadPublicReviews, submitReview } from './reviews.js';
+import {
+  applyMaintenanceCache,
+  clearMaintenancePass,
+  disableMaintenance,
+  enableMaintenance,
+  loadMaintenanceAccess,
+  refreshMaintenance,
+  rotateMaintenancePin,
+  saveMaintenanceReason,
+  setMaintenancePreview,
+  startMaintenanceWatch,
+  submitMaintenancePin,
+} from './maintenance.js';
+import {
+  MAINTENANCE_PIN_DEFAULT_HOURS,
+  MAINTENANCE_PIN_DIGITS,
+  MAINTENANCE_REASON_MAX,
+  formatMaintenancePin,
+  normalizeMaintenancePin,
+} from '../shared/online/maintenance.js';
 import {
   claimHost,
   createOnlineRoom,
@@ -71,6 +89,7 @@ import {
   rematchRoom,
   startRoom,
 } from './online/rooms.js';
+import { sendChatMessage, toggleChatPanel } from './online/chat.js';
 import { showToast } from './ui/toast.js';
 import { setupError } from './connection.js';
 import {
@@ -226,41 +245,161 @@ async function handleReviewSubmit(form) {
   }
 }
 
-/**
- * The maintenance page's tester-PIN form. Digits only, 16 long; the server makes the call.
- * On success the app opens for this visitor (a bypass token is stored on the device); on
- * failure the page stays and the error is shown inline (the toast system is behind the gate).
- */
-async function handleMaintenancePinSubmit(form) {
-  const pin = String(new FormData(form).get('pin') || '').trim();
-  if (!/^[0-9]{16}$/.test(pin)) {
-    state.maintenanceError = 'The tester PIN is exactly 16 digits.';
-    render();
-    return;
-  }
-  try {
-    if (await verifyMaintenancePin(pin)) showToast('The doors are open - welcome back in.');
-  } catch (error) {
-    state.maintenanceError = friendlyError(error);
-    render();
-  }
-}
-
-/**
- * The admin studio's maintenance controls: one write through the `adminSetMaintenance`
- * callable, which validates the admin, caps the message and (when enabling) issues a fresh
- * 16-digit tester PIN that is shown here once and never stored on this device.
- */
-async function handleAdminMaintenanceSubmit(form) {
-  const formData = new FormData(form);
-  await adminSetMaintenance(formData.get('enabled') === 'on', String(formData.get('message') || '').trim());
-}
-
 async function handleAdminGrantSubmit(form) {
   /** Granting by raw UID goes through the same confirm gate as the player-row button. */
   const uidToPromote = String(new FormData(form).get('uid') || '').trim();
   if (!uidToPromote) throw new Error('Paste a user UID first.');
   openAdminConfirm('Grant admin access?', `UID ${uidToPromote} gets the full control room: every room, player, link and admin flag. Only promote someone you trust completely.`, 'Grant access', () => adminGrantAccess(uidToPromote));
+}
+
+/* ── maintenance mode ──────────────────────────────────────────────────────────────────────────
+ * The studio's three writes and the visitor's one form. Everything here is deliberately thin:
+ * `src/maintenance.js` owns the documents, and `firestore.rules` decides who may touch them.
+ */
+
+/** Copies a code for the operator, and (by default) says so. A clipboard failure still shows it. */
+function copyMaintenanceCode(pin, announce = true) {
+  const digits = normalizeMaintenancePin(pin);
+  if (!digits) {
+    showToast('There is no code to copy yet - generate one first.', 'warning');
+    return;
+  }
+  if (navigator.clipboard?.writeText) {
+    void navigator.clipboard.writeText(formatMaintenancePin(digits)).then(
+      () => { if (announce) showToast(`Access code copied: ${formatMaintenancePin(digits)}`, 'success'); },
+      () => showToast(`Copy it by hand: ${formatMaintenancePin(digits)}`, 'warning'),
+    );
+    return;
+  }
+  showToast(`Your browser blocks the clipboard, so copy it by hand: ${formatMaintenancePin(digits)}`, 'warning');
+}
+
+/** One studio write: success toasts, failure toasts the real reason, and the panel never hangs. */
+async function runMaintenanceWrite(task, successMessage) {
+  let result = null;
+  try {
+    result = await task();
+  } catch (error) {
+    showToast(friendlyError(error), 'warning');
+    render();
+    return null;
+  }
+  if (successMessage) showToast(successMessage, 'success');
+  render();
+  return result;
+}
+
+/** Saves whatever is in the reason box: live if the site is closed, queued for next time if not. */
+async function handleSaveMaintenanceReason(button) {
+  const form = /** @type {HTMLFormElement | null} */ (button?.closest?.('form') || null);
+  const area = /** @type {HTMLTextAreaElement | null} */ (form?.querySelector('[data-maintenance-reason]') || null);
+  const hoursSelect = /** @type {HTMLSelectElement | null} */ (form?.querySelector('#maintenance-hours') || null);
+  const reason = String(area?.value || '');
+  state.maintenance.draft = {
+    reason,
+    hours: Number(hoursSelect?.value) || Number(state.maintenance.draft?.hours) || MAINTENANCE_PIN_DEFAULT_HOURS,
+  };
+  if (!state.maintenance.enabled) {
+    render();
+    showToast('Saved. It will be the first thing visitors read the next time you close the site.', 'success');
+    return;
+  }
+  await runMaintenanceWrite(() => saveMaintenanceReason(reason), 'Reason updated - the notice changed for everyone watching it.');
+}
+
+/** "Close the site" (or, if it is already closed, update the reason) from the studio form. */
+async function handleAdminMaintenanceSubmit(form) {
+  // The fields are read directly rather than through `new FormData(form)`: the same values are
+  // already mirrored into `state.maintenance.draft` on every keystroke, and a textarea and a select
+  // are not worth a construct the browser hands you anyway.
+  const reasonField = /** @type {HTMLTextAreaElement | null} */ (form.querySelector('[data-maintenance-reason]'));
+  const hoursField = /** @type {HTMLSelectElement | null} */ (form.querySelector('#maintenance-hours'));
+  const reason = String(reasonField?.value ?? state.maintenance.draft?.reason ?? '');
+  const hours = Number(hoursField?.value) || Number(state.maintenance.draft?.hours) || MAINTENANCE_PIN_DEFAULT_HOURS;
+  if (state.maintenance.enabled) {
+    await handleSaveMaintenanceReason(form.querySelector('[data-maintenance-reason]'));
+    return;
+  }
+  const pin = await enableMaintenance({ reason, hours });
+  if (!pin) return;
+  state.maintenance.pinDraft = '';
+  showToast('Maintenance is on. Only admins can see the arcade now.', 'success');
+  copyMaintenanceCode(pin);
+}
+
+/** The 16-digit box on the notice: a right code unlocks this device, a wrong one explains the rest. */
+async function handleMaintenancePinSubmit(form) {
+  const field = /** @type {HTMLInputElement | null} */ (form.querySelector('[data-maintenance-pin]'));
+  const result = await submitMaintenancePin(String(field?.value ?? state.maintenance.pinDraft ?? ''));
+  state.maintenance.unlockMessage = result.message;
+  state.maintenance.unlockOk = result.ok;
+  if (result.ok) {
+    state.maintenance.pinDraft = '';
+    form.reset();
+  }
+  render();
+  if (result.ok) showToast(result.message, 'success');
+}
+
+/**
+ * Offers to read the code off the clipboard, for the phone where the operator texted it. Reading the
+ * clipboard is a permission the browser may refuse (and often does on a non-https origin), so the
+ * button is an offer with an escape hatch, never the only way in.
+ */
+async function readMaintenanceCodeIntoField() {
+  const clipboard = navigator.clipboard;
+  if (!clipboard?.readText) {
+    showToast('This browser will not hand the clipboard to a page - paste into the box yourself.', 'warning');
+    return;
+  }
+  let text = '';
+  try {
+    text = await clipboard.readText();
+  } catch {
+    showToast('The browser refused to share the clipboard. Long-press the box (or Ctrl+V) and paste.', 'warning');
+    return;
+  }
+  const digits = normalizeMaintenancePin(text);
+  if (!digits) {
+    showToast('No digits on the clipboard - copy the 16-digit code first.', 'warning');
+    return;
+  }
+  state.maintenance.pinDraft = digits;
+  render();
+  /** @type {HTMLInputElement | null} */ (document.getElementById('maintenance-pin-input'))?.focus();
+  showToast(digits.length === MAINTENANCE_PIN_DIGITS ? 'Code ready. Press Unlock.' : `${digits.length} digits found - a code is ${MAINTENANCE_PIN_DIGITS}.`, 'success');
+}
+
+/** Re-formats the code box as it is typed and keeps the digit tally honest without a repaint. */
+function handleMaintenancePinInput(field) {
+  const digits = normalizeMaintenancePin(field.value);
+  state.maintenance.pinDraft = digits;
+  const formatted = formatMaintenancePin(digits);
+  if (field.value !== formatted) {
+    field.value = formatted;
+    try {
+      field.setSelectionRange(formatted.length, formatted.length);
+    } catch {
+      // Some inputs (rare, but real, e.g. a numeric type) refuse selection; the value is already right.
+    }
+  }
+  const tally = /** @type {HTMLElement | null} */ (document.getElementById('maintenance-pin-tally'));
+  if (tally) tally.textContent = `${digits.length} of ${MAINTENANCE_PIN_DIGITS} digits typed`;
+  const submit = /** @type {HTMLButtonElement | null} */ (document.querySelector('[data-maintenance-submit]'));
+  if (submit) submit.disabled = digits.length !== MAINTENANCE_PIN_DIGITS || state.maintenance.checking;
+}
+
+/** The reason box: only the counter moves, so typing never loses the caret or the scroll position. */
+function handleMaintenanceReasonInput(area) {
+  state.maintenance.draft = { ...state.maintenance.draft, reason: area.value };
+  const counter = /** @type {HTMLElement | null} */ (document.getElementById('maintenance-reason-count'));
+  if (counter) {
+    const left = MAINTENANCE_REASON_MAX - area.value.length;
+    counter.textContent = left >= 0
+      ? `${area.value.length} / ${MAINTENANCE_REASON_MAX} characters · up to 6 lines · plain text`
+      : `${MAINTENANCE_REASON_MAX} characters is the limit - ${-left} to cut.`;
+    counter.style.color = left < 0 ? 'var(--bad)' : '';
+  }
 }
 
 async function handleAuthSubmit(form) {
@@ -394,6 +533,7 @@ function handleClick(event) {
       .catch((error) => showToast(friendlyError(error), 'warning'));
     return;
   }
+  if (action === 'toggle-chat') { toggleChatPanel(); return; }
   if (action === 'retry-room') { const route = parseHash(); state.roomError = ''; state.room = null; state.roomId = null; if (route.id) void openRoomFromLink(route.id); return; }
   if (action === 'leave-session') { routeBackToCatalog(); return; }
   if (action === 'play-again') { void resetCurrentGame(); return; }
@@ -450,6 +590,39 @@ function handleClick(event) {
     return;
   }
   if (action === 'refresh-admin') { void loadAdminData(); return; }
+  // ── maintenance mode (src/maintenance.js, docs/maintenance-mode.md) ───────────────────────────
+  if (action === 'maintenance-preview-on') { setMaintenancePreview(true); return; }
+  if (action === 'maintenance-preview-off') { setMaintenancePreview(false); return; }
+  if (action === 'maintenance-open-studio') { state.adminTab = 'maintenance'; navigate('admin'); return; }
+  if (action === 'maintenance-reload') { void refreshMaintenance().then(() => loadMaintenanceAccess()); return; }
+  if (action === 'maintenance-reveal-pin') { void loadMaintenanceAccess().then(() => render()); return; }
+  if (action === 'maintenance-copy-pin') { copyMaintenanceCode(adminArg(actionButton.dataset.pin)); return; }
+  if (action === 'maintenance-end-pass') {
+    clearMaintenancePass();
+    render();
+    showToast('Temporary access ended on this device. The notice is back, and so is the code box.');
+    return;
+  }
+  if (action === 'maintenance-paste') { void readMaintenanceCodeIntoField(); return; }
+  if (action === 'maintenance-save-reason') { void handleSaveMaintenanceReason(actionButton); return; }
+  if (action === 'maintenance-off') {
+    openAdminConfirm(
+      'Open the arcade again?',
+      'Visitors get the live site as soon as you do this: the notice disappears, the temporary code is destroyed, and any device using one is locked again on its next reload.',
+      'Open the site',
+      () => runMaintenanceWrite(() => disableMaintenance(), 'Maintenance is off. The arcade is open to everyone again.'),
+    );
+    return;
+  }
+  if (action === 'maintenance-rotate-pin') {
+    openAdminConfirm(
+      'Generate a new access code?',
+      'The current code stops working at once, so every device that used it is locked out until you send the new one. The maintenance window and its reason stay exactly as they are.',
+      'New code',
+      () => runMaintenanceWrite(() => rotateMaintenancePin({ hours: state.maintenance.draft?.hours }), 'New code ready. Copy it from the panel before you reload.').then((pin) => { if (pin) copyMaintenanceCode(pin, false); }),
+    );
+    return;
+  }
   if (action === 'load-more-reviews') { void loadPublicReviews({ reset: false }); return; }
   if (action === 'admin-label-review') {
     void adminLabelReview(adminArg(actionButton.dataset.reviewId), adminArg(actionButton.dataset.label));
@@ -559,6 +732,13 @@ function handleSubmit(event) {
   else if (type === 'join-code') task = handleJoinCodeSubmit(form);
   else if (type === 'report') task = handleReportSubmit(form);
   else if (type === 'review') task = handleReviewSubmit(form);
+  else if (type === 'chat') {
+    const input = /** @type {HTMLInputElement | null} */ (form.querySelector('input[name="text"]'));
+    const text = String(new FormData(form).get('text') || '');
+    task = sendChatMessage(text).then(() => {
+      if (input) input.value = '';
+    });
+  }
   Promise.resolve(task).catch((error) => {
     if (type === 'auth') reportAuthError(error, { method: 'password' });
     else showToast(friendlyError(error), 'warning');
@@ -567,6 +747,10 @@ function handleSubmit(event) {
 }
 
 function handleInput(event) {
+  const pinField = event.target.closest?.('[data-maintenance-pin]');
+  if (pinField) { handleMaintenancePinInput(/** @type {HTMLInputElement} */ (pinField)); return; }
+  const reasonArea = event.target.closest?.('[data-maintenance-reason]');
+  if (reasonArea) { handleMaintenanceReasonInput(/** @type {HTMLTextAreaElement} */ (reasonArea)); return; }
   if (event.target.id === 'global-search') {
     state.query = event.target.value;
     if (state.page === 'home') {
@@ -583,6 +767,15 @@ function handleInput(event) {
 
 /** The shelf filters: select changes repaint the grid and the count without a full re-render. */
 function handleFilterChange(event) {
+  // The studio's code-length select is the only live control outside the filters, and it is mirrored
+  // into the draft without a repaint: re-rendering a `<select>` on its own `change` throws the focus
+  // away from the keyboard user who just changed it.
+  const hoursSelect = event.target.closest?.('select[data-maintenance-hours]');
+  if (hoursSelect) {
+    const hours = Number(hoursSelect.value) || MAINTENANCE_PIN_DEFAULT_HOURS;
+    state.maintenance.draft = { ...state.maintenance.draft, hours };
+    return;
+  }
   const select = event.target.closest('select[data-filter]');
   if (!select) return;
   const key = select.dataset.filter;
@@ -683,17 +876,13 @@ const themeMedia = window.matchMedia?.('(prefers-color-scheme: light)');
 themeMedia?.addEventListener?.('change', () => {
   if (state.themePreference === 'system') applyTheme('system', true);
 });
+// Before the first frame: if this device saw the site closed a minute ago, paint the notice at once
+// instead of flashing the arcade. The live read then confirms or corrects it a beat later.
+applyMaintenanceCache();
 try {
   // The collaborators are resolved here, before the mode check, so a name that is not imported
   // fails in local practice mode (and in the jsdom tests) too - not only on a deployment.
-  // `initializeMaintenance` runs its cached part synchronously (a returning visitor mid-
-  // maintenance is gated before the first paint, with no network), then re-checks the flag in
-  // the background - the first paint must never wait on it, and it never rejects: a flag that
-  // cannot be read leaves the arcade open (fail open).
-  void initializeMaintenance().catch((error) => {
-    console.error('[PSD-gaming] The maintenance check failed; the arcade stays open:', error);
-  });
-  boot({
+  const started = boot({
     firebaseReady,
     routeFromHash,
     watchAuth: (onUser) => onAuthStateChanged(authInstance, onUser),
@@ -701,6 +890,10 @@ try {
     processGoogleRedirect,
     reportAuthError,
   });
+  // The maintenance listener starts *after* the first paint, on both paths: the first frame must
+  // never wait on the network (see tests/production-boot.test.js), and it must never be the only
+  // frame a player sees if start-up hit a problem.
+  void started.then(startMaintenanceWatch, startMaintenanceWatch);
 } catch (error) {
   // A start-up bug must never leave the page blank: draw the shell and keep the error readable.
   console.error('[PSD-gaming] Start-up failed; drawing the page anyway:', error);
