@@ -908,7 +908,7 @@ test('an admin enables maintenance and a fresh 16-digit PIN is kept server-side 
   assert.equal(status.message, 'Tuning the arcade - be right back.');
   assert.equal(status.updatedBy, 'uid-admin');
   assert.ok(!('pin' in status), 'the public status document never carries the PIN');
-  assert.equal(dump()['maintenance/secrets/status'].pin, result.pin, 'the PIN lives in the client-invisible secret');
+  assert.equal(dump()['maintenance/status/secrets/pin'].pin, result.pin, 'the PIN lives in the client-invisible secret');
 });
 
 test('a window keeps its PIN on re-save, and a new window always gets a fresh one', async () => {
@@ -921,7 +921,7 @@ test('a window keeps its PIN on re-save, and a new window always gets a fresh on
   const reopened = await handlers.adminSetMaintenance({ enabled: true, message: 'Closed again.' }, account('uid-admin'));
   assert.notEqual(reopened.pin, first.pin, 'every new maintenance window gets a fresh 16-digit PIN');
   assert.match(reopened.pin, /^[0-9]{16}$/);
-  assert.equal(dump()['maintenance/secrets/status'].pin, reopened.pin);
+  assert.equal(dump()['maintenance/status/secrets/pin'].pin, reopened.pin);
 });
 
 test('disabling maintenance removes the PIN and the public flag turns off', async () => {
@@ -932,7 +932,7 @@ test('disabling maintenance removes the PIN and the public flag turns off', asyn
   assert.equal(off.enabled, false);
   assert.equal(off.pin, '', 'no PIN is returned for an open arcade');
   assert.equal(dump()['maintenance/status'].enabled, false);
-  assert.equal(dump()['maintenance/secrets/status'], undefined, 'the secret document is deleted');
+  assert.equal(dump()['maintenance/status/secrets/pin'], undefined, 'the secret document is deleted');
 });
 
 test('the tester PIN opens the arcade through a server-checked bypass token', async () => {
@@ -946,7 +946,7 @@ test('the tester PIN opens the arcade through a server-checked bypass token', as
   const ok = await handlers.verifyMaintenancePin({ pin }, { uid: '', ip: '10.0.0.1' });
   assert.equal(ok.valid, true);
   assert.match(ok.token, /^[a-z0-9]{16,32}$/, 'the pass is an opaque random token (the fake randomId is shorter than production, but never looser)');
-  assert.equal(dump()[`maintenance/bypasses/${ok.token}`].expiresAtMs, NOW + MAINTENANCE_BYPASS_TTL_MS);
+  assert.equal(dump()[`maintenance/status/bypasses/${ok.token}`].expiresAtMs, NOW + MAINTENANCE_BYPASS_TTL_MS);
 
   const check = await handlers.checkMaintenanceBypass({ token: ok.token }, { uid: '' });
   assert.equal(check.valid, true, 'the stored token re-checks true on a later load');
@@ -974,7 +974,7 @@ test('bypass tokens die when the window ends or the clock runs them out', async 
   advance(MAINTENANCE_BYPASS_TTL_MS + 1);
   const expired = await handlers.checkMaintenanceBypass({ token: fresh.token }, { uid: '' });
   assert.equal(expired.valid, false, 'a pass has a hard 24h ceiling');
-  assert.equal(dump()[`maintenance/bypasses/${fresh.token}`], undefined, 'expired passes are pruned on the way out');
+  assert.equal(dump()[`maintenance/status/bypasses/${fresh.token}`], undefined, 'expired passes are pruned on the way out');
 });
 
 test('PIN entries are rate-limited so the 16-digit PIN cannot be brute-forced', async () => {

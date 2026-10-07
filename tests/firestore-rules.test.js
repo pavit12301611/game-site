@@ -321,28 +321,29 @@ function staticMatchBlock(literal) {
   throw new Error(`Unbalanced braces inside "${literal}"`);
 }
 
-test('maintenance: only the safe status is public, nothing under maintenance/ is client-writable', () => {
-  // Default deny: anything under maintenance/ that is not explicitly named (secrets/status with
-  // the 16-digit tester PIN, bypasses/{token} with a verified tester's pass) is closed to every
-  // client. The most-specific block below carves out the single public document.
+test('maintenance: only the safe status is public, nothing else is client-reachable', () => {
+  // Default deny for any document directly under the maintenance collection.
   const generic = allowStatements(staticMatchBlock('match /maintenance/{document}'));
   assert.ok(generic.length > 0, 'maintenance/ has a default-deny block');
   for (const { condition } of generic) {
-    assert.equal(condition, 'false', 'nothing else under maintenance/ is readable or writable by a client');
+    assert.equal(condition, 'false', 'nothing else directly under maintenance/ is readable or writable by a client');
   }
 
-  const statements = allowStatements(staticMatchBlock('match /maintenance/status {'));
+  const statusBlock = staticMatchBlock('match /maintenance/status {');
+  // The PIN and the tester passes live in sub-collections of the status document (the same
+  // shape rooms use for their secrets and presence), and both stay closed to every client.
+  assert.ok(statusBlock.includes('match /secrets/{document}'), 'the PIN lives in a secrets sub-collection of the status document');
+  assert.ok(statusBlock.includes('match /bypasses/{token}'), 'tester passes live in a bypasses sub-collection of the status document');
+  assert.doesNotMatch(statusBlock, /pin/i, 'the rules never name the PIN field');
+
+  const statements = allowStatements(statusBlock);
   const get = statements.find(({ methods }) => methods.length === 1 && methods[0] === 'get');
   assert.equal(get?.condition, 'true', 'a signed-out visitor reads only the safe status');
   const list = statements.find(({ methods }) => methods.includes('list'));
   assert.equal(list?.condition, 'false', 'the collection itself is not listable');
-  const writes = statements.filter(({ methods }) => methods.some((method) => ['create', 'update', 'delete'].includes(method)));
+  const writes = statements.filter(({ methods }) => methods.some((method) => ['create', 'update', 'delete', 'write'].includes(method)));
   assert.ok(writes.length > 0, 'the status document must say who is refused, not stay silent');
-  for (const { condition } of writes) {
-    assert.equal(condition, 'false', 'no client - admin included - writes maintenance documents: the adminSetMaintenance callable is the only writer');
+  for (const { methods, condition } of writes) {
+    assert.equal(condition, 'false', `${methods.join(', ')} on the status and its secrets/bypasses sub-collections must be denied: the adminSetMaintenance, verifyMaintenancePin and checkMaintenanceBypass callables are the only writers`);
   }
-
-  // The PIN never reaches the public document: the only world-readable statement under
-  // maintenance/ is the get on the safe status, and it carries no PIN field anywhere in rules.
-  assert.doesNotMatch(staticMatchBlock('match /maintenance/status {'), /pin/i, 'the public status rule never names the PIN');
 });

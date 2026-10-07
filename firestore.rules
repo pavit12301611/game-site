@@ -154,10 +154,8 @@ service cloud.firestore {
     }
 
     match /maintenance/{document} {
-      // Default deny for everything under maintenance/ that is not named below - including
-      // secrets/status (the 16-digit tester PIN) and bypasses/{token} (a verified tester's pass).
-      // No client may read or write either: the PIN is created by the adminSetMaintenance callable,
-      // compared inside verifyMaintenancePin, and a bypass token is checked in checkMaintenanceBypass.
+      // Default deny for any document directly under the maintenance collection. The only one
+      // that exists is `status`, which is carved out by the more specific block below.
       allow read, write: if false;
     }
 
@@ -170,6 +168,18 @@ service cloud.firestore {
       allow get: if true;
       allow list: if false;
       allow create, update, delete: if false;
+
+      match /secrets/{document} {
+        // The 16-digit tester PIN. No client may read or write it, admin included: it is created
+        // by the adminSetMaintenance callable and compared only inside verifyMaintenancePin.
+        allow read, write: if false;
+      }
+
+      match /bypasses/{token} {
+        // A PIN-verified tester's pass. Written by verifyMaintenancePin and checked in
+        // checkMaintenanceBypass; a forged token is just an unknown id, so clients stay out.
+        allow read, write: if false;
+      }
     }
 
     match /rooms/{roomId} {

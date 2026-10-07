@@ -1002,7 +1002,7 @@ export function createHandlers(deps) {
    * @returns {Promise<void>}
    */
   async function clearMaintenanceBypasses() {
-    const tokens = await store.query('maintenance/bypasses', { limit: 1000 });
+    const tokens = await store.query('maintenance/status/bypasses', { limit: 1000 });
     if (tokens.length) await store.batch(tokens.map((record) => ({ type: 'delete', path: paths.maintenanceBypass(record.id) })));
   }
 

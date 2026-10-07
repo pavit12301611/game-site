@@ -447,16 +447,16 @@ test('the maintenance status is world-readable and nothing else under maintenanc
   if (!ready(t)) return;
   await seed(async (db) => {
     await setDoc(doc(db, 'maintenance', 'status'), { enabled: true, message: 'Tuning the arcade.', updatedAtMs: 1, updatedBy: ALICE });
-    await setDoc(doc(db, 'maintenance', 'secrets', 'status'), { pin: '1234567890123456', updatedAtMs: 1 });
-    await setDoc(doc(db, 'maintenance', 'bypasses', 'tok1'), { createdAtMs: 1, expiresAtMs: 9_999_999_999_999 });
+    await setDoc(doc(db, 'maintenance', 'status', 'secrets', 'pin'), { pin: '1234567890123456', updatedAtMs: 1 });
+    await setDoc(doc(db, 'maintenance', 'status', 'bypasses', 'tok1'), { createdAtMs: 1, expiresAtMs: 9_999_999_999_999 });
   });
   const anon = testEnv.unauthenticatedContext().firestore();
   const status = await getDoc(doc(anon, 'maintenance', 'status'));
   assert.equal(status.data().enabled, true, 'a signed-out visitor reads the safe status');
   assert.equal(status.data().message, 'Tuning the arcade.');
   assert.ok(!('pin' in status.data()), 'the safe status carries no PIN field');
-  await ruts.assertFails(getDoc(doc(anon, 'maintenance', 'secrets', 'status')), 'the 16-digit tester PIN is never public');
-  await ruts.assertFails(getDoc(doc(anon, 'maintenance', 'bypasses', 'tok1')), 'nor is a verified tester pass');
+  await ruts.assertFails(getDoc(doc(anon, 'maintenance', 'status', 'secrets', 'pin')), 'the 16-digit tester PIN is never public');
+  await ruts.assertFails(getDoc(doc(anon, 'maintenance', 'status', 'bypasses', 'tok1')), 'nor is a verified tester pass');
   await ruts.assertFails(getDocs(collection(anon, 'maintenance')), 'and nobody lists the maintenance collection');
 });
 
@@ -470,8 +470,8 @@ test('non-admin users cannot write maintenance documents', async (t) => {
   await ruts.assertFails(updateDoc(doc(bob, 'maintenance', 'status'), { message: 'Forged by a player' }));
   await ruts.assertFails(setDoc(doc(bob, 'maintenance', 'status'), { enabled: true, message: 'hijack' }), 'nor overwrite the document');
   await ruts.assertFails(deleteDoc(doc(bob, 'maintenance', 'status')));
-  await ruts.assertFails(setDoc(doc(bob, 'maintenance', 'secrets', 'status'), { pin: '9999999999999999' }), 'nor touch the PIN secret');
-  await ruts.assertFails(setDoc(doc(bob, 'maintenance', 'bypasses', 'forged'), { createdAtMs: 1, expiresAtMs: 1 }), 'nor mint a tester pass');
+  await ruts.assertFails(setDoc(doc(bob, 'maintenance', 'status', 'secrets', 'pin'), { pin: '9999999999999999' }), 'nor touch the PIN secret');
+  await ruts.assertFails(setDoc(doc(bob, 'maintenance', 'status', 'bypasses', 'forged'), { createdAtMs: 1, expiresAtMs: 1 }), 'nor mint a tester pass');
   // An unauthenticated visitor is refused the same way.
   const anon = testEnv.unauthenticatedContext().firestore();
   await ruts.assertFails(updateDoc(doc(anon, 'maintenance', 'status'), { enabled: false }));
@@ -489,6 +489,6 @@ test('maintenance writes go through the backend even for a verified admin', asyn
   // ... but the actual write still has to be the adminSetMaintenance callable, which rotates the
   // PIN server-side. A direct client write could not, so the rules refuse it even for an admin.
   await ruts.assertFails(updateDoc(doc(carol, 'maintenance', 'status'), { enabled: false }), 'no direct admin write: PIN rotation would be skipped');
-  await ruts.assertFails(setDoc(doc(carol, 'maintenance', 'secrets', 'status'), { pin: '9999999999999999' }), 'the secret is backend-only, admin included');
-  await ruts.assertFails(setDoc(doc(carol, 'maintenance', 'bypasses', 'forged'), { createdAtMs: 1, expiresAtMs: 1 }));
+  await ruts.assertFails(setDoc(doc(carol, 'maintenance', 'status', 'secrets', 'pin'), { pin: '9999999999999999' }), 'the secret is backend-only, admin included');
+  await ruts.assertFails(setDoc(doc(carol, 'maintenance', 'status', 'bypasses', 'forged'), { createdAtMs: 1, expiresAtMs: 1 }));
 });
