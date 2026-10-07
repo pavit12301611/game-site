@@ -7,9 +7,11 @@
  * VITE_FIREBASE_* values - so `import.meta.env` is baked in and `firebaseReady` is true - and
  * loading that bundle in jsdom.
  *
- * Nothing touches the network: Firebase Auth answers `onAuthStateChanged` with "signed out" from
- * local persistence and `getRedirectResult` with "no redirect pending" from sessionStorage, which is
- * exactly the first-visit path on a deployment. Against the pre-fix src/app.js this test reports
+ * No request is ever allowed to complete: Firebase Auth answers `onAuthStateChanged` with "signed
+ * out" from local persistence and `getRedirectResult` with "no redirect pending" from
+ * sessionStorage, which is exactly the first-visit path on a deployment, and the one watch a first
+ * visit opens (maintenance mode's world-readable `site/status` document) is left hanging, as a
+ * stalled connection would. Against the pre-fix src/app.js this test reports
  * the two errors the Vercel console showed, word for word:
  *
  *   ReferenceError: processGoogleRedirect is not defined
@@ -43,8 +45,28 @@ let dom;
 let appRoot;
 /** console.error output, uncaught exceptions and unhandled rejections seen while the bundle booted. */
 const problems = [];
-/** Every URL the bundle tried to fetch while booting. The first paint must need none. */
+/**
+ * Every URL the bundle tried to fetch while booting. The first paint must wait for none of them, and
+ * the only endpoint a signed-out visit is allowed to touch is this project's own Firestore — the
+ * world-readable maintenance switch (`site/status`) that can close the arcade for everyone. Any
+ * other host (a CDN, a model download, a backend) means boot grew a dependency it must not have.
+ */
 const networkCalls = [];
+/** True for the Firestore WebChannel traffic of the fake project this bundle was built against. */
+function isOwnFirestore(url) {
+  return url.startsWith('https://firestore.googleapis.com/') && url.includes(encodeURIComponent('psd-gaming-boot-test'));
+}
+/**
+ * Every timer the bundle scheduled while it booted, so `after()` can clear them.
+ *
+ * Firestore's client is the reason this exists: it treats a connection that never answers as
+ * offline and retries on a backoff timer — forever. That client lives inside the built bundle, so
+ * there is no `terminate()` handle to call from out here, and an uncleared timer would keep the
+ * test process alive long after the results are in (CI then waits out its six-hour job timeout,
+ * which is exactly what happened before this test knew about the maintenance watch). Tracking the
+ * timers is the smallest honest way to hand the process back to the runner.
+ */
+const scheduledTimers = [];
 
 /** @param {() => unknown} condition @param {number} timeoutMs */
 async function waitFor(condition, timeoutMs) {
@@ -93,12 +115,27 @@ before(async () => {
 
   const originalError = console.error;
   console.error = (...args) => { problems.push(`console.error: ${args.map(String).join(' ')}`); };
-  // No network in this test: anything the bundle fetches is recorded and refused, like a captive
-  // portal would. Firebase must cope with that, and the first paint must not depend on it.
+  // No real network in this test: every fetch is recorded and then left hanging, which is what a
+  // captive portal or a stalled connection looks like. A rejected fetch would make Firestore's
+  // WebChannel retry harder and faster, but a request that simply never settles is a case the
+  // client waits out — and the first paint must not wait with it.
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (input) => {
     networkCalls.push(String(input instanceof Request ? input.url : input));
-    return Promise.reject(new TypeError('fetch failed (network disabled in production-boot.test.js)'));
+    return new Promise(() => {});
+  };
+  // The bundle's timers are recorded (see scheduledTimers) because Firestore's client is inside it.
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalSetInterval = globalThis.setInterval;
+  globalThis.setTimeout = (callback, delay, ...rest) => {
+    const id = originalSetTimeout(callback, delay, ...rest);
+    scheduledTimers.push(['timeout', id]);
+    return id;
+  };
+  globalThis.setInterval = (callback, delay, ...rest) => {
+    const id = originalSetInterval(callback, delay, ...rest);
+    scheduledTimers.push(['interval', id]);
+    return id;
   };
   const onUncaught = (error) => { problems.push(`uncaught: ${error?.stack || error}`); };
   const onUnhandled = (reason) => { problems.push(`unhandled rejection: ${reason?.stack || reason}`); };
@@ -116,16 +153,31 @@ before(async () => {
 
   console.error = originalError;
   globalThis.fetch = originalFetch;
+  // Restored before the tests run: only what the bundle scheduled is of interest here, and the
+  // runner's own timers must keep working normally.
+  globalThis.setTimeout = originalSetTimeout;
+  globalThis.setInterval = originalSetInterval;
   process.off('uncaughtException', onUncaught);
   process.off('unhandledRejection', onUnhandled);
 });
 
 after(() => {
+  // Hand the process back to the runner: without this, Firestore's offline retry loop keeps the
+  // event loop alive forever and the suite never finishes (see scheduledTimers).
+  for (const [kind, id] of scheduledTimers) {
+    if (kind === 'interval') clearInterval(id);
+    else clearTimeout(id);
+  }
+  scheduledTimers.length = 0;
   if (outDir) rmSync(outDir, { recursive: true, force: true });
 });
 
 test('the deployed bundle boots with Firebase configured and paints the shell', () => {
-  assert.deepEqual(problems, [], 'start-up produced errors');
+  // Firestore's own "the network is down" chatter is provoked on purpose here (the stalled
+  // connection above); what must not appear is a browser-side error, an uncaught exception or an
+  // unhandled rejection raised by the app's own code — the blank-page class of bug.
+  const appProblems = problems.filter((line) => !/Could not reach Cloud Firestore backend/.test(line));
+  assert.deepEqual(appProblems, [], 'start-up produced errors');
   assert.ok(appRoot.querySelector('.app-shell'), '#app contains the shell (the blank page is #app staying empty)');
   assert.ok(appRoot.querySelector('.sidebar .brand-lockup'), 'the sidebar brand is there');
   assert.ok(appRoot.querySelector('.hero-panel h1'), 'the landing page hero is there');
@@ -140,8 +192,11 @@ test('it really ran the Firebase branch: the bundle reports online rooms, not lo
   assert.ok(appRoot.querySelector('[data-action="open-auth"]'), 'a first visit is signed out, so Sign in is offered');
 });
 
-test('the first paint needs no network: nothing was fetched while booting', () => {
-  // A player on a slow or captive connection still gets the shell; Firebase talks to its backend
-  // only once someone signs in or opens a room.
-  assert.deepEqual(networkCalls, []);
+test('booting talks to nothing but the maintenance switch, and never waits for it', () => {
+  // A player on a slow or captive connection still gets the shell. The one request a signed-out
+  // visit makes is the world-readable `site/status` watch that maintenance mode owns — Firestore
+  // multiplexes its watches over one WebChannel stream per database, so it is one fetch. A second
+  // one, or any other host, means boot grew a dependency it must not have.
+  assert.equal(networkCalls.length, 1, `expected exactly the maintenance watch, saw: ${networkCalls.join(', ')}`);
+  assert.ok(isOwnFirestore(networkCalls[0]), `only this project's Firestore may be contacted, not ${networkCalls[0]}`);
 });
