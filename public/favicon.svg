@@ -1,1 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><rect width="40" height="40" rx="9" fill="#ffd23f"/><path d="M8 15 14 7h12l6 8-2 17H10z" fill="#140a2e"/><path d="M9 16h22l-2 8H11z" fill="#ff3da6"/><path d="M17 28h6" stroke="#140a2e" stroke-width="2" stroke-linecap="round" fill="none"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="#0b0e1a"/>
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="none" stroke="#7c6cf6" stroke-width="3"/>
+  <text x="32" y="44" font-size="32" text-anchor="middle">🎮</text>
+</svg>

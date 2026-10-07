@@ -1,901 +1,413 @@
-import {
-  GAMES,
-  createInitialGameState,
-  getGame,
-} from './catalog.js';
-import { DEFAULT_CODE_DRAFT } from './state.js';
-import {
-  state,
-  currentGame,
-  currentGameState,
-} from './state.js';
-import { boot } from './boot.js';
-import { runLiveCheck } from './diagnostics.js';
-import { scheduleCpuMove, sendGameAction, startCpuRaceLoop, startPractice } from './cpu.js';
-import {
-  deleteAccountNow,
-  handleGoogleSignIn,
-  processGoogleRedirect,
-  refreshAccount,
-  registerProfile,
-} from './accounts.js';
-import { applyTheme, toggleTheme } from './ui/theme.js';
-import { setSoundEnabled } from './ui/sound.js';
-import { recordRecentGame, toggleFavorite } from './ui/prefs.js';
-import { copyRoomLink, shareRoomLink } from './ui/links.js';
-import {
-  appRoot,
-  render,
-} from './render.js';
-import {
-  friendlyError,
-  reportAuthError,
-} from './errors.js';
-import { ensureOnlineUser } from './online/session.js';
-import {
-  navigate,
-  parseHash,
-  routeFromHash,
-} from './router.js';
-import {
-  blockPlayer,
-  joinGameInvite,
-  reportProblem,
-  requestFriendSearch,
-  respondToFriend,
-  sendFriendRequest,
-  unblockPlayer,
-} from './social.js';
-import {
-  adminDeleteFriendRequest,
-  adminDeleteFriendship,
-  adminDeleteGameInvite,
-  adminDeleteRoom,
-  adminLabelReview,
-  adminTrainReviewAgent,
-  adminGrantAccess,
-  adminKickPlayer,
-  adminRemovePlayer,
-  adminRevokeAccess,
-  loadAdminData,
-} from './online/admin.js';
-import { loadFeaturedReview, loadPublicReviews, submitReview } from './reviews.js';
-import {
-  applyMaintenanceCache,
-  clearMaintenancePass,
-  disableMaintenance,
-  enableMaintenance,
-  loadMaintenanceAccess,
-  refreshMaintenance,
-  rotateMaintenancePin,
-  saveMaintenanceReason,
-  setMaintenancePreview,
-  startMaintenanceWatch,
-  submitMaintenancePin,
-} from './maintenance.js';
-import {
-  MAINTENANCE_PIN_DEFAULT_HOURS,
-  MAINTENANCE_PIN_DIGITS,
-  MAINTENANCE_REASON_MAX,
-  formatMaintenancePin,
-  normalizeMaintenancePin,
-} from '../shared/online/maintenance.js';
-import {
-  claimHost,
-  createOnlineRoom,
-  joinRoomByCode,
-  leaveWaitingRoom,
-  openRoomFromLink,
-  rematchRoom,
-  startRoom,
-} from './online/rooms.js';
-import { sendChatMessage, toggleChatPanel } from './online/chat.js';
-import { showToast } from './ui/toast.js';
-import { setupError } from './connection.js';
-import {
-  filteredGames,
-  renderGameGrid,
-} from './views/pages.js';
-import {
-  auth,
-  firebaseReady,
-} from './firebase.js';
+// The arcade shell: header, router views (library + game page), footer, toasts.
+import { h, clear } from './core/dom.js';
+import { prefs, stats } from './core/store.js';
+import { sfx, unlockAudio } from './core/sound.js';
+import { parseHash, navigate, subscribe, gamePath } from './core/router.js';
+import { GAMES, GENRES, PLAYERS_LABEL, getGame, filterGames } from './games/registry.js';
 
-import { handleBoardArrows, trapDialogTab } from './a11y.js';
-import {
-  createUserWithEmailAndPassword,
-  onAuthStateChanged,
-  signInWithEmailAndPassword,
-  signOut,
-} from 'firebase/auth';
-import {
-  DISPLAY_NAME_STORAGE_KEY,
-  suggestUsername,
-} from './helpers.js';
+const filters = { q: '', genre: 'All', players: 'All' };
+let toastBox = null;
 
-/**
- * `auth` and `db` are null only when Firebase never started. Every use below sits behind a
- * `firebaseReady` check, or behind a sign-in or a room that can only exist with Firebase running,
- * so these casts state what those guards already guarantee (the same pattern as src/accounts.js).
- */
-const authInstance = /** @type {import('firebase/auth').Auth} */ (auth);
-
-function routeBackToCatalog() {
-  window.clearTimeout(state.cpuTimer);
-  state.cpuPending = false;
-  state.local = null;
-  state.modal = null;
-  navigate('catalog');
+export function toast(msg) {
+  if (!toastBox) return;
+  const el = h('div', { class: 'toast', text: msg });
+  toastBox.append(el);
+  requestAnimationFrame(() => el.classList.add('show'));
+  setTimeout(() => {
+    el.classList.remove('show');
+    setTimeout(() => el.remove(), 300);
+  }, 2400);
 }
 
-function modalOpen(modal) {
-  state.modal = modal;
-  render();
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  document.querySelector('meta[name="theme-color"]')?.setAttribute(
+    'content',
+    theme === 'light' ? '#f4f2ff' : '#0b0e1a',
+  );
 }
 
-function modalClose() {
-  state.modal = null;
-  state.authError = '';
-  render();
+function statSummary(id) {
+  const s = stats.get(id);
+  const parts = [];
+  if (s.plays > 0) parts.push(`▶ ${s.plays}`);
+  if (s.best > 0) parts.push(`★ ${s.best}`);
+  const wins = s.p0 + s.p1;
+  if (wins > 0) parts.push(`🏆 ${wins}`);
+  return parts.join('  ·  ') || 'Unplayed — be the first';
 }
 
-async function handleUsernameSetupSubmit(form) {
-  if (!firebaseReady || !state.user || state.user.isAnonymous) throw new Error('A confirmed signed-in account is required to choose a username.');
-  const username = String(new FormData(form).get('username') || '').trim();
-  await registerProfile(state.user, username);
-  state.modal = null;
-  render();
-  showToast(`Welcome, @${username}. Friend features are ready.`);
-}
-
-/**
- * Join with a room code instead of a link.
- *
- * The code is looked up by the backend against `rooms.code`; the browser never queries the rooms
- * collection, so a code cannot be used to enumerate rooms, only to open one you were given.
- */
-async function handleJoinCodeSubmit(form) {
-  const code = String(new FormData(form).get('code') || '').trim();
-  await joinRoomByCode(code);
-  showToast('Room found. Settling you in…');
-}
-
-/** Send a report and say plainly what happens next (nothing automatic — the operator reads it). */
-async function handleReportSubmit(form) {
-  const formData = new FormData(form);
-  const modal = state.modal?.type === 'report' ? state.modal : {};
-  const result = await reportProblem({
-    kind: String(formData.get('kind') || 'other'),
-    message: String(formData.get('message') || ''),
-    targetUid: modal.targetUid || '',
-    roomId: modal.roomId || '',
+function gameCard(game) {
+  const card = h('button', {
+    class: 'card',
+    onclick: () => {
+      sfx.play('click');
+      navigate(gamePath(game.id, { mode: game.modes[0].id }));
+    },
+    'aria-label': `Play ${game.name}: ${game.tagline}`,
   });
-  state.modal = null;
-  render();
-  showToast(`Report ${String(result?.reportId || '').slice(0, 6)} stored for the operator. They read reports by hand; nothing was sent to the other player.`, 'success');
+  card.style.setProperty('--hue', String(game.hue ?? 220));
+  card.append(
+    h('div', { class: 'card-top' },
+      h('span', { class: 'card-icon', text: game.icon }),
+      h('span', { class: 'chip', text: game.genre })),
+    h('h3', { text: game.name }),
+    h('p', { class: 'card-tag', text: game.tagline }),
+    h('div', { class: 'card-meta' },
+      h('span', { text: PLAYERS_LABEL[game.players] }),
+      h('span', { class: 'card-stats', text: statSummary(game.id) })),
+    h('span', { class: 'card-play', text: 'Play →' }),
+  );
+  return card;
 }
 
-/**
- * Delete the account through the backend. A stale sign-in is a normal outcome, not a failure: the
- * backend refuses with `recent-login-required`, and the player is asked to sign in again instead of
- * being told something that did not happen.
- */
-async function handleDeleteAccount() {
-  const result = await deleteAccountNow();
-  const removed = [
-    result?.friendships ? `${result.friendships} friendship${result.friendships === 1 ? '' : 's'}` : '',
-    result?.invites ? `${result.invites} invite${result.invites === 1 ? '' : 's'}` : '',
-    result?.rooms ? `${result.rooms} room seat${result.rooms === 1 ? '' : 's'}` : '',
-  ].filter(Boolean);
-  navigate('home');
-  showToast(removed.length ? `Account deleted. Also removed: ${removed.join(', ')}.` : 'Account deleted.', 'success');
-}
+function homeView(view) {
+  const totals = stats.totals();
+  const hero = h('section', { class: 'hero' },
+    h('p', { class: 'eyebrow', text: '🎮 Browser arcade · no downloads · no sign-up' }),
+    h('h1', {}, 'Pick a game. ', h('span', { class: 'grad', text: 'Play in seconds.' })),
+    h('p', { class: 'lede', text: 'Twelve original mini-games against the CPU or a friend. Your scores never leave this browser.' }),
+    h('div', { class: 'hero-chips' },
+      h('span', { class: 'chip big', text: `${GAMES.length} games` }),
+      h('span', { class: 'chip big', text: `${totals.plays} plays` }),
+      h('span', { class: 'chip big', text: 'Solo · CPU · 2P' })),
+  );
 
-function handleSettingsSubmit(form) {
-  const formData = new FormData(form);
-  const displayName = String(formData.get('displayName') || '').trim().slice(0, 20);
-  state.displayName = displayName;
-  try {
-    localStorage.setItem(DISPLAY_NAME_STORAGE_KEY, displayName);
-  } catch {
-    // Storage is optional; a blocked localStorage must not prevent settings from applying.
-  }
-  setSoundEnabled(formData.get('soundEnabled') === 'on');
-  applyTheme(String(formData.get('theme') || 'system'), false);
-  state.modal = null;
-  render();
-  showToast('Settings saved on this device.');
-}
+  const search = h('input', {
+    class: 'search',
+    type: 'search',
+    placeholder: 'Search games…  ( / )',
+    value: filters.q,
+    'aria-label': 'Search games',
+  });
+  search.addEventListener('input', () => {
+    filters.q = search.value;
+    paintGrid();
+  });
 
-async function handleReviewSubmit(form) {
-  const formData = new FormData(form);
-  const payload = {
-    rating: Number(formData.get('rating')),
-    gameId: String(formData.get('gameId') || 'arcade'),
-    title: String(formData.get('title') || ''),
-    message: String(formData.get('message') || ''),
-    reviewerName: String(formData.get('reviewerName') || ''),
-  };
-  state.reviewSubmitting = true;
-  state.reviewModelStatus = 'Preparing the on-device model…';
-  render();
-  try {
-    const result = await submitReview(payload, (message) => {
-      if (state.reviewModelStatus === message) return;
-      state.reviewModelStatus = message;
-      render();
-    });
-    state.reviewSubmitting = false;
-    state.reviewModelStatus = '';
-    await Promise.all([
-      loadPublicReviews({ reset: true }),
-      loadFeaturedReview({ force: true }),
-    ]);
-    const modelNote = result.usedOnDeviceModel
-      ? ' Sentiment was classified on your device.'
-      : result.modelUnavailable
-        ? ' The on-device model was unavailable, so the private local fallback handled it.'
-        : '';
-    showToast(`Your review is live. ${result.assistantName || 'The Arcade Review Agent'} replied.${modelNote}`, 'success');
-  } catch (error) {
-    state.reviewSubmitting = false;
-    state.reviewModelStatus = '';
-    render();
-    throw error;
-  }
-}
-
-async function handleAdminGrantSubmit(form) {
-  /** Granting by raw UID goes through the same confirm gate as the player-row button. */
-  const uidToPromote = String(new FormData(form).get('uid') || '').trim();
-  if (!uidToPromote) throw new Error('Paste a user UID first.');
-  openAdminConfirm('Grant admin access?', `UID ${uidToPromote} gets the full control room: every room, player, link and admin flag. Only promote someone you trust completely.`, 'Grant access', () => adminGrantAccess(uidToPromote));
-}
-
-/* ── maintenance mode ──────────────────────────────────────────────────────────────────────────
- * The studio's three writes and the visitor's one form. Everything here is deliberately thin:
- * `src/maintenance.js` owns the documents, and `firestore.rules` decides who may touch them.
- */
-
-/** Copies a code for the operator, and (by default) says so. A clipboard failure still shows it. */
-function copyMaintenanceCode(pin, announce = true) {
-  const digits = normalizeMaintenancePin(pin);
-  if (!digits) {
-    showToast('There is no code to copy yet - generate one first.', 'warning');
-    return;
-  }
-  if (navigator.clipboard?.writeText) {
-    void navigator.clipboard.writeText(formatMaintenancePin(digits)).then(
-      () => { if (announce) showToast(`Access code copied: ${formatMaintenancePin(digits)}`, 'success'); },
-      () => showToast(`Copy it by hand: ${formatMaintenancePin(digits)}`, 'warning'),
+  const genreRow = h('div', { class: 'chips', role: 'group', 'aria-label': 'Filter by genre' });
+  for (const g of ['All', ...GENRES]) {
+    genreRow.append(
+      h('button', {
+        class: `chip btn${filters.genre === g ? ' on' : ''}`,
+        'aria-pressed': filters.genre === g ? 'true' : 'false',
+        onclick: () => {
+          filters.genre = g;
+          sfx.play('click');
+          renderHome();
+        },
+      }, g),
     );
-    return;
   }
-  showToast(`Your browser blocks the clipboard, so copy it by hand: ${formatMaintenancePin(digits)}`, 'warning');
-}
-
-/** One studio write: success toasts, failure toasts the real reason, and the panel never hangs. */
-async function runMaintenanceWrite(task, successMessage) {
-  let result = null;
-  try {
-    result = await task();
-  } catch (error) {
-    showToast(friendlyError(error), 'warning');
-    render();
-    return null;
-  }
-  if (successMessage) showToast(successMessage, 'success');
-  render();
-  return result;
-}
-
-/** Saves whatever is in the reason box: live if the site is closed, queued for next time if not. */
-async function handleSaveMaintenanceReason(button) {
-  const form = /** @type {HTMLFormElement | null} */ (button?.closest?.('form') || null);
-  const area = /** @type {HTMLTextAreaElement | null} */ (form?.querySelector('[data-maintenance-reason]') || null);
-  const hoursSelect = /** @type {HTMLSelectElement | null} */ (form?.querySelector('#maintenance-hours') || null);
-  const reason = String(area?.value || '');
-  state.maintenance.draft = {
-    reason,
-    hours: Number(hoursSelect?.value) || Number(state.maintenance.draft?.hours) || MAINTENANCE_PIN_DEFAULT_HOURS,
-  };
-  if (!state.maintenance.enabled) {
-    render();
-    showToast('Saved. It will be the first thing visitors read the next time you close the site.', 'success');
-    return;
-  }
-  await runMaintenanceWrite(() => saveMaintenanceReason(reason), 'Reason updated - the notice changed for everyone watching it.');
-}
-
-/** "Close the site" (or, if it is already closed, update the reason) from the studio form. */
-async function handleAdminMaintenanceSubmit(form) {
-  // The fields are read directly rather than through `new FormData(form)`: the same values are
-  // already mirrored into `state.maintenance.draft` on every keystroke, and a textarea and a select
-  // are not worth a construct the browser hands you anyway.
-  const reasonField = /** @type {HTMLTextAreaElement | null} */ (form.querySelector('[data-maintenance-reason]'));
-  const hoursField = /** @type {HTMLSelectElement | null} */ (form.querySelector('#maintenance-hours'));
-  const reason = String(reasonField?.value ?? state.maintenance.draft?.reason ?? '');
-  const hours = Number(hoursField?.value) || Number(state.maintenance.draft?.hours) || MAINTENANCE_PIN_DEFAULT_HOURS;
-  if (state.maintenance.enabled) {
-    await handleSaveMaintenanceReason(form.querySelector('[data-maintenance-reason]'));
-    return;
-  }
-  const pin = await enableMaintenance({ reason, hours });
-  if (!pin) return;
-  state.maintenance.pinDraft = '';
-  showToast('Maintenance is on. Only admins can see the arcade now.', 'success');
-  copyMaintenanceCode(pin);
-}
-
-/** The 16-digit box on the notice: a right code unlocks this device, a wrong one explains the rest. */
-async function handleMaintenancePinSubmit(form) {
-  const field = /** @type {HTMLInputElement | null} */ (form.querySelector('[data-maintenance-pin]'));
-  const result = await submitMaintenancePin(String(field?.value ?? state.maintenance.pinDraft ?? ''));
-  state.maintenance.unlockMessage = result.message;
-  state.maintenance.unlockOk = result.ok;
-  if (result.ok) {
-    state.maintenance.pinDraft = '';
-    form.reset();
-  }
-  render();
-  if (result.ok) showToast(result.message, 'success');
-}
-
-/**
- * Offers to read the code off the clipboard, for the phone where the operator texted it. Reading the
- * clipboard is a permission the browser may refuse (and often does on a non-https origin), so the
- * button is an offer with an escape hatch, never the only way in.
- */
-async function readMaintenanceCodeIntoField() {
-  const clipboard = navigator.clipboard;
-  if (!clipboard?.readText) {
-    showToast('This browser will not hand the clipboard to a page - paste into the box yourself.', 'warning');
-    return;
-  }
-  let text = '';
-  try {
-    text = await clipboard.readText();
-  } catch {
-    showToast('The browser refused to share the clipboard. Long-press the box (or Ctrl+V) and paste.', 'warning');
-    return;
-  }
-  const digits = normalizeMaintenancePin(text);
-  if (!digits) {
-    showToast('No digits on the clipboard - copy the 16-digit code first.', 'warning');
-    return;
-  }
-  state.maintenance.pinDraft = digits;
-  render();
-  /** @type {HTMLInputElement | null} */ (document.getElementById('maintenance-pin-input'))?.focus();
-  showToast(digits.length === MAINTENANCE_PIN_DIGITS ? 'Code ready. Press Unlock.' : `${digits.length} digits found - a code is ${MAINTENANCE_PIN_DIGITS}.`, 'success');
-}
-
-/** Re-formats the code box as it is typed and keeps the digit tally honest without a repaint. */
-function handleMaintenancePinInput(field) {
-  const digits = normalizeMaintenancePin(field.value);
-  state.maintenance.pinDraft = digits;
-  const formatted = formatMaintenancePin(digits);
-  if (field.value !== formatted) {
-    field.value = formatted;
-    try {
-      field.setSelectionRange(formatted.length, formatted.length);
-    } catch {
-      // Some inputs (rare, but real, e.g. a numeric type) refuse selection; the value is already right.
-    }
-  }
-  const tally = /** @type {HTMLElement | null} */ (document.getElementById('maintenance-pin-tally'));
-  if (tally) tally.textContent = `${digits.length} of ${MAINTENANCE_PIN_DIGITS} digits typed`;
-  const submit = /** @type {HTMLButtonElement | null} */ (document.querySelector('[data-maintenance-submit]'));
-  if (submit) submit.disabled = digits.length !== MAINTENANCE_PIN_DIGITS || state.maintenance.checking;
-}
-
-/** The reason box: only the counter moves, so typing never loses the caret or the scroll position. */
-function handleMaintenanceReasonInput(area) {
-  state.maintenance.draft = { ...state.maintenance.draft, reason: area.value };
-  const counter = /** @type {HTMLElement | null} */ (document.getElementById('maintenance-reason-count'));
-  if (counter) {
-    const left = MAINTENANCE_REASON_MAX - area.value.length;
-    counter.textContent = left >= 0
-      ? `${area.value.length} / ${MAINTENANCE_REASON_MAX} characters · up to 6 lines · plain text`
-      : `${MAINTENANCE_REASON_MAX} characters is the limit - ${-left} to cut.`;
-    counter.style.color = left < 0 ? 'var(--bad)' : '';
-  }
-}
-
-async function handleAuthSubmit(form) {
-  if (!firebaseReady) throw setupError();
-  state.authError = '';
-  const formData = new FormData(form);
-  const mode = formData.get('mode');
-  const email = String(formData.get('email') || '').trim();
-  const password = String(formData.get('password') || '');
-  if (mode === 'register') {
-    const current = authInstance.currentUser;
-    const existingAccount = current && !current.isAnonymous && current.email === email && !state.profile;
-    const credential = existingAccount
-      ? { user: current }
-      : await createUserWithEmailAndPassword(authInstance, email, password);
-    await registerProfile(credential.user, String(formData.get('username') || ''));
-    state.modal = null;
-    showToast('Account ready. Go find your people.');
-  } else {
-    await signInWithEmailAndPassword(authInstance, email, password);
-    state.modal = null;
-    showToast('Welcome back to the arcade.');
-  }
-}
-
-async function handleCreateRoomSubmit(form) {
-  const formData = new FormData(form);
-  const gameId = String(formData.get('gameId'));
-  const maxPlayers = Number(formData.get('maxPlayers'));
-  const displayName = String(formData.get('displayName') || '').trim();
-  if (displayName) {
-    state.displayName = displayName.slice(0, 20);
-    localStorage.setItem(DISPLAY_NAME_STORAGE_KEY, state.displayName);
-  }
-  await createOnlineRoom(gameId, maxPlayers, state.modal?.friend || null, state.displayName);
-  state.modal = null;
-  render();
-}
-
-function openRoomModal(gameId = GAMES[0].id, friend = null) {
-  // When online play is unavailable the dialog itself explains why and keeps practice reachable.
-  modalOpen({ type: 'room', gameId, friend });
-}
-
-/**
- * The admin studio's safety gate: a confirm dialog whose "do it" button runs `run` (a function
- * stored on the modal state, invoked by the `confirm-modal-run` action below).
- */
-function openAdminConfirm(title, body, confirmLabel, run) {
-  modalOpen({ type: 'confirm', title, body, confirmLabel, run });
-}
-
-/** One small linter-friendly wrapper: admin dataset attributes come in as possibly undefined. */
-function adminArg(value = '') {
-  return String(value || '');
-}
-
-function handleClick(event) {
-  const actionButton = event.target.closest('[data-action]');
-  if (!actionButton) return;
-  const action = actionButton.dataset.action;
-  const { gameId, page, category, index, col, uid, direction, choice, answer, lane, requestId, inviteId, roomId } = actionButton.dataset;
-  if (action === 'reload') { location.reload(); return; }
-  if (action === 'leave-room') { void leaveCurrentRoom(); return; }
-  if (action === 'modal-backdrop' && event.target === actionButton) { modalClose(); return; }
-  if (action === 'navigate') { navigate(page); return; }
-  if (action === 'toggle-theme') { toggleTheme(); return; }
-  if (action === 'skip-to-content') { const main = /** @type {HTMLElement | null} */ (document.querySelector('#page-content')); if (main) { main.setAttribute('tabindex', '-1'); main.focus(); } return; }
-  if (action === 'open-settings') { modalOpen({ type: 'settings' }); return; }
-  if (action === 'toggle-favorite') { toggleFavorite(gameId); return; }
-  if (action === 'open-game') { recordRecentGame(gameId); modalOpen({ type: 'game', gameId }); return; }
-  if (action === 'filter-category') { state.category = category; if (state.page !== 'catalog') { navigate('catalog'); return; } render(); return; }
-  if (action === 'clear-filters') {
-    state.query = '';
-    state.category = 'All games';
-    state.filters = { duration: 'Any length', difficulty: 'Any difficulty', input: 'Any input' };
-    render();
-    return;
-  }
-  if (action === 'quick-play') { const game = GAMES[Math.floor(Math.random() * GAMES.length)]; recordRecentGame(game.id); modalOpen({ type: 'game', gameId: game.id }); return; }
-  if (action === 'quick-room') { openRoomModal(GAMES[0].id); return; }
-  if (action === 'open-friends') { navigate('friends'); return; }
-  if (action === 'open-report') {
-    modalOpen({
-      type: 'report',
-      kind: 'other',
-      targetUid: roomId ? '' : uid || '',
-      targetName: actionButton.dataset.name || '',
-      roomId: roomId || state.room?.id || '',
-    });
-    return;
-  }
-  if (action === 'block-player') {
-    const blockedUid = adminArg(uid);
-    const name = actionButton.dataset.name || 'this player';
-    openAdminConfirm('Block this player?', `${name} disappears from your search results, and their requests and invites are refused and cleared. You can unblock them from the friends page.`, 'Block player', () => blockPlayer(blockedUid));
-    return;
-  }
-  if (action === 'unblock-player') { void unblockPlayer(adminArg(uid)).catch((error) => showToast(friendlyError(error), 'warning')); return; }
-  if (action === 'open-delete-account') {
-    openAdminConfirm(
-      'Delete this account?',
-      'This deletes your profile, releases your username, removes your friendships, requests, invites and presence, and deletes the Firebase sign-in. Rooms still in play are left for the other players and expire on their own. This cannot be undone.',
-      'Delete my account',
-      () => handleDeleteAccount().catch((error) => {
-        if (/** @type {any} */ (error)?.code === 'recent-login-required') {
-          state.authError = friendlyError(error);
-          modalOpen({ type: 'auth', mode: 'login' });
-          showToast('Sign in again, then delete within 10 minutes.', 'warning');
-          return;
-        }
-        throw error;
-      }),
+  const playerRow = h('div', { class: 'chips', role: 'group', 'aria-label': 'Filter by players' });
+  for (const p of ['All', 'Solo', '2P']) {
+    playerRow.append(
+      h('button', {
+        class: `chip btn${filters.players === p ? ' on' : ''}`,
+        'aria-pressed': filters.players === p ? 'true' : 'false',
+        onclick: () => {
+          filters.players = p;
+          sfx.play('click');
+          renderHome();
+        },
+      }, p === 'All' ? 'Any players' : p),
     );
-    return;
   }
-  if (action === 'show-setup') {
-    if (!state.liveCheck?.running) state.liveCheck = null; // never show the result of an earlier, possibly outdated, check
-    modalOpen({ type: 'setup' });
-    return;
-  }
-  if (action === 'close-modal') { modalClose(); return; }
-  if (action === 'practice-game') { startPractice(gameId); return; }
-  if (action === 'create-room-for-game') { openRoomModal(gameId, state.modal?.friend || null); return; }
-  if (action === 'copy-room-link') { void copyRoomLink(); return; }
-  if (action === 'share-room-link') { void shareRoomLink(); return; }
-  if (action === 'start-room') { void startRoom().catch((error) => showToast(friendlyError(error), 'warning')); return; }
-  if (action === 'claim-host') {
-    void claimHost()
-      .then((changed) => { if (changed) showToast('You are the host now. Start when everyone is ready.'); })
-      .catch((error) => showToast(friendlyError(error), 'warning'));
-    return;
-  }
-  if (action === 'toggle-chat') { toggleChatPanel(); return; }
-  if (action === 'retry-room') { const route = parseHash(); state.roomError = ''; state.room = null; state.roomId = null; if (route.id) void openRoomFromLink(route.id); return; }
-  if (action === 'leave-session') { routeBackToCatalog(); return; }
-  if (action === 'play-again') { void resetCurrentGame(); return; }
-  if (action === 'line-move') { void sendGameAction({ index: Number(index) }); return; }
-  if (action === 'drop-move') { void sendGameAction({ col: Number(col) }); return; }
-  if (action === 'memory-flip') { void sendGameAction({ index: Number(index) }); return; }
-  if (action === 'race-tap') { void sendGameAction({ type: 'tap' }); return; }
-  if (action === 'duel-choice') { void sendGameAction({ choice }); return; }
-  if (action === 'quiz-answer') { void sendGameAction({ answer: Number(answer) }); return; }
-  if (action === 'quiz-next') { void sendGameAction({ type: 'next' }); return; }
-  if (action === 'maze-move') { void sendGameAction({ direction }); return; }
-  if (action === 'battle-target') { state.selectedBattleTarget = uid; render(); return; }
-  if (action === 'battle-fire') { void sendGameAction({ type: 'fire', targetUid: state.selectedBattleTarget, index: Number(index) }); return; }
-  if (action === 'rally-hit') { void sendGameAction({ lane: Number(lane) }); return; }
-  if (action === 'code-digit') {
-    const digitIndex = Number(index);
-    const symbols = Number(currentGameState()?.symbols) || 6;
-    state.codeDraft[digitIndex] = (state.codeDraft[digitIndex] + 1) % symbols;
-    render();
-    return;
-  }
-  if (action === 'code-submit') {
-    const digits = Number(currentGameState()?.digits) || 4;
-    void sendGameAction({ guess: state.codeDraft.slice(0, digits) });
-    state.codeDraft = [...DEFAULT_CODE_DRAFT];
-    return;
-  }
-  if (action === 'open-auth') { modalOpen({ type: 'auth', mode: 'login' }); return; }
-  if (action === 'open-username-setup') { modalOpen({ type: 'username', suggestion: suggestUsername(state.user?.displayName, state.user?.email) }); return; }
-  if (action === 'google-sign-in') {
-    void handleGoogleSignIn().catch((error) => reportAuthError(error, { method: 'google' }));
-    return;
-  }
-  if (action === 'google-sign-in-existing') {
-    void handleGoogleSignIn({ forceExistingAccount: true }).catch((error) => reportAuthError(error, { method: 'google' }));
-    return;
-  }
-  if (action === 'run-live-check') { void runLiveCheck(); return; }
-  if (action === 'account-menu') { modalOpen({ type: 'account' }); return; }
-  if (action === 'sign-out') { void signOut(authInstance).then(() => { modalClose(); showToast('Signed out. Come back anytime.'); }); return; }
-  if (action === 'auth-mode') { state.authError = ''; modalOpen({ type: 'auth', mode: actionButton.dataset.mode }); return; }
-  if (action === 'guest-play') {
-    state.authError = '';
-    void ensureOnlineUser().then(() => { modalClose(); showToast('Guest mode is ready. Make a room or join a friend.'); }).catch((error) => reportAuthError(error, { method: 'anonymous' }));
-    return;
-  }
-  if (action === 'notifications') { modalOpen({ type: 'notifications' }); return; }
-  if (action === 'send-friend-request') { void sendFriendRequest(actionButton.dataset.name).catch((error) => showToast(friendlyError(error), 'warning')); void uid; return; }
-  if (action === 'accept-friend' || action === 'decline-friend') { void respondToFriend(requestId, action === 'accept-friend').catch((error) => showToast(friendlyError(error), 'warning')); return; }
-  if (action === 'join-game-invite') { void joinGameInvite(inviteId, roomId).catch((error) => showToast(friendlyError(error), 'warning')); return; }
-  if (action === 'challenge-friend') {
-    const friend = { uid, name: actionButton.dataset.name, friendshipId: actionButton.dataset.friendshipId };
-    modalOpen({ type: 'room', gameId: GAMES[0].id, friend });
-    return;
-  }
-  if (action === 'refresh-admin') { void loadAdminData(); return; }
-  // ── maintenance mode (src/maintenance.js, docs/maintenance-mode.md) ───────────────────────────
-  if (action === 'maintenance-preview-on') { setMaintenancePreview(true); return; }
-  if (action === 'maintenance-preview-off') { setMaintenancePreview(false); return; }
-  if (action === 'maintenance-open-studio') { state.adminTab = 'maintenance'; navigate('admin'); return; }
-  if (action === 'maintenance-reload') { void refreshMaintenance().then(() => loadMaintenanceAccess()); return; }
-  if (action === 'maintenance-reveal-pin') { void loadMaintenanceAccess().then(() => render()); return; }
-  if (action === 'maintenance-copy-pin') { copyMaintenanceCode(adminArg(actionButton.dataset.pin)); return; }
-  if (action === 'maintenance-end-pass') {
-    clearMaintenancePass();
-    render();
-    showToast('Temporary access ended on this device. The notice is back, and so is the code box.');
-    return;
-  }
-  if (action === 'maintenance-paste') { void readMaintenanceCodeIntoField(); return; }
-  if (action === 'maintenance-save-reason') { void handleSaveMaintenanceReason(actionButton); return; }
-  if (action === 'maintenance-off') {
-    openAdminConfirm(
-      'Open the arcade again?',
-      'Visitors get the live site as soon as you do this: the notice disappears, the temporary code is destroyed, and any device using one is locked again on its next reload.',
-      'Open the site',
-      () => runMaintenanceWrite(() => disableMaintenance(), 'Maintenance is off. The arcade is open to everyone again.'),
-    );
-    return;
-  }
-  if (action === 'maintenance-rotate-pin') {
-    openAdminConfirm(
-      'Generate a new access code?',
-      'The current code stops working at once, so every device that used it is locked out until you send the new one. The maintenance window and its reason stay exactly as they are.',
-      'New code',
-      () => runMaintenanceWrite(() => rotateMaintenancePin({ hours: state.maintenance.draft?.hours }), 'New code ready. Copy it from the panel before you reload.').then((pin) => { if (pin) copyMaintenanceCode(pin, false); }),
-    );
-    return;
-  }
-  if (action === 'load-more-reviews') { void loadPublicReviews({ reset: false }); return; }
-  if (action === 'admin-label-review') {
-    void adminLabelReview(adminArg(actionButton.dataset.reviewId), adminArg(actionButton.dataset.label));
-    return;
-  }
-  if (action === 'admin-train-review-agent') { void adminTrainReviewAgent(); return; }
-  if (action === 'admin-tab') { state.adminTab = adminArg(actionButton.dataset.tab) || 'overview'; render(); return; }
-  if (action === 'confirm-modal-run') {
-    // The confirm modal carries its work as a function; close first so errors toast over the page.
-    const run = state.modal?.type === 'confirm' ? state.modal.run : null;
-    modalClose();
-    if (typeof run === 'function') void Promise.resolve(run());
-    return;
-  }
-  if (action === 'admin-delete-room') {
-    openAdminConfirm('Delete this room?', `The room hosted by ${adminArg(actionButton.dataset.name)} and every heartbeat under it will be permanently deleted. Players inside will see the room vanish.`, 'Delete room', () => adminDeleteRoom(adminArg(roomId)));
-    return;
-  }
-  if (action === 'admin-kick-player') {
-    openAdminConfirm('Kick this player from the lobby?', `${adminArg(actionButton.dataset.name)} loses their seat immediately. If they were the host, the next player in line becomes the host.`, 'Kick player', () => adminKickPlayer(adminArg(roomId), adminArg(uid)));
-    return;
-  }
-  if (action === 'admin-remove-player') {
-    openAdminConfirm('Remove this player?', `@${adminArg(actionButton.dataset.name)}'s profile is deleted and their username is freed for anyone to claim. Their admin flag (if any) goes too. Their sign-in itself stays, but they become a plain guest.`, 'Remove player', () => adminRemovePlayer(adminArg(uid)));
-    return;
-  }
-  if (action === 'admin-delete-friendship') {
-    openAdminConfirm('Unlink these friends?', `${adminArg(actionButton.dataset.name)} will no longer see each other in friend lists. They can re-add later.`, 'Unlink friends', () => adminDeleteFriendship(adminArg(actionButton.dataset.friendshipId)));
-    return;
-  }
-  if (action === 'admin-delete-request') {
-    openAdminConfirm('Delete this friend request?', `The request ${adminArg(actionButton.dataset.name)} disappears from both inboxes.`, 'Delete request', () => adminDeleteFriendRequest(adminArg(requestId)));
-    return;
-  }
-  if (action === 'admin-delete-invite') {
-    openAdminConfirm('Delete this game invite?', `The ${adminArg(actionButton.dataset.name)} invite can no longer be accepted.`, 'Delete invite', () => adminDeleteGameInvite(adminArg(inviteId)));
-    return;
-  }
-  if (action === 'admin-grant') {
-    openAdminConfirm('Grant admin access?', `@${adminArg(actionButton.dataset.name)} gets the full control room: every room, player, link and admin flag. Only do this for yourself or someone you trust completely.`, 'Grant access', () => adminGrantAccess(uid));
-    return;
-  }
-  if (action === 'admin-revoke') {
-    openAdminConfirm('Revoke admin access?', `${adminArg(actionButton.dataset.name)} loses the studio on their next refresh. You can restore it anytime.`, 'Revoke access', () => adminRevokeAccess(adminArg(uid)));
-    return;
-  }
-  if (action === 'admin-copy-uid') {
-    const fullUid = adminArg(uid);
-    if (navigator.clipboard?.writeText) {
-      void navigator.clipboard.writeText(fullUid).then(() => showToast('UID copied to the clipboard.'), () => showToast(fullUid, 'warning'));
-    } else {
-      showToast(fullUid, 'warning');
-    }
-    return;
-  }
-}
 
-async function resetCurrentGame() {
-  if (state.modal?.type === 'result') state.modal = null;
-  try {
-    if (state.local) {
-      const game = getGame(state.local.gameId);
-      if (!game) throw new Error('This game is no longer in the catalog.');
-      state.local.gameState = createInitialGameState(game, state.local.players, `${state.local.seed}:again:${Date.now()}`);
-      state.codeDraft = [...DEFAULT_CODE_DRAFT];
-      render();
-      if (game.engine === 'race') startCpuRaceLoop(); else scheduleCpuMove();
+  const toolbar = h('section', { class: 'toolbar' }, search, genreRow, playerRow);
+  const grid = h('section', { class: 'grid', 'aria-label': 'Games' });
+
+  function paintGrid() {
+    clear(grid);
+    const list = filterGames(filters);
+    if (list.length === 0) {
+      grid.append(
+        h('div', { class: 'empty' },
+          h('p', { class: 'empty-emoji', text: '🕹️' }),
+          h('p', { text: 'No games match that combo.' }),
+          h('button', {
+            class: 'btn btn-ghost', onclick: () => {
+              filters.q = '';
+              filters.genre = 'All';
+              filters.players = 'All';
+              renderHome();
+            },
+          }, 'Clear filters')),
+      );
       return;
     }
-    if (!state.room || !state.user) return;
-    // The backend re-checks the host, the room's status and its lifetime, and deals a fresh state
-    // (with a fresh seed) that keeps the optimistic-action revisions monotonic.
-    if (state.onlineActionsPending) throw new Error('Your last move is still syncing. The rematch will be ready in a moment.');
-    await rematchRoom();
-    state.codeDraft = [...DEFAULT_CODE_DRAFT];
-  } catch (error) {
-    showToast(friendlyError(error), 'warning');
+    for (const g of list) grid.append(gameCard(g));
   }
+
+  function renderHome() {
+    clear(view);
+    homeView(view);
+    view.querySelector('.search')?.focus({ preventScroll: true });
+    const s = view.querySelector('.search');
+    if (s) s.setSelectionRange(s.value.length, s.value.length);
+  }
+
+  view.append(hero, toolbar, grid);
+  paintGrid();
 }
 
-/** Leave the lobby: give the seat back while the room is waiting, then go back to the shelf. */
-async function leaveCurrentRoom() {
-  try {
-    await leaveWaitingRoom();
-  } catch (error) {
-    showToast(friendlyError(error), 'warning');
+function gameView(view, id, params) {
+  const game = getGame(id);
+  if (!game) {
+    view.append(
+      h('div', { class: 'empty' },
+        h('p', { class: 'empty-emoji', text: '👾' }),
+        h('h1', { text: 'That game escaped the arcade' }),
+        h('button', { class: 'btn btn-primary', onclick: () => navigate('/') }, 'Back to the library')),
+    );
+    return () => {};
   }
-  navigate('catalog');
-}
 
-function handleSubmit(event) {
-  const form = event.target.closest('form[data-form]');
-  if (!form) return;
-  event.preventDefault();
-  const type = form.dataset.form;
-  const submitButton = form.querySelector('[type="submit"]');
-  if (submitButton) { submitButton.disabled = true; submitButton.classList.add('is-loading'); }
-  let task;
-  if (type === 'create-room') task = handleCreateRoomSubmit(form);
-  else if (type === 'auth') task = handleAuthSubmit(form);
-  else if (type === 'username-setup') task = handleUsernameSetupSubmit(form);
-  else if (type === 'admin-grant') task = handleAdminGrantSubmit(form);
-  else if (type === 'admin-maintenance') task = handleAdminMaintenanceSubmit(form);
-  else if (type === 'maintenance-pin') task = handleMaintenancePinSubmit(form);
-  else if (type === 'settings') { handleSettingsSubmit(form); if (submitButton) submitButton.disabled = false; return; }
-  else if (type === 'friend-search') { requestFriendSearch(form); if (submitButton) submitButton.disabled = false; return; }
-  else if (type === 'join-code') task = handleJoinCodeSubmit(form);
-  else if (type === 'report') task = handleReportSubmit(form);
-  else if (type === 'review') task = handleReviewSubmit(form);
-  else if (type === 'chat') {
-    const input = /** @type {HTMLInputElement | null} */ (form.querySelector('input[name="text"]'));
-    const text = String(new FormData(form).get('text') || '');
-    task = sendChatMessage(text).then(() => {
-      if (input) input.value = '';
+  document.title = `${game.name} — PSD Gaming`;
+
+  const mode = game.modes.some((m) => m.id === params.mode) ? params.mode : game.modes[0].id;
+  const diffs = game.difficulties || [];
+  const difficulty = diffs.some((d) => d.id === params.diff)
+    ? params.diff
+    : diffs.some((d) => d.id === prefs.get().difficulty)
+      ? prefs.get().difficulty
+      : diffs[0]?.id || 'medium';
+
+  const head = h('div', { class: 'game-head' },
+    h('button', { class: 'btn btn-ghost btn-sm', onclick: () => navigate('/') }, '← Library'),
+    h('div', { class: 'game-title', style: '' },
+      h('span', { class: 'game-icon', text: game.icon }),
+      h('div', {},
+        h('h1', { text: game.name }),
+        h('p', { class: 'muted', text: `${game.tagline} · ${game.genre} · ${PLAYERS_LABEL[game.players]}` }))),
+  );
+  head.style.setProperty('--hue', String(game.hue ?? 220));
+
+  // Controls
+  const controls = h('div', { class: 'game-controls' });
+  if (game.modes.length > 1) {
+    const tabs = h('div', { class: 'seg', role: 'tablist', 'aria-label': 'Game mode' });
+    for (const m of game.modes) {
+      tabs.append(
+        h('button', {
+          class: `seg-btn${m.id === mode ? ' on' : ''}`,
+          role: 'tab',
+          'aria-selected': m.id === mode ? 'true' : 'false',
+          onclick: () => {
+            sfx.play('click');
+            navigate(gamePath(id, { mode: m.id, diff: difficulty }));
+          },
+        }, m.label),
+      );
+    }
+    controls.append(h('label', { class: 'ctl' }, h('span', { text: 'Mode' }), tabs));
+  }
+  if (diffs.length > 0) {
+    const sel = h('select', {
+      class: 'select',
+      'aria-label': 'Difficulty',
+      onchange: (e) => {
+        sfx.play('click');
+        prefs.set({ difficulty: e.target.value });
+        navigate(gamePath(id, { mode, diff: e.target.value }));
+      },
     });
+    for (const d of diffs) {
+      const opt = h('option', { value: d.id, text: d.label });
+      if (d.id === difficulty) opt.selected = true;
+      sel.append(opt);
+    }
+    controls.append(h('label', { class: 'ctl' }, h('span', { text: 'Level' }), sel));
   }
-  Promise.resolve(task).catch((error) => {
-    if (type === 'auth') reportAuthError(error, { method: 'password' });
-    else showToast(friendlyError(error), 'warning');
-    if (submitButton) { submitButton.disabled = false; submitButton.classList.remove('is-loading'); }
+
+  const needsP2 = mode === 'local';
+  const needsP1 = mode === 'cpu' || mode === 'local';
+  const p = prefs.get();
+  if (needsP1) {
+    const n1 = h('input', {
+      class: 'input name', value: mode === 'cpu' ? (p.name1 === 'Player 1' ? 'You' : p.name1) : p.name1,
+      maxlength: '14', 'aria-label': 'Player 1 name',
+      onchange: (e) => {
+        prefs.set({ name1: e.target.value.trim() || 'Player 1' });
+        remount();
+      },
+    });
+    controls.append(h('label', { class: 'ctl' }, h('span', { text: mode === 'cpu' ? 'Your name' : 'Player 1' }), n1));
+  }
+  if (needsP2) {
+    const n2 = h('input', {
+      class: 'input name', value: p.name2, maxlength: '14', 'aria-label': 'Player 2 name',
+      onchange: (e) => {
+        prefs.set({ name2: e.target.value.trim() || 'Player 2' });
+        remount();
+      },
+    });
+    controls.append(h('label', { class: 'ctl' }, h('span', { text: 'Player 2' }), n2));
+  }
+
+  // Arena + side panel
+  const arena = h('section', { class: 'arena', 'aria-label': `${game.name} play area` });
+  const side = h('aside', { class: 'side' });
+  const howTo = h('section', { class: 'panel' },
+    h('h2', { text: 'How to play' }),
+    h('ol', { class: 'howto' }, ...game.howTo.map((t) => h('li', { text: t }))));
+
+  const s = stats.get(id);
+  const statPanel = h('section', { class: 'panel' },
+    h('h2', { text: 'Your table stats' }),
+    h('div', { class: 'stat-rows' },
+      h('div', {}, h('span', { text: 'Plays' }), h('strong', { text: String(s.plays) })),
+      (s.p0 + s.p1 > 0 || s.draws > 0)
+        ? h('div', {}, h('span', { text: 'W / D' }), h('strong', { text: `${s.p0 + s.p1} / ${s.draws}` }))
+        : null,
+      s.best > 0 ? h('div', {}, h('span', { text: 'Best' }), h('strong', { text: String(s.best) })) : null,
+      h('button', {
+        class: 'btn btn-ghost btn-sm',
+        onclick: () => {
+          stats.reset(id);
+          sfx.play('click');
+          toast('Stats cleared for this game');
+          navigate(gamePath(id, { mode, diff: difficulty }));
+        },
+      }, 'Reset stats')),
+  );
+
+  const related = [
+    ...GAMES.filter((g) => g.genre === game.genre && g.id !== game.id),
+    ...GAMES.filter((g) => g.genre !== game.genre && g.id !== game.id),
+  ].slice(0, 3);
+  const morePanel = h('section', { class: 'panel' },
+    h('h2', { text: 'Keep playing' }),
+    h('div', { class: 'related' },
+      ...related.map((g) =>
+        h('button', {
+          class: 'rel',
+          onclick: () => {
+            sfx.play('click');
+            navigate(gamePath(g.id, { mode: g.modes[0].id }));
+          },
+        }, h('span', { text: g.icon }), h('span', { text: g.name }), h('span', { text: '→' })))),
+  );
+  side.append(howTo, statPanel, morePanel);
+
+  const layout = h('div', { class: 'game-layout' }, arena, side);
+  view.append(head, controls, layout);
+
+  let cleanup = null;
+  function remount() {
+    try {
+      cleanup?.();
+    } catch (err) {
+      console.error('Game cleanup failed', err);
+    }
+    clear(arena);
+    const names = [prefs.get().name1 || 'Player 1', prefs.get().name2 || 'Player 2'];
+    try {
+      cleanup = game.mount(arena, { mode, difficulty, names, stats, sfx, toast, prefs }) || (() => {});
+    } catch (err) {
+      console.error(`Game "${id}" crashed`, err);
+      arena.append(
+        h('div', { class: 'empty' },
+          h('p', { class: 'empty-emoji', text: '💥' }),
+          h('p', { text: 'This game glitched. Try another cabinet!' }),
+          h('button', { class: 'btn btn-primary', onclick: () => navigate('/') }, 'Back to library')),
+      );
+      cleanup = () => {};
+    }
+  }
+  remount();
+  return () => {
+    try {
+      cleanup?.();
+    } catch {
+      /* already gone */
+    }
+  };
+}
+
+export function start(root) {
+  applyTheme(prefs.get().theme || 'dark');
+  window.addEventListener('pointerdown', () => unlockAudio(), { once: true });
+  window.addEventListener('keydown', () => unlockAudio(), { once: true });
+
+  const shell = h('div', { class: 'shell' });
+  const skip = h('a', { class: 'skip', href: '#view', text: 'Skip to games' });
+
+  const themeBtn = h('button', { class: 'icon-btn', 'aria-label': 'Toggle theme' });
+  const paintThemeBtn = () => {
+    themeBtn.textContent = prefs.get().theme === 'light' ? '🌙' : '☀️';
+  };
+  paintThemeBtn();
+  themeBtn.addEventListener('click', () => {
+    const next = prefs.get().theme === 'light' ? 'dark' : 'light';
+    prefs.set({ theme: next });
+    applyTheme(next);
+    paintThemeBtn();
+    sfx.play('click');
   });
-}
 
-function handleInput(event) {
-  const pinField = event.target.closest?.('[data-maintenance-pin]');
-  if (pinField) { handleMaintenancePinInput(/** @type {HTMLInputElement} */ (pinField)); return; }
-  const reasonArea = event.target.closest?.('[data-maintenance-reason]');
-  if (reasonArea) { handleMaintenanceReasonInput(/** @type {HTMLTextAreaElement} */ (reasonArea)); return; }
-  if (event.target.id === 'global-search') {
-    state.query = event.target.value;
-    if (state.page === 'home') {
-      state.page = 'catalog';
-      state.focusSearchAfterRoute = true;
-      if (location.hash !== '#/catalog') location.hash = '#/catalog';
-    }
-    const grid = document.querySelector('#catalog-grid');
-    if (grid) grid.innerHTML = renderGameGrid(filteredGames(), 2);
-    const count = document.querySelector('.game-count b');
-    if (count) count.textContent = String(filteredGames().length);
-  }
-}
-
-/** The shelf filters: select changes repaint the grid and the count without a full re-render. */
-function handleFilterChange(event) {
-  // The studio's code-length select is the only live control outside the filters, and it is mirrored
-  // into the draft without a repaint: re-rendering a `<select>` on its own `change` throws the focus
-  // away from the keyboard user who just changed it.
-  const hoursSelect = event.target.closest?.('select[data-maintenance-hours]');
-  if (hoursSelect) {
-    const hours = Number(hoursSelect.value) || MAINTENANCE_PIN_DEFAULT_HOURS;
-    state.maintenance.draft = { ...state.maintenance.draft, hours };
-    return;
-  }
-  const select = event.target.closest('select[data-filter]');
-  if (!select) return;
-  const key = select.dataset.filter;
-  if (key !== 'duration' && key !== 'difficulty' && key !== 'input') return;
-  state.filters = { ...state.filters, [key]: select.value };
-  render();
-}
-
-/**
- * Arrow keys inside the admin tablist move the selection, as a `role="tablist"` promises.
- * Returns true when the key was consumed.
- */
-function handleTabKeys(event) {
-  const tab = event.target?.closest?.('[role="tab"][data-action="admin-tab"]');
-  if (!tab || event.altKey || event.ctrlKey || event.metaKey) return false;
-  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return false;
-  const tabs = /** @type {HTMLElement[]} */ ([...document.querySelectorAll('[role="tab"][data-action="admin-tab"]')]);
-  const index = tabs.indexOf(/** @type {HTMLElement} */ (tab));
-  if (index === -1 || !tabs.length) return false;
-  const next = event.key === 'Home' ? 0
-    : event.key === 'End' ? tabs.length - 1
-      : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
-  const tabId = tabs[next]?.dataset.tab;
-  if (!tabId) return false;
-  state.adminTab = tabId;
-  render();
-  /** @type {HTMLElement | null} */ (document.querySelector(`[role="tab"][data-tab="${tabId}"]`))?.focus();
-  return true;
-}
-
-function handleKeydown(event) {
-  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
-    event.preventDefault();
-    const search = /** @type {HTMLInputElement | null} */ (document.querySelector('#global-search'));
-    search?.focus();
-    search?.select();
-    return;
-  }
-  if (event.key === 'Escape' && state.modal) { modalClose(); return; }
-  if (!state.modal && handleTabKeys(event)) { event.preventDefault(); return; }
-  if (state.modal && trapDialogTab(event)) return;
-  if (!state.modal && !event.altKey && !event.ctrlKey && !event.metaKey && handleBoardArrows(event)) { event.preventDefault(); return; }
-  if (state.page === 'game' && !state.modal && !event.altKey && !event.ctrlKey && !event.metaKey && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName ?? '')) {
-    // Number and letter keys answer a quiz (1-4 or A-D) or pick a rally lane (1-5); they press the same buttons a tap would.
-    const engine = currentGame()?.engine;
-    const digit = /^[1-4]$/.test(event.key) ? Number(event.key) - 1 : 'abcd'.indexOf(event.key.toLowerCase());
-    if (engine === 'quiz' && event.key.length === 1 && digit >= 0) {
-      const option = /** @type {HTMLButtonElement | undefined} */ ([...document.querySelectorAll('.quiz-option')][digit]);
-      if (option && !option.disabled) { event.preventDefault(); option.click(); return; }
-    }
-    if (engine === 'rally' && /^[1-5]$/.test(event.key)) {
-      const lane = /** @type {HTMLButtonElement | null} */ (document.querySelector(`[data-action="rally-hit"][data-lane="${Number(event.key) - 1}"]`));
-      if (lane && !lane.disabled) { event.preventDefault(); lane.click(); return; }
-    }
-  }
-  if (state.page === 'game' && currentGame()?.engine === 'maze' && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) {
-    event.preventDefault();
-    const direction = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' }[event.key];
-    void sendGameAction({ direction });
-  }
-  if (state.page === 'game' && currentGame()?.engine === 'race' && event.code === 'Space' && !['INPUT', 'TEXTAREA', 'BUTTON'].includes(document.activeElement?.tagName ?? '')) {
-    event.preventDefault();
-    void sendGameAction({ type: 'tap' });
-  }
-}
-
-function attachAppEvents() {
-  // index.html without #app: nothing to attach to, and render() is a no-op for the same reason.
-  if (!appRoot) return;
-  appRoot.addEventListener('click', handleClick);
-  appRoot.addEventListener('submit', handleSubmit);
-  appRoot.addEventListener('input', handleInput);
-  appRoot.addEventListener('change', handleFilterChange);
-  window.addEventListener('keydown', handleKeydown);
-  window.addEventListener('hashchange', routeFromHash);
-  // Broken artwork must never leave a hole: the capture phase sees the image's error event, marks the
-  // <img> and the CSS shows a labelled placeholder instead. (Inline onerror is blocked by the CSP.)
-  window.addEventListener('error', (event) => {
-    const image = /** @type {HTMLImageElement | null} */ (event.target);
-    if (!image || image.tagName !== 'IMG' || image.dataset.broken) return;
-    image.dataset.broken = '1';
-    image.classList.add('is-broken');
-  }, true);
-}
-
-attachAppEvents();
-applyTheme(state.themePreference);
-window.addEventListener('online', () => {
-  state.online = true;
-  render();
-  // A room listener that failed while the connection was gone does not recover on its own, so the
-  // invite is replayed as soon as the browser is back. Joining is idempotent: if you are already in
-  // the room, openRoomFromLink just re-attaches the listener.
-  if (state.roomId && (state.roomError || !state.room)) void openRoomFromLink(state.roomId);
-});
-window.addEventListener('offline', () => { state.online = false; render(); });
-const themeMedia = window.matchMedia?.('(prefers-color-scheme: light)');
-themeMedia?.addEventListener?.('change', () => {
-  if (state.themePreference === 'system') applyTheme('system', true);
-});
-// Before the first frame: if this device saw the site closed a minute ago, paint the notice at once
-// instead of flashing the arcade. The live read then confirms or corrects it a beat later.
-applyMaintenanceCache();
-try {
-  // The collaborators are resolved here, before the mode check, so a name that is not imported
-  // fails in local practice mode (and in the jsdom tests) too - not only on a deployment.
-  const started = boot({
-    firebaseReady,
-    routeFromHash,
-    watchAuth: (onUser) => onAuthStateChanged(authInstance, onUser),
-    refreshAccount,
-    processGoogleRedirect,
-    reportAuthError,
+  const soundBtn = h('button', { class: 'icon-btn', 'aria-label': 'Toggle sound' });
+  const paintSoundBtn = () => {
+    soundBtn.textContent = prefs.get().sound ? '🔊' : '🔇';
+  };
+  paintSoundBtn();
+  soundBtn.addEventListener('click', () => {
+    prefs.set({ sound: !prefs.get().sound });
+    paintSoundBtn();
+    sfx.play('click');
   });
-  // The maintenance listener starts *after* the first paint, on both paths: the first frame must
-  // never wait on the network (see tests/production-boot.test.js), and it must never be the only
-  // frame a player sees if start-up hit a problem.
-  void started.then(startMaintenanceWatch, startMaintenanceWatch);
-} catch (error) {
-  // A start-up bug must never leave the page blank: draw the shell and keep the error readable.
-  console.error('[PSD-gaming] Start-up failed; drawing the page anyway:', error);
-  routeFromHash();
+
+  const header = h('header', { class: 'topbar' },
+    h('button', {
+      class: 'logo', onclick: () => navigate('/'), 'aria-label:': 'PSD Gaming home',
+      'aria-label': 'PSD Gaming home',
+    }, h('span', { class: 'logo-mark', text: '🎮' }), h('span', { text: 'PSD·GAMING' })),
+    h('nav', { class: 'topnav' },
+      h('button', { class: 'btn btn-ghost btn-sm', onclick: () => navigate('/') }, 'Library'),
+      themeBtn,
+      soundBtn),
+  );
+
+  const view = h('main', { class: 'view', id: 'view', tabindex: '-1' });
+  const footer = h('footer', { class: 'footer' },
+    h('p', {}, h('strong', { text: 'PSD Gaming v2' }), ' — twelve original mini-games. Local-first: scores live in your browser, nothing needs an account.'),
+    h('p', { class: 'muted', text: 'Built to grow: every game is one file. See docs/ADDING_A_GAME.md to add yours.' }),
+  );
+  toastBox = h('div', { class: 'toasts', 'aria-live': 'polite' });
+
+  shell.append(header, view, footer);
+  root.append(skip, shell, toastBox);
+
+  let cleanupView = () => {};
+  function render() {
+    try {
+      cleanupView();
+    } catch {
+      /* ignore */
+    }
+    cleanupView = () => {};
+    clear(view);
+    document.title = 'PSD Gaming — Browser Arcade';
+    const route = parseHash();
+    if (route.name === 'home') homeView(view);
+    else if (route.name === 'game') cleanupView = gameView(view, route.id, route.params);
+    else {
+      view.append(
+        h('div', { class: 'empty' },
+          h('p', { class: 'empty-emoji', text: '👾' }),
+          h('h1', { text: 'Level not found' }),
+          h('button', { class: 'btn btn-primary', onclick: () => navigate('/') }, 'Back to the library')),
+      );
+    }
+    window.scrollTo({ top: 0 });
+  }
+
+  subscribe(render);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === '/' && parseHash().name === 'home' && document.activeElement?.tagName !== 'INPUT') {
+      e.preventDefault();
+      document.querySelector('.search')?.focus();
+    }
+  });
+  render();
 }

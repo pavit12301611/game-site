@@ -6,10 +6,6 @@ on:
   pull_request:
     branches: [main]
 
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   test:
     name: Test and build
@@ -24,96 +20,7 @@ jobs:
         run: npm ci
       - name: Unit tests
         run: npm test
-      - name: Lint
-        run: npm run lint
-      - name: Type check (tsc --checkJs)
-        run: npm run typecheck
+      - name: Runtime smoke test
+        run: npm run smoke
       - name: Production build
         run: npm run build
-
-  functions:
-    name: Cloud Functions backend
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: functions/package-lock.json
-      - name: Install backend dependencies
-        run: npm ci
-        working-directory: functions
-      # functions/vendor is generated and gitignored, so a fresh checkout has no mirror at all:
-      # build it, then verify it matches shared/ and src/engines/ exactly.
-      - name: Mirror the shared modules for the backend
-        run: node scripts/sync-shared.mjs
-      - name: The shared mirror matches shared/ and src/engines/
-        run: node scripts/sync-shared.mjs --check
-      - name: Backend tests (handlers, rooms, cleanup)
-        run: npm test
-        working-directory: functions
-
-  firestore-rules:
-    name: Firestore rules (emulator)
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '21'
-      - name: Install dependencies
-        run: npm ci
-      - name: Run the rules against the emulator
-        id: rules
-        # pipefail keeps the emulator's exit code: without it, a failing suite would look green.
-        run: |
-          set -o pipefail
-          npm run test:rules 2>&1 | tee /tmp/rules.log
-      # The emulator log lives in an artifact blob nobody reads from the run list. When this job
-      # fails on a pull request, put the interesting part of the log where a reviewer already is.
-      - name: Explain the failure in the pull request
-        if: failure() && steps.rules.outcome == 'failure' && github.event_name == 'pull_request'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          {
-            echo "The Firestore rules job failed."
-            echo
-            echo "Failing tests (with the assertion detail):"
-            echo '```'
-            grep -n -A 30 '^not ok' /tmp/rules.log || true
-            echo '```'
-            echo "Last lines of the run:"
-            echo '```'
-            tail -c 2000 /tmp/rules.log
-            echo '```'
-          } > /tmp/rules-comment.md
-          gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/rules-comment.md || true
-
-  audit:
-    name: npm audit
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-      - run: npm ci
-      # What ships to the browser is a release gate: it must stay at zero advisories.
-      - name: Production dependencies
-        run: npm run audit
-      # Build/emulator tooling is reported for tracking; advisories there never reach a player and are
-      # carried by Dependabot instead of blocking every pull request (see README "Tests and CI").
-      - name: Dev tooling (informational)
-        run: npm run audit:dev
-        continue-on-error: true

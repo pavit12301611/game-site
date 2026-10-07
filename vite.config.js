@@ -1,33 +1,17 @@
 import { defineConfig } from 'vite';
-import { firebaseEnvCheckPlugin } from './scripts/firebase-env-check.js';
 
-export default defineConfig(({ mode }) => ({
-  plugins: [firebaseEnvCheckPlugin()],
-  define: {
-    // Shown in the setup dialog so you can tell WHICH deployment you are looking at.
-    // Contains no config values and no secrets.
-    __PSD_BUILD__: JSON.stringify({
-      mode,
-      vercelEnv: process.env.VERCEL_ENV || '',
-      commit: (process.env.VERCEL_GIT_COMMIT_SHA || '').slice(0, 7),
-      builtAt: new Date().toISOString(),
-    }),
-  },
-  build: {
-    rollupOptions: {
-      output: {
-        manualChunks(id) {
-          if (id.includes('/node_modules/@firebase/') || id.includes('/node_modules/firebase/')) return 'firebase-vendor';
-        },
-      },
-    },
-  },
+export default defineConfig({
   server: {
     host: '0.0.0.0',
-    allowedHosts: ['.e2b.app'],
+    port: 5173,
+    allowedHosts: true,
   },
   preview: {
     host: '0.0.0.0',
-    allowedHosts: ['.e2b.app'],
+    port: 4173,
   },
-}));
+  build: {
+    outDir: 'dist',
+    sourcemap: false,
+  },
+});
