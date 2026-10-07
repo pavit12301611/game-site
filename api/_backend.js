@@ -19,14 +19,21 @@
  *
  * `functions/src/backend.js` holds the handler binding so this file stays about HTTP concerns only.
  *
- * Deployment note: on Vercel there are no Application Default Credentials, so the Admin SDK needs a
- * service account. Set `FIREBASE_SERVICE_ACCOUNT` (the JSON, as one line) in the Vercel environment;
- * without it the SDK falls back to default credentials, which only work on Google Cloud.
+ * Deployment note: on Vercel there are no Application Default Credentials, so the Admin SDK needs
+ * credentials one of three ways — set `FIREBASE_SERVICE_ACCOUNT` (a service-account JSON on one line),
+ * or go **keyless** with Workload Identity Federation by setting `FIREBASE_WIF_AUDIENCE`,
+ * `FIREBASE_WIF_SERVICE_ACCOUNT` and `FIREBASE_PROJECT_ID` (see `resolveBackend` below and the
+ * "Keyless deploy" section of docs/online-play.md), or fall back to Application Default Credentials.
+ * The service-account route is blocked when an org policy forbids key creation, which is exactly when
+ * WIF is the answer.
  */
 
 import { cert, getApps, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
-import { Timestamp, getFirestore } from 'firebase-admin/firestore';
+import { getFirestore } from 'firebase-admin/firestore';
+import { ExternalAccountClient } from 'google-auth-library';
+import { getVercelOidcToken } from '@vercel/oidc';
+import { Firestore, Timestamp } from '@google-cloud/firestore';
 
 import { createFirestoreStore } from '../functions/src/store.js';
 import { makeHandlers } from '../functions/src/backend.js';
@@ -84,36 +91,108 @@ function statusNumber(status) {
   return STATUS_NUMBER[status] ?? 500;
 }
 
-/** The single Admin app, created lazily and reused across warm invocations. */
-let cachedApp;
-function adminApp() {
-  if (cachedApp) return cachedApp;
-  if (getApps().length) {
-    cachedApp = getApps()[0];
-    return cachedApp;
-  }
+/** Default OAuth scopes: cloud-platform is the umbrella that covers Firestore, Auth and IAM. */
+const WIF_DEFAULT_SCOPES = [
+  'https://www.googleapis.com/auth/cloud-platform',
+  'https://www.googleapis.com/auth/datastore',
+  'https://www.googleapis.com/auth/identitytoolkit',
+  'https://www.googleapis.com/auth/firebase',
+];
+
+/**
+ * Resolves the Firestore `db` and the Auth client the routes use, once per warm instance.
+ *
+ * Three ways to authenticate, tried in order:
+ *
+ *   1. **`FIREBASE_SERVICE_ACCOUNT`** — a service-account JSON key. Simplest, but blocked when an org
+ *      policy forbids key creation.
+ *   2. **Workload Identity Federation (keyless)** — `FIREBASE_WIF_AUDIENCE`, `FIREBASE_WIF_SERVICE_ACCOUNT`
+ *      and `FIREBASE_PROJECT_ID`. Vercel signs a short-lived OIDC token for each invocation
+ *      (`getVercelOidcToken`); we hand it to google-auth-library's `ExternalAccountClient`, which
+ *      exchanges it at Google's STS endpoint and impersonates the Admin SDK service account. No key
+ *      file anywhere.
+ *   3. **Application Default Credentials** — `initializeApp()`; works on Google Cloud runtimes.
+ *
+ * Firestore note: firebase-admin's `getFirestore()` refuses a custom credential (it only accepts a
+ * service-account key or ADC), so under WIF we build Firestore directly from `@google-cloud/firestore`
+ * and hand it the auth client (`new Firestore({ projectId, authClient })`). firebase-admin is still
+ * used for Auth, whose generic credential path only needs `getAccessToken()`.
+ *
+ * @returns {{ db: import('@google-cloud/firestore').Firestore, auth: import('firebase-admin/auth').Auth }}
+ */
+function resolveBackend() {
+  if (cachedBackend) return cachedBackend;
+
   const raw = process.env.FIREBASE_SERVICE_ACCOUNT || process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
   if (raw) {
     try {
-      cachedApp = initializeApp({ credential: cert(JSON.parse(raw)) });
-      return cachedApp;
+      const app = getApps().length ? getApps()[0] : initializeApp({ credential: cert(JSON.parse(raw)) });
+      cachedBackend = { db: getFirestore(app), auth: getAuth(app) };
+      return cachedBackend;
     } catch (error) {
-      console.error('[psd-gaming] FIREBASE_SERVICE_ACCOUNT is not valid JSON; using default credentials', error);
+      console.error('[psd-gaming] FIREBASE_SERVICE_ACCOUNT is not valid JSON; trying Workload Identity Federation', error);
     }
   }
-  cachedApp = initializeApp();
-  return cachedApp;
+
+  if (process.env.FIREBASE_WIF_AUDIENCE) {
+    const projectId = process.env.FIREBASE_PROJECT_ID;
+    const serviceAccount = process.env.FIREBASE_WIF_SERVICE_ACCOUNT;
+    if (!projectId || !serviceAccount) {
+      throw new Error(
+        'Workload Identity Federation needs FIREBASE_WIF_AUDIENCE, FIREBASE_WIF_SERVICE_ACCOUNT and FIREBASE_PROJECT_ID.',
+      );
+    }
+    const scopes = process.env.FIREBASE_WIF_SCOPES
+      ? process.env.FIREBASE_WIF_SCOPES.split(',').map((scope) => scope.trim()).filter(Boolean)
+      : WIF_DEFAULT_SCOPES;
+
+    const authClient = ExternalAccountClient.fromJSON({
+      type: 'external_account',
+      audience: process.env.FIREBASE_WIF_AUDIENCE,
+      subject_token_type: 'urn:ietf:params:oauth:token-type:jwt',
+      token_url: 'https://sts.googleapis.com/v1/token',
+      service_account_impersonation_url: `https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${serviceAccount}:generateAccessToken`,
+      subject_token_supplier: {
+        getSubjectToken: async () => {
+          try {
+            return await getVercelOidcToken();
+          } catch (error) {
+            throw new Error(
+              'Could not read the Vercel OIDC token. Is OIDC federation enabled for this project, and is this running on Vercel?',
+              { cause: error },
+            );
+          }
+        },
+      },
+    });
+    // Pin the umbrella scope explicitly: google-auth-library's getScopesArray() reads `scopes`, not
+    // `defaultScopes`, so this wins over the datastore scope @google-cloud/firestore would otherwise
+    // set — and cloud-platform authorizes both Firestore and Auth with one impersonated token.
+    authClient.scopes = scopes;
+
+    const db = new Firestore({ projectId, authClient });
+    const app = getApps().length ? getApps()[0] : initializeApp({
+      projectId,
+      credential: {
+        getAccessToken: async () => {
+          const { token } = await authClient.getAccessToken();
+          if (!token) throw new Error('Workload Identity Federation returned no access token.');
+          // A conservative TTL keeps firebase-admin refreshing; the client caches the real token.
+          return { access_token: token, expires_in: 300 };
+        },
+      },
+    });
+    cachedBackend = { db, auth: getAuth(app) };
+    return cachedBackend;
+  }
+
+  const app = getApps().length ? getApps()[0] : initializeApp();
+  cachedBackend = { db: getFirestore(app), auth: getAuth(app) };
+  return cachedBackend;
 }
 
-/** @returns {import('firebase-admin/firestore').Firestore} */
-function firestore() {
-  return getFirestore(adminApp());
-}
-
-/** @returns {import('firebase-admin/auth').Auth} */
-function adminAuth() {
-  return getAuth(adminApp());
-}
+/** The resolved backend, cached across warm invocations. @type {{ db: any, auth: any } | null} */
+let cachedBackend = null;
 
 /**
  * Recovers the caller's uid from the `Authorization: Bearer <idToken>` header.
@@ -126,7 +205,7 @@ async function authFromRequest(req) {
   const header = req.headers?.authorization || req.headers?.Authorization || '';
   const match = /^Bearer\s+(.+)$/i.exec(String(header));
   if (!match) return { uid: '', token: {} };
-  const decoded = await adminAuth().verifyIdToken(match[1]);
+  const decoded = await resolveBackend().auth.verifyIdToken(match[1]);
   return { uid: decoded.uid, token: decoded };
 }
 
@@ -139,13 +218,13 @@ function readBody(req) {
 
 /** Builds a Firestore store + the handlers for one request. */
 function backend() {
-  const store = createFirestoreStore(firestore(), {
+  const store = createFirestoreStore(resolveBackend().db, {
     now: () => Date.now(),
     toTimestamp: (ms) => Timestamp.fromMillis(ms),
   });
   const handlers = makeHandlers(store, {
     timestampMs: Date.now(),
-    deleteAuthUser: async (uid) => { await adminAuth().deleteUser(uid); },
+    deleteAuthUser: async (uid) => { await resolveBackend().auth.deleteUser(uid); },
   });
   return handlers;
 }
@@ -231,7 +310,7 @@ export async function handleCleanup(req, res) {
     }
   }
   try {
-    const store = createFirestoreStore(firestore(), {
+    const store = createFirestoreStore(resolveBackend().db, {
       now: () => Date.now(),
       toTimestamp: (ms) => Timestamp.fromMillis(ms),
     });

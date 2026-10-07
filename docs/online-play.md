@@ -104,7 +104,10 @@ The backend is now Vercel serverless functions, so it deploys with the site — 
 1. **Set the Admin SDK credentials for the api functions.** On Vercel → Settings → Environment
    Variables, add `FIREBASE_SERVICE_ACCOUNT` (the service-account JSON, minified onto one line; see
    `.env.example`) for **Production** and **Preview**. On Vercel there are no Application Default
-   Credentials, so without it the api functions cannot reach Firestore or verify tokens.
+   Credentials, so without it the api functions cannot reach Firestore or verify tokens. If an org
+   policy (`constraints/iam.disableServiceAccountKeyCreation` / `iam.managed.disableServiceAccountKeyCreation`)
+   blocks creating that key, skip this and use the **keyless** Workload Identity Federation setup in
+   the next section instead.
 2. Enable the sign-in providers you want in **Authentication → Sign-in method** (Google,
    Email/Password, Anonymous for guests).
 3. Provision the first admin: create the account, then add `admins/{uid} = { admin: true }` in the
@@ -129,6 +132,93 @@ The backend is now Vercel serverless functions, so it deploys with the site — 
 > To go back to Firebase Cloud Functions instead, restore the `callableFor(name)` wrappers in
 > `functions/src/index.js`, re-add the `functions` block to `firebase.json`, and point
 > `src/online/callables.js` back at `httpsCallable`.
+
+### Keyless deploy (Workload Identity Federation — no service-account key)
+
+`FIREBASE_SERVICE_ACCOUNT` needs a downloadable service-account **key**, and many organisations block
+that: the org policies `constraints/iam.disableServiceAccountKeyCreation` (legacy) and
+`iam.managed.disableServiceAccountKeyCreation` (managed) forbid key creation outright, and only an
+**Organization Policy Administrator** at the org or folder level can override them — a project owner
+cannot. The keyless answer is Workload Identity Federation (WIF): Vercel proves its identity with a
+short-lived OIDC token, Google exchanges it, and the api functions impersonate a service account
+**without ever holding a private key**. `api/_backend.js` wires this up with google-auth-library's
+`ExternalAccountClient` + `@google-cloud/firestore` (firebase-admin's Firestore refuses a custom
+credential, so Firestore is built directly; firebase-admin is still used for Auth).
+
+The whole setup is three GCP resources, one IAM binding, and three Vercel env vars.
+
+**1. Pick (or create) a service account to impersonate.** This is the identity the functions run as.
+It is never downloaded — only its email is used. Grant it the two roles the routes need, e.g. the
+default service account or a dedicated `psd-admin@<project>.iam.gserviceaccount.com`:
+
+```bash
+gcloud iam service-accounts create psd-admin --project=<PROJECT_ID>
+
+gcloud projects add-iam-policy-binding <PROJECT_ID> \
+  --member="serviceAccount:psd-admin@<PROJECT_ID>.iam.gserviceaccount.com" \
+  --role="roles/datastore.user"          # Firestore reads/writes
+
+gcloud projects add-iam-policy-binding <PROJECT_ID> \
+  --member="serviceAccount:psd-admin@<PROJECT_ID>.iam.gserviceaccount.com" \
+  --role="roles/identitytoolkit.viewer"  # verify ID tokens / manage Auth users
+```
+
+(`roles/datastore.user` is the Firestore access role; the routes also delete Auth users on account
+deletion, which the identitytoolkit role covers.)
+
+**2. Create a Workload Identity Pool and an OIDC provider for Vercel.** The pool is the trust anchor;
+the provider describes how to validate Vercel's token.
+
+```bash
+gcloud iam workload-identity-pools create "vercel-pool" \
+  --project=<PROJECT_ID> --location="global"
+
+gcloud iam workload-identity-pools providers create-oidc "vercel-provider" \
+  --project=<PROJECT_ID> --location="global" \
+  --workload-identity-pool="vercel-pool" \
+  --issuer-uri="https://oidc.vercel.com/<VERCEL_TEAM_SLUG>" \
+  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
+  --allowed-audiences="https://<YOUR_DOMAIN>"   # your Vercel app URL; Vercel sets it as the aud
+```
+
+The issuer URI carries your **Vercel team slug** (`https://oidc.vercel.com/<team>`), and the audience
+must match the deployment URL Vercel signs the token for. Enable OIDC federation for the project first
+(Vercel dashboard → Project → Settings → OIDC Federation → *Enable*), which yields the team slug.
+
+**3. Let Vercel's identity impersonate the service account.** Bind the federated principal to the SA:
+
+```bash
+gcloud iam service-accounts add-iam-policy-binding \
+  psd-admin@<PROJECT_ID>.iam.gserviceaccount.com \
+  --project=<PROJECT_ID> --role="roles/iam.serviceAccountTokenCreator" \
+  --member="principal://iam.googleapis.com/projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/vercel-pool/subject/https://<YOUR_DOMAIN>"
+```
+
+**4. Read the provider resource name.** This is the `FIREBASE_WIF_AUDIENCE` value — copy it verbatim:
+
+```bash
+gcloud iam workload-identity-pools providers describe "vercel-provider" \
+  --project=<PROJECT_ID> --location="global" --workload-identity-pool="vercel-pool" \
+  --format="value(name)"
+# //iam.googleapis.com/projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/vercel-pool/providers/vercel-provider
+```
+
+**5. Set three Vercel environment variables** (Project → Settings → Environment Variables, for
+**Production** and **Preview**):
+
+| Variable | Value |
+| --- | --- |
+| `FIREBASE_WIF_AUDIENCE` | the provider resource name from step 4 (copied verbatim) |
+| `FIREBASE_WIF_SERVICE_ACCOUNT` | `psd-admin@<PROJECT_ID>.iam.gserviceaccount.com` |
+| `FIREBASE_PROJECT_ID` | your Firebase/GCP project id |
+
+`FIREBASE_SERVICE_ACCOUNT` is optional and takes precedence if both are set — it stays as a manual
+fallback. The routes try the key first, then WIF, then Application Default Credentials, so a single
+missing variable surfaces as a readable startup error rather than a silent misconfiguration.
+
+Redeploy after setting the variables (Vercel only bakes env vars into a build at deploy time). Verify
+with the staging smoke-test checklist below — a working keyless setup creates a room over `/api/*`;
+a broken one answers `internal`, and the function logs name the missing piece.
 
 ### What the operator must still decide (labelled, not invented here)
 
