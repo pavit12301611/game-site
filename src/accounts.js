@@ -121,7 +121,7 @@ export async function registerProfile(user, rawUsername) {
   await callBackend('claimUsername', { username });
   state.profile = { uid: user.uid, username, usernameLower };
   state.displayName = username;
-  localStorage.setItem(DISPLAY_NAME_STORAGE_KEY, username);
+  try { localStorage.setItem(DISPLAY_NAME_STORAGE_KEY, username); } catch {}
   await refreshAdminStatus(user);
   subscribeSocial(user);
 }

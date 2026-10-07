@@ -487,7 +487,7 @@ export async function createOnlineRoom(gameId, maxPlayers = 2, friend = null, ch
   if (![2, 3].includes(Number(maxPlayers))) throw new Error('Choose a room size of 2 or 3 players.');
   const name = chosenName.trim().slice(0, 20) || playerDisplayName(user);
   state.displayName = name;
-  localStorage.setItem(DISPLAY_NAME_STORAGE_KEY, name);
+  try { localStorage.setItem(DISPLAY_NAME_STORAGE_KEY, name); } catch {}
   const payload = await callBackend('createRoom', { gameId, maxPlayers: Number(maxPlayers), displayName: name });
   rememberKnownRoom(payload.roomId, presenceNow());
   if (friend?.uid) {

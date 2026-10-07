@@ -432,7 +432,7 @@ async function handleCreateRoomSubmit(form) {
   const displayName = String(formData.get('displayName') || '').trim();
   if (displayName) {
     state.displayName = displayName.slice(0, 20);
-    localStorage.setItem(DISPLAY_NAME_STORAGE_KEY, state.displayName);
+    try { localStorage.setItem(DISPLAY_NAME_STORAGE_KEY, state.displayName); } catch {}
   }
   await createOnlineRoom(gameId, maxPlayers, state.modal?.friend || null, state.displayName);
   state.modal = null;
