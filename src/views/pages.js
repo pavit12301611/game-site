@@ -25,6 +25,10 @@ import {
   buildImprovementIdeas,
   summarizeReviewSentiment,
 } from '../../shared/reviews/agent.js';
+import {
+  MAINTENANCE_MESSAGE_MAX,
+  MAINTENANCE_PIN_LENGTH,
+} from '../../shared/online/maintenance.js';
 
 /** The 640 px picture of a game, used as the backdrop of the game stage heading. */
 function stageArt(game) {
@@ -259,6 +263,7 @@ const ADMIN_TABS = [
   ['players', 'Players'],
   ['social', 'Social'],
   ['reviews', 'Review agent'],
+  ['maintenance', 'Maintenance'],
   ['access', 'Access'],
 ];
 
@@ -391,6 +396,35 @@ function renderAdminAccess(data) {
     <aside class="surface admin-powers"><div class="panel-heading"><div><span class="eyebrow">Safety rails</span><h2>Still enforced by Firestore</h2></div><span>${icon('shield')}</span></div><ul class="admin-powers-list"><li>Nobody can mint their first flag from the client - the <b>first</b> admin is still created in the Firebase console.</li><li>A flag document can only ever contain <code>admin: true/false</code>, nothing else.</li><li>You cannot revoke yourself (rules block it), so the studio can never lock itself out.</li><li>Revoked admins lose access the moment their token refreshes.</li></ul></aside></div>`;
 }
 
+/**
+ * The maintenance switch: close the arcade for visitors, edit the sentence they read, and mint the
+ * 16-digit tester PIN that opens the door for invited testers.
+ *
+ * The digits are shown here exactly once, right after the backend created them - Firestore only ever
+ * holds a salted hash, and the collection holding it is unreadable from any client.
+ */
+function renderAdminMaintenance() {
+  const status = state.maintenance;
+  const pin = state.adminMaintenancePin;
+  const pinPanel = pin
+    ? `<div class="notice-panel notice-warn maintenance-pin-panel" role="status"><span>${icon('shield')}</span><div><b>New tester PIN · shown once</b><p class="maintenance-pin-value">${esc(pin.pin)}</p><small>Copy it now - the database stores only a salted hash, so this is the last time these digits are visible anywhere. Anyone who types them while maintenance is on steps into the arcade for their session.</small></div><button class="button button-primary" type="button" data-action="admin-maintenance-copy-pin">${icon('copy')} Copy PIN</button></div>`
+    : '';
+  return `<div class="admin-grid">
+    <section class="surface admin-table-panel">
+      <div class="panel-heading"><div><span class="eyebrow">What visitors see while the arcade is closed</span><h2>Maintenance mode <i>${status?.enabled ? 'ON' : 'off'}</i></h2></div><span class="admin-live"><i></i> ${status?.pinActive ? `tester PIN gen ${status.pinVersion} live` : 'no tester PIN'}</span></div>
+      <form class="maintenance-form" data-form="maintenance">
+        <label class="maintenance-toggle" for="maintenance-enabled"><input id="maintenance-enabled" type="checkbox" name="enabled" ${status?.enabled ? 'checked' : ''}><span><b>Enable maintenance mode</b><small>Every visitor without the current tester PIN sees the maintenance page. Admins keep full access, so the switch can always be turned back off - and the reviews page, the game library and online rooms are untouched, they simply wait behind the notice.</small></span></label>
+        <label for="maintenance-message">Message shown on the maintenance page</label>
+        <textarea id="maintenance-message" name="message" rows="4" maxlength="${MAINTENANCE_MESSAGE_MAX}" required>${esc(status?.message || '')}</textarea>
+        <div class="maintenance-form-actions"><button class="button button-primary" type="submit">Save and publish</button><button class="button button-outline" type="button" data-action="admin-maintenance-pin">${icon('spark')} Generate a new tester PIN</button></div>
+        <small>Turning maintenance on always mints a fresh ${MAINTENANCE_PIN_LENGTH}-digit PIN, and so does the button above; the previous PIN stops working immediately. The status lives in Firestore (<code>maintenance/status</code>) and the digits are never stored - only a salted hash no browser can read.</small>
+      </form>
+      ${pinPanel}
+    </section>
+    <aside class="surface admin-powers"><div class="panel-heading"><div><span class="eyebrow">How the gate works</span><h2>Safe by construction</h2></div><span>${icon('shield')}</span></div><ul class="admin-powers-list"><li>The public document holds only the flag and the message: <b>no PIN, no hash</b>. Everyone may read it, so visitors see the notice without signing in.</li><li>The PIN is verified by the <code>redeemMaintenancePin</code> callable against a salted hash in a collection no client can read, behind a rate limit.</li><li>Writing maintenance state goes through <code>adminSetMaintenance</code>, which re-checks <code>admins/{uid}.admin == true</code> on the server.</li><li>Firestore additionally limits a direct admin update to the four public fields, and refuses every other client write.</li></ul></aside>
+  </div>`;
+}
+
 export function renderAdmin() {
   if (!state.isAdmin) return `<section class="admin-denied"><span>${icon('shield')}</span><h1>Restricted area</h1><p>This Firebase account is not marked as an administrator.</p><button class="button button-primary" data-action="navigate" data-page="home">Back to the arcade</button></section>`;
   const data = state.adminData;
@@ -406,6 +440,7 @@ export function renderAdmin() {
   else if (tab === 'players') body = `<section class="surface admin-table-panel"><div class="panel-heading"><div><span class="eyebrow">Everyone who claimed a name</span><h2>Players <i>${data.profiles.length}</i></h2></div><span class="admin-live"><i></i> latest 300</span></div>${renderAdminPlayers(data)}</section>`;
   else if (tab === 'social') body = renderAdminSocial(data);
   else if (tab === 'reviews') body = renderAdminReviews(data);
+  else if (tab === 'maintenance') body = renderAdminMaintenance();
   else if (tab === 'access') body = renderAdminAccess(data);
   else body = renderAdminOverview(data);
   return `<section class="admin-heading"><div><div class="eyebrow">Private admin area · UID verified · god mode</div><h1>Arcade control<span>.</span></h1><p>Only accounts with <code>admins/{uid}.admin = true</code> can see this workspace - and Firestore re-checks the flag on every action.</p></div><button class="button button-outline" data-action="refresh-admin">${icon('spark')} Refresh data</button></section>

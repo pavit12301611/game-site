@@ -57,9 +57,12 @@ import {
   adminKickPlayer,
   adminRemovePlayer,
   adminRevokeAccess,
+  adminSetMaintenance,
+  clearAdminMaintenancePin,
   loadAdminData,
 } from './online/admin.js';
 import { loadFeaturedReview, loadPublicReviews, submitReview } from './reviews.js';
+import { loadMaintenanceStatus, unlockMaintenanceWithPin } from './maintenance.js';
 import {
   claimHost,
   createOnlineRoom,
@@ -224,6 +227,33 @@ async function handleReviewSubmit(form) {
   }
 }
 
+/**
+ * The admin's maintenance form: publish the message and switch the closed notice on or off. The
+ * backend mints a fresh tester PIN whenever maintenance is turned on, and returns it here once.
+ */
+async function handleMaintenanceSubmit(form) {
+  const formData = new FormData(form);
+  await adminSetMaintenance({
+    enabled: formData.get('enabled') === 'on',
+    message: String(formData.get('message') || ''),
+  });
+}
+
+/**
+ * The tester PIN on the maintenance page. The digits go straight to the backend, which compares
+ * them against the salted hash and answers with a pass for this session; a wrong PIN lands as the
+ * sentence next to the field, so this handler never throws one of its own.
+ */
+async function handleMaintenancePinSubmit(form) {
+  const pin = String(new FormData(form).get('pin') || '');
+  try {
+    await unlockMaintenanceWithPin(pin);
+    showToast('Tester PIN accepted. The arcade is open for this tab.', 'success');
+  } catch {
+    // The maintenance page already shows the reason under the field (wrong PIN, rate limit, moved on).
+  }
+}
+
 async function handleAdminGrantSubmit(form) {
   /** Granting by raw UID goes through the same confirm gate as the player-row button. */
   const uidToPromote = String(new FormData(form).get('uid') || '').trim();
@@ -294,7 +324,13 @@ function handleClick(event) {
   if (action === 'reload') { location.reload(); return; }
   if (action === 'leave-room') { void leaveCurrentRoom(); return; }
   if (action === 'modal-backdrop' && event.target === actionButton) { modalClose(); return; }
-  if (action === 'navigate') { navigate(page); return; }
+  if (action === 'navigate') {
+    navigate(page);
+    // The maintenance strip carries `data-tab`, so one click lands on the switch it talks about.
+    const tab = adminArg(actionButton.dataset.tab);
+    if (tab && state.page === 'admin') { state.adminTab = tab; render(); }
+    return;
+  }
   if (action === 'toggle-theme') { toggleTheme(); return; }
   if (action === 'skip-to-content') { const main = /** @type {HTMLElement | null} */ (document.querySelector('#page-content')); if (main) { main.setAttribute('tabindex', '-1'); main.focus(); } return; }
   if (action === 'open-settings') { modalOpen({ type: 'settings' }); return; }
@@ -424,6 +460,31 @@ function handleClick(event) {
     return;
   }
   if (action === 'admin-train-review-agent') { void adminTrainReviewAgent(); return; }
+  if (action === 'admin-maintenance-pin') {
+    const isOn = Boolean(state.maintenance?.enabled);
+    openAdminConfirm(
+      isOn ? 'Generate a new tester PIN?' : 'Turn maintenance on with a new tester PIN?',
+      isOn
+        ? 'A fresh 16-digit PIN is minted and the current one stops working immediately. Testers already inside keep their session until they reload.'
+        : 'Maintenance mode is off for visitors right now. Confirming switches it on and mints a fresh 16-digit tester PIN for the people you send it to.',
+      isOn ? 'Generate PIN' : 'Turn on and mint PIN',
+      () => adminSetMaintenance({ enabled: true, message: state.maintenance?.message || '', rotatePin: true }),
+    );
+    return;
+  }
+  if (action === 'admin-maintenance-copy-pin') {
+    const pin = adminArg(state.adminMaintenancePin?.pin);
+    if (!pin) return;
+    if (navigator.clipboard?.writeText) {
+      void navigator.clipboard.writeText(pin).then(
+        () => { clearAdminMaintenancePin(); render(); showToast('Tester PIN copied. The panel is cleared because the digits are not stored anywhere.', 'success'); },
+        () => showToast(pin, 'warning'),
+      );
+    } else {
+      showToast(pin, 'warning');
+    }
+    return;
+  }
   if (action === 'admin-tab') { state.adminTab = adminArg(actionButton.dataset.tab) || 'overview'; render(); return; }
   if (action === 'confirm-modal-run') {
     // The confirm modal carries its work as a function; close first so errors toast over the page.
@@ -520,6 +581,8 @@ function handleSubmit(event) {
   else if (type === 'auth') task = handleAuthSubmit(form);
   else if (type === 'username-setup') task = handleUsernameSetupSubmit(form);
   else if (type === 'admin-grant') task = handleAdminGrantSubmit(form);
+  else if (type === 'maintenance') task = handleMaintenanceSubmit(form);
+  else if (type === 'maintenance-pin') task = handleMaintenancePinSubmit(form);
   else if (type === 'settings') { handleSettingsSubmit(form); if (submitButton) submitButton.disabled = false; return; }
   else if (type === 'friend-search') { requestFriendSearch(form); if (submitButton) submitButton.disabled = false; return; }
   else if (type === 'join-code') task = handleJoinCodeSubmit(form);
@@ -652,7 +715,7 @@ themeMedia?.addEventListener?.('change', () => {
 try {
   // The collaborators are resolved here, before the mode check, so a name that is not imported
   // fails in local practice mode (and in the jsdom tests) too - not only on a deployment.
-  void boot({
+  const started = boot({
     firebaseReady,
     routeFromHash,
     watchAuth: (onUser) => onAuthStateChanged(authInstance, onUser),
@@ -660,6 +723,11 @@ try {
     processGoogleRedirect,
     reportAuthError,
   });
+  // The public maintenance document ("is the arcade closed?") is read at the first idle moment after
+  // the first paint, never before or during it: the shell must not wait on the network, and a slow
+  // read simply keeps the arcade visible. Tabs that come back into focus re-read it, so an operator's
+  // switch reaches visitors within a click or two. `loadMaintenanceStatus` never rejects.
+  void started.then(() => loadMaintenanceStatus(), () => loadMaintenanceStatus());
 } catch (error) {
   // A start-up bug must never leave the page blank: draw the shell and keep the error readable.
   console.error('[PSD-gaming] Start-up failed; drawing the page anyway:', error);

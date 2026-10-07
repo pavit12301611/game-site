@@ -202,6 +202,44 @@ export async function adminLabelReview(reviewId, sentiment) {
   });
 }
 
+/**
+ * Turn maintenance mode on or off and publish the message visitors read.
+ *
+ * The whole write is a backend call - the rules only let an admin touch the four public fields, and
+ * the callable is what mints (and rotates) the 16-digit tester PIN. The PIN comes back in this one
+ * response and is kept in memory for the panel that shows it; it is never written to Firestore in
+ * plaintext, and the operator can copy it from there before it disappears with the next repaint.
+ * @param {{ enabled: boolean, message: string, rotatePin?: boolean }} settings
+ */
+export async function adminSetMaintenance({ enabled, message, rotatePin = false }) {
+  try {
+    const result = await callBackend('adminSetMaintenance', {
+      enabled: Boolean(enabled),
+      message: String(message ?? ''),
+      rotatePin: Boolean(rotatePin),
+    });
+    const pin = result?.pin ? String(result.pin) : '';
+    if (pin) state.adminMaintenancePin = { pin, pinVersion: Number(result?.pinVersion) || 0 };
+    // Nothing to copy once the arcade reopens: the PIN is retired, so the panel goes with it.
+    else if (result?.enabled === false) state.adminMaintenancePin = null;
+    showToast(pin
+      ? 'Maintenance updated. Copy the new tester PIN now - it is only stored as a hash.'
+      : result?.enabled
+        ? 'Maintenance updated. Visitors see the notice until you switch it off.'
+        : 'Maintenance mode is off. Visitors see the arcade again.', 'success');
+    await loadAdminData();
+    return result;
+  } catch (error) {
+    showToast(friendlyError(error), 'warning');
+    return null;
+  }
+}
+
+/** Forget the one-time PIN display (after it was copied, or when an admin hides it). */
+export function clearAdminMaintenancePin() {
+  state.adminMaintenancePin = null;
+}
+
 export async function adminTrainReviewAgent() {
   try {
     const result = await callBackend('adminTrainReviewAgent');

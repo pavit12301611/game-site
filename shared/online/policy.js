@@ -57,6 +57,12 @@ export const RATE_LIMITS = Object.freeze({
   review: Object.freeze({ windowMs: 24 * 60 * 60 * 1000, max: 3, label: 'reviews per day' }),
   claimUsername: Object.freeze({ windowMs: 24 * 60 * 60 * 1000, max: 10, label: 'username claims per day' }),
   deleteAccount: Object.freeze({ windowMs: 24 * 60 * 60 * 1000, max: 3, label: 'account deletions per day' }),
+  /**
+   * The tester PIN gate. This one is not per-user: it must work for a visitor who has not signed in
+   * (and has no uid to count against), so the backend keeps a single bucket for the whole gate. A
+   * 16-digit PIN cannot be guessed in 60 tries per ten minutes, and signing out does not reset it.
+   */
+  maintenancePin: Object.freeze({ windowMs: 10 * 60 * 1000, max: 60, label: 'tester PIN attempts per ten minutes' }),
 });
 
 /** The action keys each engine understands. Anything else is rejected, never stored. */

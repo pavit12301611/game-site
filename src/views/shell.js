@@ -68,10 +68,25 @@ export function renderMobileNav() {
   return `<nav class="mobile-nav has-settings ${state.isAdmin ? 'has-admin' : ''}" aria-label="Mobile navigation">${pageItems}<button class="mobile-nav-item" data-action="open-settings">${icon('settings')}<span>Settings</span></button></nav>`;
 }
 
+/**
+ * The strip an admin sees while maintenance mode is on. Visitors never see this - they get the
+ * maintenance page itself - so it exists to make the state impossible to forget and to keep the
+ * switch one click away.
+ */
+function renderMaintenanceBanner() {
+  if (!state.isAdmin || !state.maintenance?.enabled) return '';
+  const pin = state.maintenance.pinActive
+    ? `Tester PIN generation ${state.maintenance.pinVersion} is live.`
+    : 'No tester PIN is live.';
+  return `<div class="maintenance-banner" role="status">${icon('shield')}<span>Maintenance mode is ON. Visitors see the maintenance page. ${esc(pin)}</span><button class="text-button" data-action="navigate" data-page="admin" data-tab="maintenance">Open the switch ${icon('arrow')}</button></div>`;
+}
+
 export function renderShell() {
   const conn = connection();
   const pageNames = { home: 'Welcome back', catalog: 'Game library', friends: 'Your crew', reviews: 'Player reviews', admin: 'Admin studio', room: 'Private room', game: 'Now playing', privacy: 'Privacy notice', safety: 'Terms & safety' };
-  return `<div class="app-shell"><button class="button button-primary skip-link" data-action="skip-to-content">Skip to content</button>${renderSidebar()}<div class="main-column">${renderTopbar()}<aside class="page-context" aria-label="Page status"><span class="page-context-name">${pageNames[state.page] || 'Arcade'}</span><span class="network-status is-${conn.kind}" title="${esc(conn.title)}"><i></i><span>${esc(conn.shortLabel)}</span></span></aside><main class="page-content" id="page-content">${renderPage()}</main></div>${renderMobileNav()}</div>${state.modal ? renderModal() : ''}${state.toast ? `<div class="toast toast-${state.toast.kind}" role="status">${icon(state.toast.kind === 'success' ? 'check' : 'spark')}<span>${esc(state.toast.message)}</span></div>` : ''}`;
+  // The banner sits at the top of the main column, not in `.app-shell` itself: from 1024 px up the
+  // shell is a two-column grid, and a new first child would push the sidebar out of its column.
+  return `<div class="app-shell"><button class="button button-primary skip-link" data-action="skip-to-content">Skip to content</button>${renderSidebar()}<div class="main-column">${renderMaintenanceBanner()}${renderTopbar()}<aside class="page-context" aria-label="Page status"><span class="page-context-name">${pageNames[state.page] || 'Arcade'}</span><span class="network-status is-${conn.kind}" title="${esc(conn.title)}"><i></i><span>${esc(conn.shortLabel)}</span></span></aside><main class="page-content" id="page-content">${renderPage()}</main></div>${renderMobileNav()}</div>${state.modal ? renderModal() : ''}${state.toast ? `<div class="toast toast-${state.toast.kind}" role="status">${icon(state.toast.kind === 'success' ? 'check' : 'spark')}<span>${esc(state.toast.message)}</span></div>` : ''}`;
 }
 
 export function renderPage() {

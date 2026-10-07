@@ -54,6 +54,20 @@ import {
   reviewFeaturedScore,
   trainDistilledReviewModel,
 } from '../vendor/shared/reviews/agent.js';
+import {
+  MAINTENANCE_DEFAULT_MESSAGE,
+  MAINTENANCE_PIN_LENGTH,
+  isValidMaintenancePin,
+  normalizeMaintenancePin,
+  safeMaintenanceStatus,
+  sanitizeMaintenanceMessage,
+} from '../vendor/shared/online/maintenance.js';
+import {
+  generateMaintenancePin,
+  generateMaintenanceSalt,
+  hashMaintenancePin,
+  verifyMaintenancePin,
+} from './maintenance.js';
 import { paths, text } from './store.js';
 
 export { RoomError };
@@ -118,14 +132,15 @@ export function createHandlers(deps) {
   const tokenOf = (context) => context?.token ?? {};
 
   /**
-   * @param {string} uid
+   * Spends one bucket of a rate limit at an explicit document path.
+   * @param {string} path
    * @param {keyof typeof RATE_LIMITS} key
    * @returns {Promise<void>}
    */
-  async function spendRateLimit(uid, key) {
+  async function spendRateLimitAt(path, key) {
     const policy = RATE_LIMITS[key];
     await store.transaction(async (tx) => {
-      const snapshot = await tx.get(paths.rateLimit(uid));
+      const snapshot = await tx.get(path);
       const record = snapshot.exists ? snapshot.data.buckets ?? {} : {};
       const result = checkRateLimit(record, key, policy, deps.timestampMs);
       if (!result.ok) {
@@ -136,8 +151,17 @@ export function createHandlers(deps) {
         });
       }
       // `updatedAtMs` lets the scheduled cleanup drop documents that only hold long-expired buckets.
-      tx.set(paths.rateLimit(uid), { buckets: pruneRateRecord(result.next, deps.timestampMs), updatedAtMs: deps.timestampMs });
+      tx.set(path, { buckets: pruneRateRecord(result.next, deps.timestampMs), updatedAtMs: deps.timestampMs });
     });
+  }
+
+  /**
+   * @param {string} uid
+   * @param {keyof typeof RATE_LIMITS} key
+   * @returns {Promise<void>}
+   */
+  async function spendRateLimit(uid, key) {
+    await spendRateLimitAt(paths.rateLimit(uid), key);
   }
 
   /** @param {string} uid */
@@ -979,6 +1003,110 @@ export function createHandlers(deps) {
     return { removed: targetUid, hadProfile: profile.exists };
   }
 
+  // ── Maintenance mode ───────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Flip maintenance mode and publish the message visitors read.
+   *
+   * An admin-only callable, because two things here are security decisions: who may close the
+   * arcade for everyone, and who may take the tester PIN. The public document (`maintenance/status`)
+   * carries only the flag, the message, who changed it and which PIN generation is current; the PIN
+   * itself is stored as a salted hash in `maintenanceGate/active`, a collection no client can read.
+   *
+   * A new maintenance window always gets a new PIN: enabling from off, an explicit `rotatePin`, or a
+   * window whose hash is missing all mint one. The digits leave the server exactly once, in this
+   * response, and the operator shares them by hand.
+   * @param {Record<string, any>} payload @param {any} context
+   */
+  async function adminSetMaintenance(payload, context) {
+    const adminUid = await requireAdmin(context);
+    const enabled = payload?.enabled === true;
+    const rotatePin = payload?.rotatePin === true;
+    const requestedMessage = sanitizeMaintenanceMessage(payload?.message);
+    const current = await store.get(paths.maintenanceStatus());
+    const previous = safeMaintenanceStatus(current.exists ? current.data : null);
+    const next = {
+      enabled,
+      message: requestedMessage || previous.message || MAINTENANCE_DEFAULT_MESSAGE,
+      updatedAtMs: deps.timestampMs,
+      updatedBy: adminUid,
+      pinVersion: previous.pinVersion,
+      pinActive: false,
+      schema: 1,
+    };
+    let pin = '';
+    if (enabled) {
+      const gate = await store.get(paths.maintenanceGate());
+      const mintPin = rotatePin || !previous.enabled || !previous.pinActive || !gate.exists || !gate.data.pinHash;
+      next.pinVersion = previous.pinVersion + 1;
+      next.pinActive = true;
+      if (mintPin) {
+        pin = generateMaintenancePin(MAINTENANCE_PIN_LENGTH);
+        const salt = generateMaintenanceSalt();
+        await store.set(paths.maintenanceGate(), {
+          pinHash: hashMaintenancePin(pin, salt),
+          salt,
+          pinVersion: next.pinVersion,
+          pinLength: MAINTENANCE_PIN_LENGTH,
+          createdAtMs: deps.timestampMs,
+          createdByUid: adminUid,
+        });
+      } else {
+        // The window stays open with the PIN it already had: `rotatePin` is how a new one is asked for.
+        next.pinVersion = previous.pinVersion;
+        await store.update(paths.maintenanceGate(), { pinVersion: next.pinVersion, updatedAtMs: deps.timestampMs });
+      }
+    } else if (previous.pinActive || (await store.get(paths.maintenanceGate())).exists) {
+      // Closing the window retires the PIN: the hash is deleted, so yesterday's digits cannot be
+      // replayed into tomorrow's maintenance.
+      await store.delete(paths.maintenanceGate());
+    }
+    await store.set(paths.maintenanceStatus(), next);
+    return {
+      enabled: next.enabled,
+      message: next.message,
+      pinVersion: next.pinVersion,
+      pinActive: next.pinActive,
+      pin,
+      updatedAtMs: next.updatedAtMs,
+    };
+  }
+
+  /**
+   * Redeem a typed tester PIN.
+   *
+   * Works for a signed-out visitor (there is no account behind a maintenance page), so the rate
+   * limit is the gate-wide bucket rather than a per-user one. The comparison happens server-side
+   * against the salted hash: a client can never learn the digits, only whether the ones it typed
+   * were right, and only while maintenance is actually on.
+   * @param {Record<string, any>} payload
+   */
+  async function redeemMaintenancePin(payload) {
+    await spendRateLimitAt(paths.gateRateLimit('maintenance-pin'), 'maintenancePin');
+    const current = await store.get(paths.maintenanceStatus());
+    const status = safeMaintenanceStatus(current.exists ? current.data : null);
+    if (!status.enabled || !status.pinActive) {
+      throw new PolicyError('maintenance-not-active', 'Maintenance mode is off, so there is no tester PIN to use.');
+    }
+    const pin = normalizeMaintenancePin(payload?.pin);
+    if (!isValidMaintenancePin(pin)) {
+      throw new PolicyError('invalid-pin', `The tester PIN is exactly ${MAINTENANCE_PIN_LENGTH} digits.`);
+    }
+    const gate = await store.get(paths.maintenanceGate());
+    if (!gate.exists || !verifyMaintenancePin(pin, gate.data)) {
+      throw new PolicyError('invalid-pin', 'That tester PIN is not correct.');
+    }
+    // The token is this session's pass. It proves nothing later - the maintenance page is a notice,
+    // not a boundary: everything behind it is still protected by the rules and the callables - it
+    // only saves the tester from typing 16 digits again on the next render.
+    return {
+      unlocked: true,
+      pinVersion: status.pinVersion,
+      token: deps.randomId(32),
+      maintenance: { enabled: status.enabled, message: status.message, updatedAtMs: status.updatedAtMs },
+    };
+  }
+
   return {
     claimUsername,
     lookupUser,
@@ -1003,6 +1131,8 @@ export function createHandlers(deps) {
     deleteAccount,
     adminRoomAction,
     adminRemovePlayer,
+    adminSetMaintenance,
+    redeemMaintenancePin,
     // exported for the scheduled cleanup and the tests
     loadPresence,
     persistRoom,

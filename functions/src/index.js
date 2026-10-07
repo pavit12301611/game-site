@@ -8,8 +8,8 @@
  *   firebase emulators:start --only functions,firestore,auth
  *
  * Nothing here trusts the browser. The Firestore rules deny every client write to rooms, profiles,
- * usernames, requests, invites, friendships, blocks and reports, so these functions are the only
- * writers of online state. The Admin SDK bypasses those rules, which is exactly why all validation
+ * usernames, requests, invites, friendships, blocks, reports and maintenance state, so these
+ * functions are the only writers of online state. The Admin SDK bypasses those rules, which is exactly why all validation
  * lives in ./handlers.js and in the shared room transitions.
  */
 
@@ -92,6 +92,8 @@ const HTTPS_CODE = {
   'account-required': 'failed-precondition',
   'username-taken': 'already-exists',
   'already-friends': 'already-exists',
+  'invalid-pin': 'permission-denied',
+  'maintenance-not-active': 'failed-precondition',
 };
 
 /** @param {unknown} error */
@@ -146,6 +148,9 @@ export const adminTrainReviewAgent = callableFor('adminTrainReviewAgent');
 export const deleteAccount = callableFor('deleteAccount');
 export const adminRoomAction = callableFor('adminRoomAction');
 export const adminRemovePlayer = callableFor('adminRemovePlayer');
+/** Maintenance mode: the admin switch, and the PIN an invited tester types in. */
+export const adminSetMaintenance = callableFor('adminSetMaintenance');
+export const redeemMaintenancePin = callableFor('redeemMaintenancePin');
 
 /**
  * Global cleanup. Runs every 15 minutes; a retry after a timeout continues where the last run

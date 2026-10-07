@@ -126,3 +126,32 @@ test('every dialog passes, including the new report and delete flows', async () 
   await scan('delete confirmation', () => { state.modal = { type: 'confirm', title: 'Delete this account?', body: 'This cannot be undone.', confirmLabel: 'Delete my account', run: () => {} }; });
   await scan('setup dialog', () => { state.modal = { type: 'setup' }; });
 });
+
+test('the maintenance page passes the WCAG A/AA rules axe can evaluate', async () => {
+  // The one screen every visitor sees while the arcade is closed: it is rendered instead of the
+  // shell, so it has to carry its own landmarks, heading, labelled field and error region.
+  const { renderMaintenancePage } = await import('../src/views/maintenance.js');
+  const { safeMaintenanceStatus } = await import('../shared/online/maintenance.js');
+  Object.assign(state, {
+    page: 'home',
+    modal: null,
+    toast: null,
+    isAdmin: false,
+    maintenanceUnlocked: false,
+    maintenanceError: '',
+    maintenance: safeMaintenanceStatus({ enabled: true, message: 'Down for a tune-up. Back at 18:00 UTC.', pinVersion: 1, pinActive: true }),
+  });
+  for (const withError of [false, true]) {
+    state.maintenanceError = withError ? 'That tester PIN is not correct.' : '';
+    appRoot.innerHTML = renderMaintenancePage();
+    const results = await axe.run(appRoot, {
+      runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+      rules: DISABLED_RULES,
+    });
+    const detail = results.violations
+      .map((violation) => `${violation.id}: ${violation.help} → ${violation.nodes.slice(0, 2).map((node) => node.html.slice(0, 90)).join(' | ')}`)
+      .join('\n');
+    assert.equal(results.violations.length, 0, `the maintenance page${withError ? ' with a PIN error' : ''} has accessibility violations:\n${detail}`);
+    assert.ok(results.passes.length >= 5, `axe ran a meaningful rule set (${results.passes.length} rule groups passed)`);
+  }
+});

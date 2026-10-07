@@ -303,3 +303,30 @@ test('presence: heartbeats live with the room, are written only by their owner a
   assert.doesNotMatch(remove.condition, /roomData\(\)/, 'deleting must not look the room up: the last player deletes room and heartbeat in one transaction');
   assert.ok(matchBlock('presence').indexOf('function roomData') < matchBlock('presence').indexOf('allow'), 'one named lookup, so every rule reads the same room document');
 });
+
+test('maintenance: a world-readable notice, admin-only field-limited writes and a server-only PIN', () => {
+  const statements = ownStatements('maintenance');
+  const read = statements.find(({ methods }) => methods.length === 1 && methods[0] === 'get');
+  assert.ok(read, 'maintenance needs a dedicated get rule');
+  assert.equal(read.condition, 'true', 'the notice is readable without signing in - that is the whole point of it');
+  const list = statements.find(({ methods }) => methods.includes('list'));
+  assert.equal(list?.condition, 'false', 'the collection cannot be enumerated by anyone');
+  for (const { methods, condition } of statements.filter(({ methods: m }) => m.some((method) => ['create', 'delete'].includes(method)))) {
+    assert.equal(condition, 'false', `maintenance ${methods.join(', ')} must be denied: the backend owns these documents`);
+  }
+  const update = statements.find(({ methods }) => methods.includes('update'));
+  assert.ok(update, 'an admin may flip the switch straight from the studio');
+  assert.match(update.condition, /isAdmin\(\)/, 'and nobody else may');
+  assert.match(update.condition, /affectedKeys\(\)\.hasOnly\(\['enabled', 'message', 'updatedAtMs', 'updatedBy'\]\)/, 'a hand edit cannot smuggle a field into a document every visitor reads');
+  assert.match(update.condition, /enabled is bool/);
+  assert.match(update.condition, /message is string/);
+  assert.match(update.condition, /message\.size\(\) <= 400/, 'the message length is enforced in the rules too');
+
+  const gate = allowStatements(matchBlock('maintenanceGate'));
+  assert.equal(gate.length, 1, 'the PIN gate has exactly one statement');
+  assert.deepEqual(gate[0].methods.sort(), ['read', 'write'], 'both halves of the gate are closed to every client');
+  assert.equal(gate[0].condition, 'false', 'the PIN hash is server-only, admins included');
+  // The public document never describes a PIN field: only the backend writes one, and only as a hash
+  // under maintenanceGate. A rule that mentioned a PIN field here would be a place to leak it.
+  assert.doesNotMatch(matchBlock('maintenance'), /pin(Hash|Length)?\s*(==|in|is)/, 'the public rules never evaluate a PIN value');
+});

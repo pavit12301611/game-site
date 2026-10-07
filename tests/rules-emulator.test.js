@@ -440,3 +440,39 @@ test('a guest holds no profile access, but can still play in a room they joined'
   await ruts.assertSucceeds(getDoc(doc(guest, 'rooms', 'r2')));
   await ruts.assertSucceeds(setDoc(doc(guest, 'rooms', 'r2', 'presence', GUEST), { status: 'here', lastSeenAt: ts() }));
 });
+
+// ── Maintenance mode: a public notice, a server-only tester PIN ─────────────────────────────────
+
+test('the maintenance notice is world-readable while the PIN behind it is not readable at all', async (t) => {
+  if (!ready(t)) return;
+  await seed(async (db) => {
+    await setDoc(doc(db, 'maintenance', 'status'), { enabled: true, message: 'Back soon.', updatedAtMs: 1, updatedBy: ALICE, pinVersion: 1, pinActive: true });
+    await setDoc(doc(db, 'maintenanceGate', 'active'), { pinHash: 'a'.repeat(64), salt: 'b'.repeat(32), pinVersion: 1 });
+  });
+  const anon = testEnv.unauthenticatedContext().firestore();
+  await ruts.assertSucceeds(getDoc(doc(anon, 'maintenance', 'status')), 'a visitor sees the notice without signing in');
+  await ruts.assertFails(getDocs(collection(anon, 'maintenance')), 'the collection cannot be enumerated');
+  await ruts.assertFails(getDoc(doc(anon, 'maintenanceGate', 'active')), 'the PIN hash is not for visitors');
+  await ruts.assertFails(getDoc(doc(asUser(ALICE), 'maintenanceGate', 'active')), 'and not for admins either: nothing in the studio needs it');
+  await ruts.assertFails(setDoc(doc(asUser(ALICE), 'maintenanceGate', 'active'), { pinHash: 'c'.repeat(64), salt: 'd'.repeat(32) }), 'nor can anyone write it');
+});
+
+test('only a verified admin may change maintenance state, and only through its permitted fields', async (t) => {
+  if (!ready(t)) return;
+  await seed(async (db) => {
+    await setDoc(doc(db, 'admins', ALICE), { admin: true });
+    await setDoc(doc(db, 'maintenance', 'status'), { enabled: false, message: 'Open.', updatedAtMs: 1, updatedBy: ALICE, pinVersion: 1, pinActive: false });
+  });
+  const anon = testEnv.unauthenticatedContext().firestore();
+  const bob = asUser(BOB);
+  const alice = asUser(ALICE);
+  await ruts.assertFails(setDoc(doc(anon, 'maintenance', 'status'), { enabled: true, message: 'down', updatedAtMs: 2, updatedBy: GUEST, pinVersion: 2, pinActive: true }), 'a visitor cannot close the arcade');
+  await ruts.assertFails(updateDoc(doc(bob, 'maintenance', 'status'), { enabled: true }), 'an ordinary player cannot either');
+  await ruts.assertFails(updateDoc(doc(bob, 'maintenance', 'status'), { message: 'mine now' }));
+  await ruts.assertFails(deleteDoc(doc(bob, 'maintenance', 'status')));
+  await ruts.assertSucceeds(updateDoc(doc(alice, 'maintenance', 'status'), { enabled: true, message: 'Down for a tune-up.', updatedAtMs: 2, updatedBy: ALICE }), 'an admin may flip the switch by hand');
+  await ruts.assertFails(updateDoc(doc(alice, 'maintenance', 'status'), { pinHash: 'x'.repeat(64) }), 'but cannot smuggle a private field into a document everyone reads');
+  await ruts.assertFails(updateDoc(doc(alice, 'maintenance', 'status'), { enabled: 'yes' }), 'the flag stays a boolean');
+  await ruts.assertFails(updateDoc(doc(alice, 'maintenance', 'status'), { message: 'x'.repeat(401) }), 'the message stays short');
+  await ruts.assertFails(deleteDoc(doc(alice, 'maintenance', 'status')), 'and the document is never deleted from a client');
+});
