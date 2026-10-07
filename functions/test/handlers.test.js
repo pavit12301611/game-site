@@ -365,36 +365,6 @@ test('the host can rematch a finished room, others cannot, and the reset is real
   assert.notEqual(state.target, undefined);
 });
 
-test('in-match chat works and is purged when the match finishes and on rematch', async () => {
-  const { handlers, dump, store } = backend();
-  await makeAccounts(handlers, [['uid-a', 'alice'], ['uid-b', 'bob']]);
-  const room = await lobby(handlers, { gameId: 'pixel-tac-toe' });
-
-  const sent = await handlers.sendChat({ roomId: room.roomId, text: 'Good game!' }, account('uid-a'));
-  const chatPath = `rooms/${room.roomId}/chat/${sent.messageId}`;
-  assert.equal(dump()[chatPath].text, 'Good game!');
-  assert.equal(dump()[chatPath].uid, 'uid-a');
-
-  const winningMoves = [
-    ['uid-a', 0], ['uid-b', 3], ['uid-a', 1], ['uid-b', 4], ['uid-a', 2],
-  ];
-  for (const [index, [uid, cell]] of winningMoves.entries()) {
-    await handlers.playMove({
-      roomId: room.roomId,
-      action: { index: cell },
-      clientActionId: `chat-finish-${index}`,
-    }, account(uid));
-  }
-  assert.equal(dump()[`rooms/${room.roomId}`].status, 'finished');
-  assert.equal(dump()[chatPath], undefined, 'the winning move deletes the live chat');
-
-  // Rematch purges stragglers as well, including a write that raced with the finishing move.
-  store.seed(chatPath, { uid: 'uid-a', name: 'alice', text: 'late message', createdAtMs: NOW });
-  const rematch = await handlers.rematch({ roomId: room.roomId }, account('uid-a'));
-  assert.equal(rematch.status, 'playing');
-  assert.equal(dump()[chatPath], undefined, 'a rematch starts with no previous-match messages');
-});
-
 test('an expired room refuses everything and reports its code', async () => {
   const { handlers, advance } = backend();
   await makeAccounts(handlers, [['uid-a', 'alice'], ['uid-b', 'bob']]);

@@ -20,7 +20,6 @@ import { artImage, esc, icon } from '../ui/html.js';
 import { formatAwayFor } from '../presence-status.js';
 import { activeName, isGoogleUser } from '../ui/players.js';
 import { renderEngineBoard } from './boards.js';
-import { renderAdminMaintenance } from './maintenance.js';
 import {
   REVIEW_SENTIMENTS,
   buildImprovementIdeas,
@@ -253,10 +252,9 @@ export function timeAgo(timestamp) {
 }
 
 
-/** The admin studio tabs. */
+/** The five admin studio tabs. */
 const ADMIN_TABS = [
   ['overview', 'Overview'],
-  ['site', 'Maintenance'],
   ['rooms', 'Rooms'],
   ['players', 'Players'],
   ['social', 'Social'],
@@ -316,7 +314,7 @@ function renderAdminOverview(data) {
   return `<div class="admin-metrics">${metrics.map(([label, value, hint]) => `<article><span>${esc(label)}</span><b>${state.adminLoading ? '…' : value}</b><small>${esc(hint)}</small></article>`).join('')}</div>
     <div class="admin-grid">
       <section class="surface admin-table-panel"><div class="panel-heading"><div><span class="eyebrow">Live room snapshot</span><h2>Recent rooms</h2></div><button class="text-button" data-action="admin-tab" data-tab="rooms">Manage all ${icon('arrow')}</button></div>${renderAdminRoomsTable(activeRooms, { limitRows: 8 })}</section>
-      <aside class="surface admin-powers"><div class="panel-heading"><div><span class="eyebrow">God mode, on</span><h2>What this studio can do</h2></div><span class="admin-live"><i></i> ${GAMES.length} games</span></div><ul class="admin-powers-list"><li><b>Rooms:</b> inspect every room, kick anyone from a waiting lobby, delete a room with its heartbeats.</li><li><b>Players:</b> remove a profile and free its username, so repeat offenders cannot hide.</li><li><b>Social:</b> unlink friend pairs, clear stale requests and game invites.</li><li><b>Access:</b> grant and revoke admin flags without opening the Firebase console.</li><li><b>Maintenance:</b> close the public arcade, write a reason, and mint a 16-digit tester PIN for other devices.</li></ul><div class="notice-panel"><span>${icon('shield')}</span><div><b>Firestore enforces every button.</b><p>Each action above checks <code>admins/{yourUid}.admin == true</code> on the server. A forged flag in someone else's browser cannot touch this data.</p></div></div></aside>
+      <aside class="surface admin-powers"><div class="panel-heading"><div><span class="eyebrow">God mode, on</span><h2>What this studio can do</h2></div><span class="admin-live"><i></i> ${GAMES.length} games</span></div><ul class="admin-powers-list"><li><b>Rooms:</b> inspect every room, kick anyone from a waiting lobby, delete a room with its heartbeats.</li><li><b>Players:</b> remove a profile and free its username, so repeat offenders cannot hide.</li><li><b>Social:</b> unlink friend pairs, clear stale requests and game invites.</li><li><b>Access:</b> grant and revoke admin flags without opening the Firebase console.</li></ul><div class="notice-panel"><span>${icon('shield')}</span><div><b>Firestore enforces every button.</b><p>Each action above checks <code>admins/{yourUid}.admin == true</code> on the server. A forged flag in someone else's browser cannot touch this data.</p></div></div></aside>
     </div>`;
 }
 
@@ -409,10 +407,8 @@ export function renderAdmin() {
   else if (tab === 'social') body = renderAdminSocial(data);
   else if (tab === 'reviews') body = renderAdminReviews(data);
   else if (tab === 'access') body = renderAdminAccess(data);
-  else if (tab === 'site') body = renderAdminMaintenance();
   else body = renderAdminOverview(data);
-  const maintenancePill = state.maintenance.enabled ? `<span class="status-pill status-waiting">Maintenance on</span>` : '';
-  return `<section class="admin-heading"><div><div class="eyebrow">Private admin area · UID verified · god mode</div><h1>Arcade control<span>.</span></h1><p>Only accounts with <code>admins/{uid}.admin = true</code> can see this workspace - and Firestore re-checks the flag on every action.</p></div><div class="admin-heading-actions">${maintenancePill}<button class="button button-outline" data-action="refresh-admin">${icon('spark')} Refresh data</button></div></section>
+  return `<section class="admin-heading"><div><div class="eyebrow">Private admin area · UID verified · god mode</div><h1>Arcade control<span>.</span></h1><p>Only accounts with <code>admins/{uid}.admin = true</code> can see this workspace - and Firestore re-checks the flag on every action.</p></div><button class="button button-outline" data-action="refresh-admin">${icon('spark')} Refresh data</button></section>
     <div class="filter-pills admin-tabs" role="tablist" aria-label="Admin sections">${tabs}</div>
     ${state.adminLoading && data && !data.error ? `<div class="admin-refreshing"><i></i> Syncing with Firestore…</div>` : ''}
     <div id="admin-panel" role="tabpanel" aria-labelledby="admin-tab-${tab}" tabindex="0">${body}</div>`;
@@ -466,62 +462,6 @@ export function renderHowToPlay(game) {
   return `<details class="how-to-play"><summary><span class="how-to-icon">?</span><span><b>How to play</b><small>${esc(guide.mode)}</small></span><i>⌄</i></summary><div class="how-to-content"><div><span class="eyebrow">Goal</span><p>${esc(guide.goal)}</p></div><div><span class="eyebrow">Controls</span><p>${esc(guide.controls)}</p></div><div><span class="eyebrow">Rules</span><p>${esc(guide.rules)}</p></div><kbd>${esc(guide.shortcut)}</kbd></div></details>`;
 }
 
-/** Format a chat timestamp as a short clock (e.g. "14:03") using local time. */
-function chatClock(ms) {
-  const date = new Date(Number(ms) || Date.now());
-  const hh = String(date.getHours()).padStart(2, '0');
-  const mm = String(date.getMinutes()).padStart(2, '0');
-  return `${hh}:${mm}`;
-}
-
-/**
- * In-match chat panel. Lives inside the match rail while a live game is in progress.
- *
- * Chat is ephemeral: messages are deleted from the database the second the match ends or a
- * rematch starts (see `purgeRoomChat` in functions/src/handlers.js). The 1-hour room TTL is a
- * safety net. This UI reflects that contract — when the game is not in the "playing" phase the
- * panel is not rendered, so there is no way to see messages after the game is over.
- */
-export function renderChatPanel() {
-  // Chat is only drawn for online live rooms that are currently playing. The lobby and the
-  // finished-result screen have no panel.
-  if (state.local || !state.room || state.room.status !== 'playing') return '';
-  const me = currentUid();
-  const messages = state.chatMessages || [];
-  const open = !!state.chatOpen;
-  const unread = Number(state.chatUnreadCount) || 0;
-  const sending = !!state.chatSending;
-  const error = state.chatError ? `<small class="chat-error">${esc(state.chatError)}</small>` : '';
-  const empty = !messages.length
-    ? `<div class="chat-empty"><span>${icon('chat')}</span><b>Say hi.</b><small>Chat disappears when the match ends — nothing is stored after the game.</small></div>`
-    : '';
-  const list = messages.map((message) => {
-    const mine = message.uid === me;
-    const initial = (message.name || 'P').slice(0, 1).toUpperCase();
-    return `<div class="chat-bubble ${mine ? 'is-mine' : ''}"><span class="chat-bubble-avatar" aria-hidden="true">${esc(initial)}</span><div class="chat-bubble-body"><b>${esc(message.name)}</b><p>${esc(message.text)}</p><small>${esc(chatClock(message.createdAtMs))}</small></div></div>`;
-  }).join('');
-  return `<section class="chat-panel surface" aria-label="In-match chat">
-    <button class="chat-toggle" type="button" data-action="toggle-chat" aria-expanded="${open ? 'true' : 'false'}" aria-controls="chat-panel-body">
-      <span>${icon('chat')} <b>Chat</b></span>
-      ${unread > 0 ? `<span class="chat-unread">${unread > 99 ? '99+' : unread}</span>` : ''}
-      <span class="chat-toggle-chevron">${icon('chevron')}</span>
-    </button>
-    <div class="chat-body" id="chat-panel-body"${open ? '' : ' hidden'}>
-      <div class="chat-log" role="log" aria-live="polite">
-        ${empty}
-        ${list}
-      </div>
-      <form class="chat-form" data-form="chat" data-room-id="${esc(state.roomId || '')}">
-        <label class="sr-only" for="chat-input">Message</label>
-        <input id="chat-input" class="chat-input" name="text" type="text" maxlength="240" placeholder="Say something nice…" autocomplete="off"${sending ? ' disabled' : ''} required>
-        <button class="chat-send" type="submit" aria-label="Send message"${sending ? ' disabled' : ''}>${icon('send')}</button>
-      </form>
-      ${error}
-      <small class="chat-privacy-note">Messages are permanently deleted when the match ends and are never kept for more than an hour.</small>
-    </div>
-  </section>`;
-}
-
 export function renderGameScreen() {
   const game = currentGame();
   const gameState = currentGameState();
@@ -550,7 +490,6 @@ export function renderGameScreen() {
       <div class="stage-foot">${gameState.phase === 'finished' ? `<div class="result-banner ${gameState.winnerUid === me ? 'is-win' : ''}"><span class="result-mark">${gameState.winnerUid === me ? '✦' : gameState.winnerUid ? '◉' : '＝'}</span><div><b>${gameState.winnerUid ? (gameState.winnerUid === me ? 'Nice one — you win!' : `${esc(activeName(gameState.winnerUid, players))} wins this one.`) : 'A perfectly even match.'}</b><small>${gameState.result === 'draw' ? 'Run it back and settle the score.' : 'Well played. Fancy another round?'}</small></div><button class="button button-outline button-small" data-action="play-again" ${pendingActions ? 'disabled title="Finishing sync…"' : ''}>${pendingActions ? 'Syncing…' : 'Play again'} ${icon('arrow')}</button></div>` : `<div class="game-stage-footer"><span>${icon('spark')} ${esc(game.blurb)}</span>${state.local ? '<span>Moves apply instantly on this device</span>' : `<span class="move-sync ${pendingActions ? 'is-syncing' : ''} ${!state.online ? 'is-offline' : ''}" role="status"><i></i>${esc(syncLabel)}</span>`}</div>`}</div>
     </section><aside class="match-rail surface" aria-label="Match players"><div class="match-rail-heading"><div><span class="eyebrow">Match room</span><h2>The players</h2></div><span class="live-tag is-${state.local ? 'local' : state.online ? 'live' : 'offline'}"><i></i> ${state.local ? 'Local' : state.online ? 'Live' : 'Offline'}</span></div><div class="match-player-list">${players.map((player, index) => `<div class="match-player ${player.uid === me ? 'is-me' : ''} ${gameState.turnUid === player.uid ? 'is-turn' : ''} ${presence[player.uid] ? `is-${presence[player.uid].kind}` : ''}"><span class="match-player-avatar player-avatar-${index}">${player.uid === 'local-cpu' ? 'CPU' : esc(player.name.slice(0, 1).toUpperCase())}</span><span class="match-player-copy"><b>${esc(player.name)} ${player.uid === me ? '<i>You</i>' : ''}</b><small>${presence[player.uid]?.detail ? esc(presence[player.uid].detail) : gameState.turnUid === player.uid && gameState.phase !== 'finished' ? 'Playing now' : player.uid === state.room?.hostUid ? 'Room host' : 'In the match'}</small></span>${gameState.scores ? `<strong>${gameState.scores[player.uid] || 0}<small>pts</small></strong>` : gameState.turnUid === player.uid ? `<span class="player-turn-dot"></span>` : ''}</div>`).join('')}</div>
       ${state.local ? `<div class="rail-note"><span>${icon('spark')}</span><div><b>Just you and the browser.</b><small>Want a real rival? Create a room and send a link.</small></div></div><button class="button button-primary rail-main-button" data-action="quick-room">Invite a friend ${icon('arrow')}</button>` : `<div class="room-share-card"><span class="eyebrow">Bring in another player</span><p>Send the room link. They can join as a guest.</p><div class="room-share-actions"><button class="button button-outline" data-action="copy-room-link">${icon('copy')} Copy room link</button><button class="button button-quiet" data-action="share-room-link">${icon('link')} Share</button></div></div>`}
-      ${renderChatPanel()}
       <button class="text-button" data-action="open-report" data-room-id="${esc(state.room?.id || '')}">Report a problem in this game</button>
       <button class="text-button rail-back" data-action="navigate" data-page="catalog">Back to game shelf ${icon('arrow')}</button></aside></div>`;
 }

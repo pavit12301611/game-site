@@ -10,7 +10,7 @@
  * Static, dependency-free and safe in a non-browser test environment: every DOM access is optional.
  */
 
-import { isSiteLocked, state } from './state.js';
+import { state } from './state.js';
 
 /** One honest line per route — what this page is, in the app's own words. */
 export const PAGE_META = Object.freeze({
@@ -79,19 +79,6 @@ function setName(name, value) {
  */
 export function applyPageMeta(page = state.page) {
   if (typeof document === 'undefined') return;
-  if (isSiteLocked()) {
-    const title = 'Under maintenance · PSD-gaming';
-    const description = state.maintenance.reason
-      ? String(state.maintenance.reason).slice(0, 160)
-      : 'This site is under maintenance and will soon be available.';
-    document.title = title;
-    setName('description', description);
-    setProperty('og:title', title);
-    setProperty('og:description', description);
-    setName('twitter:title', title);
-    setName('twitter:description', description);
-    return;
-  }
   const meta = PAGE_META[page] || PAGE_META.home;
   const title = titleFor(page);
   document.title = title;

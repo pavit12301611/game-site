@@ -116,7 +116,7 @@ test('every Firestore collection the app touches has a rule', () => {
   // A floor so the scan cannot silently match nothing if the call style ever changes. `usernames`,
   // `blocks`, `reports` and `rateLimits` are deliberately absent: the browser no longer touches
   // them at all (they belong to the trusted backend), and the rules still describe every one.
-  for (const known of ['admins', 'profiles', 'friendRequests', 'friendships', 'gameInvites', 'rooms', 'reviews', 'reviewAnnotations', 'reviewAgentModels', 'site']) {
+  for (const known of ['admins', 'profiles', 'friendRequests', 'friendships', 'gameInvites', 'rooms', 'reviews', 'reviewAnnotations', 'reviewAgentModels']) {
     assert.ok(used.has(known), `expected src/ to use the "${known}" collection`);
   }
   for (const backendOnly of ['usernames', 'blocks', 'reports', 'reviewOwners', 'rateLimits', 'secrets', 'views']) {
@@ -150,24 +150,6 @@ test('reviews are world-readable but only the backend can create, change or remo
     const readRule = allowStatements(matchBlock(name)).find(({ methods }) => methods.includes('get'));
     assert.equal(readRule?.condition, 'isAdmin()', `${name} is private to the admin studio`);
   }
-});
-
-test('site/status is world-readable and only an admin may write a closed maintenance payload', () => {
-  const statements = allowStatements(matchBlock('site'));
-  const get = statements.find(({ methods }) => methods.length === 1 && methods[0] === 'get');
-  assert.equal(get?.condition, 'true', 'visitors must be able to see that the arcade is closed');
-  const list = statements.find(({ methods }) => methods.includes('list'));
-  assert.equal(list?.condition, 'false', 'the site collection cannot be listed');
-  const write = statements.find(({ methods }) => methods.includes('create') && methods.includes('update'));
-  assert.ok(write, 'admins write the status document from the studio');
-  assert.match(write.condition, /isAdmin\(\)/);
-  assert.match(write.condition, /docId == 'status'/);
-  assert.match(write.condition, /hasOnly\(\['enabled', 'reason', 'sessionId', 'pinSalt', 'pinHash', 'updatedAt', 'updatedBy'\]\)/);
-  assert.match(write.condition, /reason.size\(\) <= 280/);
-  assert.match(write.condition, /pinHash.size\(\) == 64/, 'an enabled window must carry a SHA-256 hex hash, never the PIN');
-  assert.match(write.condition, /updatedBy == request.auth.uid/);
-  const remove = statements.find(({ methods }) => methods.includes('delete'));
-  assert.equal(remove?.condition, 'false', 'status is toggled, never deleted');
 });
 
 test('admin flags: owners read theirs, admins manage access, and nobody mints a first flag from the client', () => {

@@ -11,8 +11,6 @@
 export const USERNAME_REGEX = /^[a-z0-9_]{3,18}$/;
 export const DISPLAY_NAME_MAX = 20;
 export const REPORT_MESSAGE_MAX = 400;
-/** Chat messages are intentionally short and are deleted as soon as the match ends. */
-export const CHAT_MESSAGE_MAX = 240;
 
 /**
  * @param {unknown} rawUsername

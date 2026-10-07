@@ -242,7 +242,7 @@ test('the admin studio renders every section with its action buttons for a flagg
   };
   try {
     setHash('#/admin');
-    assert.equal(all('.admin-tabs [data-action="admin-tab"]').length, 7, 'all seven studio sections exist');
+    assert.equal(all('.admin-tabs [data-action="admin-tab"]').length, 6, 'all six studio sections exist');
     assert.ok($('.admin-metrics'), 'the overview metrics render');
     assert.match($('#page-content').textContent, /What this studio can do/);
 
@@ -262,11 +262,6 @@ test('the admin studio renders every section with its action buttons for a flagg
     assert.ok(button('admin-delete-friendship', '[data-friendship-id="f1"]'), 'a friend link can be unlinked');
     assert.ok(button('admin-delete-request', '[data-request-id="r1"]'), 'a request can be deleted');
     assert.ok(button('admin-delete-invite', '[data-invite-id="i1"]'), 'an invite can be deleted');
-
-    click(button('admin-tab', '[data-tab="site"]'));
-    assert.ok(button('toggle-maintenance'), 'maintenance can be toggled from the studio');
-    assert.ok($('#maintenance-reason-input'), 'the operator can write a reason');
-    assert.match($('#page-content').textContent, /16-digit/);
 
     click(button('admin-tab', '[data-tab="access"]'));
     assert.ok($('#admin-uid-input'), 'the promote-by-UID form exists');
@@ -332,42 +327,6 @@ test('landing and catalog images: sized, lazy except the hero, and every game ca
   const sources = all('.game-card img').map((img) => img.getAttribute('src'));
   assert.equal(sources.length, 40);
   assert.equal(new Set(sources).size, 40, 'no two cards share a picture');
-});
-
-test('maintenance mode replaces the arcade with a closed page, and an admin still sees the studio', async () => {
-  const { state } = await import('../src/state.js');
-  const previous = {
-    enabled: state.maintenance.enabled,
-    pending: state.maintenance.pending,
-    reason: state.maintenance.reason,
-    isAdmin: state.isAdmin,
-    unlocked: state.maintenanceUnlocked,
-  };
-  try {
-    state.isAdmin = false;
-    state.maintenanceUnlocked = false;
-    state.maintenance.enabled = true;
-    state.maintenance.pending = false;
-    state.maintenance.reason = 'Tuning the neon.';
-    setHash('#/home');
-    assert.ok($('.maintenance-shell'), 'visitors see the closed page');
-    assert.match(appRoot.textContent, /under maintenance/i);
-    assert.match(appRoot.textContent, /Tuning the neon/);
-    assert.ok($('#pin-cell-0'), 'a 16-digit PIN can be typed on this device');
-    assert.ok(!$('.app-shell'), 'the arcade chrome is hidden');
-
-    state.isAdmin = true;
-    setHash('#/admin');
-    assert.ok($('.app-shell'), 'an admin still gets the arcade');
-    assert.match(appRoot.textContent, /Maintenance is on/);
-  } finally {
-    state.maintenance.enabled = previous.enabled;
-    state.maintenance.pending = previous.pending;
-    state.maintenance.reason = previous.reason;
-    state.isAdmin = previous.isAdmin;
-    state.maintenanceUnlocked = previous.unlocked;
-    setHash('#/home');
-  }
 });
 
 test('a category cover on the landing page opens the catalog filtered to that category', () => {
