@@ -36,6 +36,17 @@ PROVIDER="vercel-provider"
 die() { echo "error: $*" >&2; exit 1; }
 step() { printf '\033[1;36m•\033[0m %s\n' "$*"; }
 
+# GCP needs a few seconds to propagate a brand-new service account before IAM will
+# accept it in a binding, so retry IAM writes instead of failing on the race.
+retry() {
+  local tries="$1" delay="$2"; shift 2
+  local n=1
+  until "$@"; do
+    if [ "$n" -ge "$tries" ]; then return 1; fi
+    sleep "$delay"; n=$((n + 1))
+  done
+}
+
 [ -n "$PROJECT_NAME" ] || die "set PROJECT_NAME (your Vercel project name), e.g. PROJECT_NAME=psd-gaming"
 
 # The provider's issuer MUST exactly match the `iss` Vercel puts in its OIDC token. Either give
@@ -69,12 +80,17 @@ else
   gcloud iam service-accounts create "$SA_NAME" \
     --project="$PROJECT_ID" --display-name="PSD gaming admin (keyless WIF)" >/dev/null
   step "created service account $SA_EMAIL"
+  # A brand-new SA isn't usable in an IAM binding until it propagates; wait it out.
+  for _ in $(seq 1 12); do
+    gcloud iam service-accounts describe "$SA_EMAIL" --project="$PROJECT_ID" >/dev/null 2>&1 && break
+    sleep 5
+  done
 fi
 
 # 2. The two roles the api routes need: Firestore, and Auth (delete users on account deletion).
-gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+retry 6 5 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --member="serviceAccount:$SA_EMAIL" --role="roles/datastore.user" >/dev/null
-gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+retry 6 5 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --member="serviceAccount:$SA_EMAIL" --role="roles/identitytoolkit.admin" >/dev/null
 step "granted roles/datastore.user + roles/identitytoolkit.admin"
 
@@ -93,7 +109,7 @@ else
 fi
 
 # 4. Let that Vercel project (any environment: Production AND Preview) impersonate the SA.
-gcloud iam service-accounts add-iam-policy-binding "$SA_EMAIL" \
+retry 6 5 gcloud iam service-accounts add-iam-policy-binding "$SA_EMAIL" \
   --project="$PROJECT_ID" --role="roles/iam.serviceAccountTokenCreator" \
   --member="principalSet://iam.googleapis.com/projects/$PROJECT_NUMBER/locations/global/workloadIdentityPools/$POOL/attribute.project/$PROJECT_NAME" >/dev/null
 step "bound Vercel project '$PROJECT_NAME' to the service account"
