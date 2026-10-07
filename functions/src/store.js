@@ -139,6 +139,11 @@ export const paths = Object.freeze({
   reviewOwner: (reviewId) => `reviewOwners/${reviewId}`,
   reviewAnnotation: (reviewId) => `reviewAnnotations/${reviewId}`,
   reviewAgentModel: (modelId = 'active') => `reviewAgentModels/${modelId}`,
+  // Maintenance mode: a public status document (safe fields only), a client-invisible secret
+  // document holding the tester PIN, and server-checked bypass tokens for PIN-verified testers.
+  maintenanceStatus: () => 'maintenance/status',
+  maintenanceSecret: () => 'maintenance/secrets/status',
+  maintenanceBypass: (token) => `maintenance/bypasses/${token}`,
 });
 
 /** @param {Record<string, any>} payload @param {string} key @returns {string} */

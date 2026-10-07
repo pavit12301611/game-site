@@ -57,8 +57,10 @@ import {
   adminKickPlayer,
   adminRemovePlayer,
   adminRevokeAccess,
+  adminSetMaintenance,
   loadAdminData,
 } from './online/admin.js';
+import { initializeMaintenance, verifyMaintenancePin } from './maintenance.js';
 import { loadFeaturedReview, loadPublicReviews, submitReview } from './reviews.js';
 import {
   claimHost,
@@ -222,6 +224,36 @@ async function handleReviewSubmit(form) {
     render();
     throw error;
   }
+}
+
+/**
+ * The maintenance page's tester-PIN form. Digits only, 16 long; the server makes the call.
+ * On success the app opens for this visitor (a bypass token is stored on the device); on
+ * failure the page stays and the error is shown inline (the toast system is behind the gate).
+ */
+async function handleMaintenancePinSubmit(form) {
+  const pin = String(new FormData(form).get('pin') || '').trim();
+  if (!/^[0-9]{16}$/.test(pin)) {
+    state.maintenanceError = 'The tester PIN is exactly 16 digits.';
+    render();
+    return;
+  }
+  try {
+    if (await verifyMaintenancePin(pin)) showToast('The doors are open - welcome back in.');
+  } catch (error) {
+    state.maintenanceError = friendlyError(error);
+    render();
+  }
+}
+
+/**
+ * The admin studio's maintenance controls: one write through the `adminSetMaintenance`
+ * callable, which validates the admin, caps the message and (when enabling) issues a fresh
+ * 16-digit tester PIN that is shown here once and never stored on this device.
+ */
+async function handleAdminMaintenanceSubmit(form) {
+  const formData = new FormData(form);
+  await adminSetMaintenance(formData.get('enabled') === 'on', String(formData.get('message') || '').trim());
 }
 
 async function handleAdminGrantSubmit(form) {
@@ -520,6 +552,8 @@ function handleSubmit(event) {
   else if (type === 'auth') task = handleAuthSubmit(form);
   else if (type === 'username-setup') task = handleUsernameSetupSubmit(form);
   else if (type === 'admin-grant') task = handleAdminGrantSubmit(form);
+  else if (type === 'admin-maintenance') task = handleAdminMaintenanceSubmit(form);
+  else if (type === 'maintenance-pin') task = handleMaintenancePinSubmit(form);
   else if (type === 'settings') { handleSettingsSubmit(form); if (submitButton) submitButton.disabled = false; return; }
   else if (type === 'friend-search') { requestFriendSearch(form); if (submitButton) submitButton.disabled = false; return; }
   else if (type === 'join-code') task = handleJoinCodeSubmit(form);
@@ -652,7 +686,14 @@ themeMedia?.addEventListener?.('change', () => {
 try {
   // The collaborators are resolved here, before the mode check, so a name that is not imported
   // fails in local practice mode (and in the jsdom tests) too - not only on a deployment.
-  void boot({
+  // `initializeMaintenance` runs its cached part synchronously (a returning visitor mid-
+  // maintenance is gated before the first paint, with no network), then re-checks the flag in
+  // the background - the first paint must never wait on it, and it never rejects: a flag that
+  // cannot be read leaves the arcade open (fail open).
+  void initializeMaintenance().catch((error) => {
+    console.error('[PSD-gaming] The maintenance check failed; the arcade stays open:', error);
+  });
+  boot({
     firebaseReady,
     routeFromHash,
     watchAuth: (onUser) => onAuthStateChanged(authInstance, onUser),

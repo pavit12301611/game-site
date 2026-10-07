@@ -37,6 +37,12 @@ export const state = {
   user: null,
   profile: null,
   isAdmin: false,
+  /** The safe public maintenance flag as read at start-up: { enabled, message }, or null when it was never read (local mode / read failed - the arcade then stays open). */
+  maintenance: null,
+  /** True once the tester PIN was verified by the backend this session (a bypass token is stored on the device). */
+  maintenanceBypass: false,
+  /** Last server answer for the PIN form, shown inline on the maintenance page. */
+  maintenanceError: '',
   room: null,
   roomId: null,
   roomError: '',

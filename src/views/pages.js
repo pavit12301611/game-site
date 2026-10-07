@@ -297,6 +297,31 @@ function renderAdminRoomsTable(rooms, { limitRows = Infinity } = {}) {
   return `<div class="admin-table-wrap"><table class="admin-table"><thead><tr><th scope="col">Game</th><th scope="col">Players</th><th scope="col">Status</th><th scope="col">Created</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
+/**
+ * The maintenance-mode controls. One save goes through the `adminSetMaintenance` callable,
+ * which issues a fresh 16-digit tester PIN whenever maintenance is on; the PIN is shown here
+ * for this session (it lives in a client-invisible secret document and is never re-read).
+ * @param {Record<string, any>} data
+ */
+function renderAdminMaintenance(data) {
+  const m = data.maintenance || { enabled: false, message: '', pin: '' };
+  const pin = m.pin || '';
+  return `<section class="surface admin-table-panel admin-maintenance-panel">
+    <div class="panel-heading"><div><span class="eyebrow">Maintenance mode</span><h2>Close the arcade<span> and let testers in</span></h2></div><span class="admin-live"><i></i> ${m.enabled ? 'ON' : 'OFF'}</span></div>
+    <form data-form="admin-maintenance">
+      <label class="admin-maintenance-toggle"><input type="checkbox" name="enabled" ${m.enabled ? 'checked' : ''} /> Turn maintenance mode ${m.enabled ? 'off' : 'on'}</label>
+      <label class="admin-maintenance-label" for="maintenance-message">Message visitors see</label>
+      <textarea id="maintenance-message" name="message" rows="2" maxlength="280" placeholder="What should players read while the arcade is closed?">${esc(m.message || '')}</textarea>
+      <div class="admin-maintenance-actions"><button class="button button-primary" type="submit">Save maintenance</button></div>
+      ${m.enabled
+        ? (pin
+          ? `<p class="admin-maintenance-pin">Tester PIN (16 digits - share it privately with your testers, never publicly): <code>${esc(pin)}</code></p>`
+          : '<p class="admin-maintenance-pin">A 16-digit tester PIN is active. Save maintenance again to see it - re-saving issues a fresh PIN and voids the old one.</p>')
+        : '<p class="admin-maintenance-pin">While on, every visitor sees the maintenance page instead of the arcade. Testers who type the 16-digit PIN can preview the site, and admins are never locked out.</p>'}
+    </form>
+  </section>`;
+}
+
 function renderAdminOverview(data) {
   const nowMs = presenceNow();
   const activeRooms = data.rooms.filter((room) => !isRoomExpired(room, nowMs));
@@ -312,6 +337,7 @@ function renderAdminOverview(data) {
     ['Pending invites', pendingInvites, 'Game invites unanswered'],
   ];
   return `<div class="admin-metrics">${metrics.map(([label, value, hint]) => `<article><span>${esc(label)}</span><b>${state.adminLoading ? '…' : value}</b><small>${esc(hint)}</small></article>`).join('')}</div>
+    ${renderAdminMaintenance(data)}
     <div class="admin-grid">
       <section class="surface admin-table-panel"><div class="panel-heading"><div><span class="eyebrow">Live room snapshot</span><h2>Recent rooms</h2></div><button class="text-button" data-action="admin-tab" data-tab="rooms">Manage all ${icon('arrow')}</button></div>${renderAdminRoomsTable(activeRooms, { limitRows: 8 })}</section>
       <aside class="surface admin-powers"><div class="panel-heading"><div><span class="eyebrow">God mode, on</span><h2>What this studio can do</h2></div><span class="admin-live"><i></i> ${GAMES.length} games</span></div><ul class="admin-powers-list"><li><b>Rooms:</b> inspect every room, kick anyone from a waiting lobby, delete a room with its heartbeats.</li><li><b>Players:</b> remove a profile and free its username, so repeat offenders cannot hide.</li><li><b>Social:</b> unlink friend pairs, clear stale requests and game invites.</li><li><b>Access:</b> grant and revoke admin flags without opening the Firebase console.</li></ul><div class="notice-panel"><span>${icon('shield')}</span><div><b>Firestore enforces every button.</b><p>Each action above checks <code>admins/{yourUid}.admin == true</code> on the server. A forged flag in someone else's browser cannot touch this data.</p></div></div></aside>

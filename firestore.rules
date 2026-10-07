@@ -153,6 +153,25 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /maintenance/{document} {
+      // Default deny for everything under maintenance/ that is not named below - including
+      // secrets/status (the 16-digit tester PIN) and bypasses/{token} (a verified tester's pass).
+      // No client may read or write either: the PIN is created by the adminSetMaintenance callable,
+      // compared inside verifyMaintenancePin, and a bypass token is checked in checkMaintenanceBypass.
+      allow read, write: if false;
+    }
+
+    match /maintenance/status {
+      // The public half of maintenance mode: "is the arcade closed, and what should visitors read?".
+      // It holds only safe fields (enabled, message, updatedAtMs, updatedBy) - never the PIN.
+      // Everyone, including signed-out visitors, may read it. Only the admin-verified
+      // adminSetMaintenance backend may write it (it also rotates the PIN), so no client - admin
+      // included - edits maintenance state directly.
+      allow get: if true;
+      allow list: if false;
+      allow create, update, delete: if false;
+    }
+
     match /rooms/{roomId} {
       // A room cannot be listed or discovered: the invite URL carries its random document ID. A
       // member of the room reads it (that is the live game snapshot), an admin reads any, and a
