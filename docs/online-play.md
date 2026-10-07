@@ -1,12 +1,15 @@
 # Online play: the trusted backend
 
-> **Status: the backend is implemented and tested; the browser has not been switched over yet.**
-> `functions/` holds the callable API, the validation policy and the tests (36, green). The browser
-> still performs the older client-side Firestore transactions, and `firestore.rules` still permits
-> them. **Do not publish the rules in this document's "locked" form until the client migration in
-> `src/online/rooms.js`, `src/social.js` and `src/accounts.js` has landed**, or online play breaks
-> for everyone mid-session. Nothing here has been deployed; the deploy commands below were never run
-> from this repository.
+> **Status: the backend runs as Vercel serverless functions.** The policy and the tests live in
+> [`functions/`](functions/) (`functions/src/handlers.js`, 36 tests, green); the HTTP surface lives in
+> [`api/`](api/) — one route per action (e.g. [`api/createRoom.js`](api/createRoom.js)) plus the shared
+> wiring in [`api/_backend.js`](api/_backend.js). The browser calls them as same-origin `/api/*` POSTs
+> that carry its Firebase ID token, and each function verifies that token and runs the *same* handler
+> the Cloud Functions used to. **The Firebase Cloud Functions deployment is disabled**
+> ([`functions/src/index.js`](functions/src/index.js) exports nothing, and the `functions` block is gone
+> from [`firebase.json`](../firebase.json)); `firebase deploy --only functions` is a no-op now. Nothing
+> here has been deployed; the runbook below was never run from this repository.
+
 
 ## Why a backend at all
 
@@ -35,13 +38,17 @@ The backend moves the decisions to a place the browser cannot edit:
 
 | Path | What it is |
 | --- | --- |
-| `functions/src/index.js` | Callable wrappers (20 of them) plus the `cleanupExpired` schedule. Maps our error codes to `HttpsError` statuses. |
+| `api/_backend.js` | The shared Vercel wiring: Admin-SDK init, ID-token verification, the Firestore store, dispatch and the error-code → HTTP-status map. Every route below is a one-line wrapper around `handleCallable(name)`. |
+| `api/<name>.js` | One route per action (`createRoom`, `joinRoom`, `playMove`, …). Replaces the old `onCall` wrappers. |
+| `api/cleanup.js` | The scheduled cleanup as a Vercel Cron route (replaces the `cleanupExpired` Cloud Scheduler function). |
+| `functions/src/index.js` | **Disabled.** Exports no functions; the Cloud Functions entry point now only documents the move. |
+| `functions/src/backend.js` | The handler binding (engine registry + `makeHandlers`) shared by the api routes and, if ever re-enabled, the Cloud Functions. |
 | `functions/src/handlers.js` | All policy: identity, social, rooms, moves, blocks, reports, deletion, admin. Pure functions of (payload, auth context, store). |
 | `functions/src/store.js` | The narrow Firestore adapter the handlers use (`get`/`set`/`query`/`transaction`/`batch`/`recursiveDelete`). |
 | `functions/src/cleanup.js` | Expired-room, finished-room, invite, request, rate-limit and report purging. Idempotent by construction. |
 | `functions/test/` | The backend tests (in-memory `Store` double — no emulator, no Java, no network). |
-| `shared/online/` | Room transitions, projections, identity rules, rate limits and the maintenance switch. Imported by **both** the browser and the functions. |
-| `functions/vendor/` | Generated mirror of `shared/**` and `src/engines/**`. Never edit; run `node scripts/sync-shared.mjs`. |
+| `shared/online/` | Room transitions, projections, identity rules, rate limits and the maintenance switch. Imported by **both** the browser and the backend. |
+| `functions/vendor/` | Generated mirror of `shared/**` and `src/engines/**`. Never edit; run `node scripts/sync-shared.mjs` (the api routes import it, and `npm run build` regenerates it via `prebuild`). |
 
 ### The one exception: maintenance mode writes Firestore directly
 
@@ -78,10 +85,12 @@ node scripts/sync-shared.mjs         # refresh the mirror after editing shared/ 
 cd functions && npm test             # backend tests: no emulator, no Java, no network
 node scripts/sync-shared.mjs --check # fail when the mirror is stale (CI does this)
 
-firebase emulators:start --only functions,firestore,auth \
-  --project psd-gaming-local         # functions on 127.0.0.1:5001
+firebase emulators:start --only firestore,auth \
+  --project psd-gaming-local         # Firestore + Auth only; the Cloud Functions emulator is gone
 npm run test:rules                   # firestore.rules against the Firestore emulator
 ```
+
+The `api/` routes are Vercel functions. To exercise them locally, run `vercel dev` (the Vercel CLI), which serves the SPA and the `api/` routes together and reads `FIREBASE_SERVICE_ACCOUNT` from your environment; otherwise point the browser at a deployed Vercel environment.
 
 If Java is unavailable the rules suite is **skipped locally, never silently "passing"**; the
 `FIRESTORE_EMULATOR_HOST` contract makes it fail instead of skipping inside `npm run test:rules`, so
@@ -89,30 +98,146 @@ the CI job is the real gate.
 
 ## Deploying (operator steps — not run here)
 
-Raising a project from zero, in order:
+The backend is now Vercel serverless functions, so it deploys with the site — no Blaze plan, no
+`firebase deploy --only functions`. Raising a project from zero, in order:
 
-1. **Upgrade the Firebase project to the Blaze (pay-as-you-go) plan.** Cloud Functions, Cloud
-   Scheduler (`cleanupExpired` runs every 15 minutes) and outbound network calls are not available on
-   the free Spark plan. Costs for a hobby deployment are normally inside the free monthly allowance,
-   but a billing account and a budget alert are required; nothing in this repository can verify your
-   actual usage.
+1. **Set the Admin SDK credentials for the api functions.** On Vercel → Settings → Environment
+   Variables, add `FIREBASE_SERVICE_ACCOUNT` (the service-account JSON, minified onto one line; see
+   `.env.example`) for **Production** and **Preview**. On Vercel there are no Application Default
+   Credentials, so without it the api functions cannot reach Firestore or verify tokens. If an org
+   policy (`constraints/iam.disableServiceAccountKeyCreation` / `iam.managed.disableServiceAccountKeyCreation`)
+   blocks creating that key, skip this and use the **keyless** Workload Identity Federation setup in
+   the next section instead.
 2. Enable the sign-in providers you want in **Authentication → Sign-in method** (Google,
    Email/Password, Anonymous for guests).
 3. Provision the first admin: create the account, then add `admins/{uid} = { admin: true }` in the
    Firebase console. Nobody can mint an admin flag from the client.
-4. Deploy the rules and functions (review the migration status above first):
+4. Deploy the site (which builds and ships the api routes with it):
 
    ```bash
-   firebase deploy --only firestore:rules          # only after the client migration lands
-   firebase deploy --only functions                # runs scripts/sync-shared.mjs as a predeploy hook
-   firebase functions:log
+   git push                       # Vercel builds `npm run build` and deploys dist/ + api/
+   firebase deploy --only firestore:rules   # publish the locked rules from firestore.rules
    ```
 
+   The `api/` routes are ordinary Vercel functions; the build's `prebuild` step regenerates
+   `functions/vendor/` so the routes can import the shared handlers. The scheduled cleanup runs from
+   `vercel.json`'s `crons` (`/api/cleanup`, every 15 minutes) — note Vercel Cron's frequency depends on
+   the plan.
 5. Optional second expiry mechanism: in the Firebase console, **Firestore → Time-to-live**, add a TTL
    policy on the `expiresAtDate` field. The store adapter writes it next to the numeric `expiresAt`
-   the cleanup function queries, so the two never disagree.
-6. App Check is not required by this design but is worth enabling: the functions are protected by
-   Firebase Auth, and every rate limit is enforced per uid.
+   the cleanup route queries, so the two never disagree.
+6. App Check is not required by this design but is worth enabling: the routes are protected by Firebase
+   Auth (the ID token is verified on every call), and every rate limit is enforced per uid.
+
+> To go back to Firebase Cloud Functions instead, restore the `callableFor(name)` wrappers in
+> `functions/src/index.js`, re-add the `functions` block to `firebase.json`, and point
+> `src/online/callables.js` back at `httpsCallable`.
+
+### Keyless deploy (Workload Identity Federation — no service-account key)
+
+`FIREBASE_SERVICE_ACCOUNT` needs a downloadable service-account **key**, and many organisations block
+that: the org policies `constraints/iam.disableServiceAccountKeyCreation` (legacy) and
+`iam.managed.disableServiceAccountKeyCreation` (managed) forbid key creation outright, and only an
+**Organization Policy Administrator** at the org or folder level can override them — a project owner
+cannot. The keyless answer is Workload Identity Federation (WIF): Vercel proves its identity with a
+short-lived OIDC token, Google exchanges it, and the api functions impersonate a service account
+**without ever holding a private key**. `api/_backend.js` wires this up with google-auth-library's
+`ExternalAccountClient` + `@google-cloud/firestore` (firebase-admin's Firestore refuses a custom
+credential, so Firestore is built directly; firebase-admin is still used for Auth).
+
+> **Fastest path:** run `scripts/wif-setup.sh` (or the `curl | bash` one-liner in its header) in
+> [Google Cloud Shell](https://shell.cloud.google.com) with `TEAM_SLUG` and `PROJECT_NAME` set. It
+> performs every step below and prints the three Vercel env vars at the end. The manual steps are
+> kept here for reference.
+
+The whole setup is three GCP resources, one IAM binding, and three Vercel env vars.
+
+**1. Pick (or create) a service account to impersonate.** This is the identity the functions run as.
+It is never downloaded — only its email is used. Grant it the two roles the routes need, e.g. the
+default service account or a dedicated `psd-admin@<project>.iam.gserviceaccount.com`:
+
+```bash
+gcloud iam service-accounts create psd-admin --project=<PROJECT_ID>
+
+gcloud projects add-iam-policy-binding <PROJECT_ID> \
+  --member="serviceAccount:psd-admin@<PROJECT_ID>.iam.gserviceaccount.com" \
+  --role="roles/datastore.user"          # Firestore reads/writes
+
+gcloud projects add-iam-policy-binding <PROJECT_ID> \
+  --member="serviceAccount:psd-admin@<PROJECT_ID>.iam.gserviceaccount.com" \
+  --role="roles/identitytoolkit.admin"  # Auth (verify ID tokens / delete users)
+```
+
+(`roles/datastore.user` is the Firestore access role; the routes also delete Auth users on account
+deletion, which the identitytoolkit role covers.)
+
+**2. Create a Workload Identity Pool and an OIDC provider for Vercel.** The pool is the trust anchor;
+the provider describes how to validate Vercel's token.
+
+```bash
+gcloud iam workload-identity-pools create "vercel-pool" \
+  --project=<PROJECT_ID> --location="global"
+
+gcloud iam workload-identity-pools providers create-oidc "vercel-provider" \
+  --project=<PROJECT_ID> --location="global" \
+  --workload-identity-pool="vercel-pool" \
+  --issuer-uri="https://oidc.vercel.com/<VERCEL_TEAM_SLUG>" \
+  --attribute-mapping="google.subject=assertion.sub,attribute.owner=assertion.owner,attribute.project=assertion.project" \
+  --allowed-audiences="https://vercel.com/<VERCEL_TEAM_SLUG>"
+```
+
+The issuer URI carries your **Vercel team slug** (`https://oidc.vercel.com/<team>` — *team issuer* mode,
+the default). Vercel's function tokens carry `iss = https://oidc.vercel.com/<team>`,
+`aud = https://vercel.com/<team>`, and `sub = owner:<team>:project:<project>:environment:<env>`; the
+mapping above lifts `owner` and `project` so the IAM binding in step 3 can match them. Enable OIDC
+federation for the project first (Vercel dashboard → Project → Settings → **OIDC Federation** →
+*Enable*), which is what produces the tokens and the team slug. If your team uses *global issuer*
+mode instead, drop the slug from both `--issuer-uri` (`https://oidc.vercel.com`) and the default
+audience — check the team's OIDC setting if the token exchange later rejects the issuer.
+
+**3. Let Vercel's identity impersonate the service account.** Bind the federated principal to the SA.
+This `principalSet` matches **every environment** (Production *and* Preview) of the one Vercel project,
+so a single binding covers both deploys:
+
+```bash
+gcloud iam service-accounts add-iam-policy-binding \
+  psd-admin@<PROJECT_ID>.iam.gserviceaccount.com \
+  --project=<PROJECT_ID> --role="roles/iam.serviceAccountTokenCreator" \
+  --member="principalSet://iam.googleapis.com/projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/vercel-pool/attribute.project/<VERCEL_PROJECT_NAME>"
+```
+
+`<VERCEL_PROJECT_NAME>` is the **Vercel project name** (the `project` claim — the site's name in the
+Vercel dashboard / its subdomain, *not* your GCP project id). To tighten this to just your whole team
+instead, use `.../attribute.owner/<VERCEL_TEAM_SLUG>`; to pin a single environment, bind a
+`principal://.../subject/owner:<VERCEL_TEAM_SLUG>:project:<VERCEL_PROJECT_NAME>:environment:production`
+member instead. Get `<PROJECT_NUMBER>` with:
+`gcloud projects describe <PROJECT_ID> --format="value(projectNumber)"`.
+
+**4. Read the provider resource name.** This is the `FIREBASE_WIF_AUDIENCE` value — copy it verbatim:
+
+```bash
+gcloud iam workload-identity-pools providers describe "vercel-provider" \
+  --project=<PROJECT_ID> --location="global" --workload-identity-pool="vercel-pool" \
+  --format="value(name)"
+# //iam.googleapis.com/projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/vercel-pool/providers/vercel-provider
+```
+
+**5. Set three Vercel environment variables** (Project → Settings → Environment Variables, for
+**Production** and **Preview**):
+
+| Variable | Value |
+| --- | --- |
+| `FIREBASE_WIF_AUDIENCE` | the provider resource name from step 4 (copied verbatim) |
+| `FIREBASE_WIF_SERVICE_ACCOUNT` | `psd-admin@<PROJECT_ID>.iam.gserviceaccount.com` |
+| `FIREBASE_PROJECT_ID` | your Firebase/GCP project id |
+
+`FIREBASE_SERVICE_ACCOUNT` is optional and takes precedence if both are set — it stays as a manual
+fallback. The routes try the key first, then WIF, then Application Default Credentials, so a single
+missing variable surfaces as a readable startup error rather than a silent misconfiguration.
+
+Redeploy after setting the variables (Vercel only bakes env vars into a build at deploy time). Verify
+with the staging smoke-test checklist below — a working keyless setup creates a room over `/api/*`;
+a broken one answers `internal`, and the function logs name the missing piece.
 
 ### What the operator must still decide (labelled, not invented here)
 
@@ -163,9 +288,11 @@ are publishing the locked rules). Every line is something the automated suites c
       or read `maintenanceAccess/active` (the rules, not the UI, are the boundary), and that the admin's
       own tab is never locked out.
 - [ ] Local practice still works with the Firebase config removed (and says why online is off).
-- [ ] The deployment's CSP allows callable endpoints: `https://*.cloudfunctions.net` is in
-      `connect-src` in `vercel.json` (asserted by `tests/vercel-headers.test.js`). A missing wildcard
-      shows up as a CSP violation in the browser console and breaks every online action.
+- [ ] The api routes are deployed and reachable: creating a room POSTs to same-origin `/api/createRoom`
+      and succeeds (or fails with a readable message). `connect-src 'self'` in `vercel.json` covers
+      them (asserted by `tests/vercel-headers.test.js`); a CSP that blocks `'self'` shows up as a
+      violation in the browser console and breaks every online action. A missing `FIREBASE_SERVICE_ACCOUNT`
+      makes every route answer `internal` — set it in the Vercel environment and redeploy.
 - [ ] The privacy and safety pages are reachable from the sidebar, the sign-in dialog, the account
       menu and settings; the operator launch-checklist block is actually filled in for this deployment.
 - [ ] Block a player from the friends page: they vanish from search, their pending requests and
