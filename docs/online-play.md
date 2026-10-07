@@ -177,22 +177,36 @@ gcloud iam workload-identity-pools providers create-oidc "vercel-provider" \
   --project=<PROJECT_ID> --location="global" \
   --workload-identity-pool="vercel-pool" \
   --issuer-uri="https://oidc.vercel.com/<VERCEL_TEAM_SLUG>" \
-  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
-  --allowed-audiences="https://<YOUR_DOMAIN>"   # your Vercel app URL; Vercel sets it as the aud
+  --attribute-mapping="google.subject=assertion.sub,attribute.owner=assertion.owner,attribute.project=assertion.project" \
+  --allowed-audiences="https://vercel.com/<VERCEL_TEAM_SLUG>"
 ```
 
-The issuer URI carries your **Vercel team slug** (`https://oidc.vercel.com/<team>`), and the audience
-must match the deployment URL Vercel signs the token for. Enable OIDC federation for the project first
-(Vercel dashboard → Project → Settings → OIDC Federation → *Enable*), which yields the team slug.
+The issuer URI carries your **Vercel team slug** (`https://oidc.vercel.com/<team>` — *team issuer* mode,
+the default). Vercel's function tokens carry `iss = https://oidc.vercel.com/<team>`,
+`aud = https://vercel.com/<team>`, and `sub = owner:<team>:project:<project>:environment:<env>`; the
+mapping above lifts `owner` and `project` so the IAM binding in step 3 can match them. Enable OIDC
+federation for the project first (Vercel dashboard → Project → Settings → **OIDC Federation** →
+*Enable*), which is what produces the tokens and the team slug. If your team uses *global issuer*
+mode instead, drop the slug from both `--issuer-uri` (`https://oidc.vercel.com`) and the default
+audience — check the team's OIDC setting if the token exchange later rejects the issuer.
 
-**3. Let Vercel's identity impersonate the service account.** Bind the federated principal to the SA:
+**3. Let Vercel's identity impersonate the service account.** Bind the federated principal to the SA.
+This `principalSet` matches **every environment** (Production *and* Preview) of the one Vercel project,
+so a single binding covers both deploys:
 
 ```bash
 gcloud iam service-accounts add-iam-policy-binding \
   psd-admin@<PROJECT_ID>.iam.gserviceaccount.com \
   --project=<PROJECT_ID> --role="roles/iam.serviceAccountTokenCreator" \
-  --member="principal://iam.googleapis.com/projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/vercel-pool/subject/https://<YOUR_DOMAIN>"
+  --member="principalSet://iam.googleapis.com/projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/vercel-pool/attribute.project/<VERCEL_PROJECT_NAME>"
 ```
+
+`<VERCEL_PROJECT_NAME>` is the **Vercel project name** (the `project` claim — the site's name in the
+Vercel dashboard / its subdomain, *not* your GCP project id). To tighten this to just your whole team
+instead, use `.../attribute.owner/<VERCEL_TEAM_SLUG>`; to pin a single environment, bind a
+`principal://.../subject/owner:<VERCEL_TEAM_SLUG>:project:<VERCEL_PROJECT_NAME>:environment:production`
+member instead. Get `<PROJECT_NUMBER>` with:
+`gcloud projects describe <PROJECT_ID> --format="value(projectNumber)"`.
 
 **4. Read the provider resource name.** This is the `FIREBASE_WIF_AUDIENCE` value — copy it verbatim:
 
