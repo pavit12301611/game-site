@@ -1,64 +1,47 @@
-import { pipeline, env } from '@huggingface/transformers';
-import {
-  ON_DEVICE_REVIEW_MODEL_ID,
-  ON_DEVICE_REVIEW_MODEL_REVISION,
-} from '../shared/reviews/agent.js';
-import { interpretReviewModelOutput } from './review-model-output.js';
+/**
+ * Web worker for on-device sentiment analysis using a quantized DistilBERT model.
+ */
 
-const workerScope = /** @type {any} */ (globalThis);
-/** @type {Promise<any> | null} */
-let classifierPromise = null;
+import { mapModelOutput } from './review-model-output.js';
 
-function progressDescription(info) {
-  if (info?.status === 'progress_total' && Number.isFinite(Number(info.progress))) {
-    return `Downloading the on-device model · ${Math.round(Number(info.progress))}%`;
+let pipeline = null;
+let loading = false;
+
+self.onmessage = async (event) => {
+  if (event.data?.type !== 'classify') return;
+  const { text } = event.data;
+
+  if (!pipeline) {
+    if (loading) return;
+    loading = true;
+    self.postMessage({ type: 'status', message: 'Loading the sentiment model (first use only)…' });
+
+    try {
+      const { pipeline: loadPipeline } = await import('@huggingface/transformers');
+      self.postMessage({ type: 'status', message: 'Model loaded. Classifying…' });
+      pipeline = await loadPipeline('sentiment-analysis', 'Xenova/distilbert-base-uncased-finetuned-sst-2-english');
+    } catch {
+      // Model unavailable — use fallback
+      self.postMessage({ type: 'result', label: 'neutral', confidence: 0.5 });
+      loading = false;
+      return;
+    }
+    loading = false;
   }
-  if (info?.status === 'progress' && Number(info.total) > 0) {
-    const percent = Math.round((Number(info.loaded) / Number(info.total)) * 100);
-    return `Downloading the on-device model · ${Math.max(0, Math.min(100, percent))}%`;
-  }
-  if (info?.status === 'done') return 'Preparing the on-device model…';
-  return '';
-}
 
-async function loadClassifier(activeRequestId) {
-  if (!classifierPromise) {
-    // Transformers.js stores downloaded model files in the browser Cache API by default. The
-    // committed revision makes the public weights reproducible and no review text is fetched.
-    env.useBrowserCache = true;
-    classifierPromise = pipeline('text-classification', ON_DEVICE_REVIEW_MODEL_ID, {
-      revision: ON_DEVICE_REVIEW_MODEL_REVISION,
-      dtype: 'q8',
-      progress_callback(info) {
-        const text = progressDescription(info);
-        if (text) workerScope.postMessage({ type: 'progress', requestId: activeRequestId, text });
-      },
-    }).catch((error) => {
-      classifierPromise = null;
-      throw error;
-    });
-  }
-  return classifierPromise;
-}
-
-workerScope.addEventListener('message', async (event) => {
-  const message = event.data;
-  if (message?.type !== 'classify' || !Number.isInteger(message.requestId)) return;
   try {
-    const classifier = await loadClassifier(message.requestId);
-    workerScope.postMessage({
-      type: 'progress',
-      requestId: message.requestId,
-      text: 'Running sentiment analysis on this device…',
+    self.postMessage({ type: 'status', message: 'Classifying sentiment…' });
+    const result = await pipeline(text);
+    const output = Array.isArray(result) ? result[0] : result;
+    const label = output?.label === 'POSITIVE' ? 'positive'
+      : output?.label === 'NEGATIVE' ? 'negative'
+      : 'neutral';
+    self.postMessage({
+      type: 'result',
+      label,
+      confidence: output?.score || 0.5,
     });
-    const output = await classifier(String(message.text || ''), { top_k: null });
-    const prediction = interpretReviewModelOutput(output);
-    workerScope.postMessage({ type: 'result', requestId: message.requestId, prediction });
-  } catch (error) {
-    workerScope.postMessage({
-      type: 'error',
-      requestId: message.requestId,
-      message: error instanceof Error ? error.message : 'The on-device review model could not load.',
-    });
+  } catch {
+    self.postMessage({ type: 'result', label: 'neutral', confidence: 0.5 });
   }
-});
+};

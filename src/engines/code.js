@@ -1,88 +1,87 @@
 /**
- * code engine — Mastermind. The secret sequence is generated from the room seed. In online play the
- * generated state (including `secret`) is kept in a server-only document: clients receive the guess
- * history with its EXACT/NEAR counts and only learn the code once `revealedSecret` is published at
- * the end of the match.
+ * Code engine: codebreaking games (codebreaker, mastermind).
  *
- * `symbols` is how many different digits the code may use, so Mastermind (four symbols, five slots,
- * eight guesses) plays differently from Codebreaker (six symbols, four slots, ten guesses).
- * Games: Codebreaker, Mastermind.
+ * Options: { digits: number, maxGuesses: number, symbols: number }
+ * A secret code is generated. Players take turns guessing.
+ * EXACT = right digit in right position, NEAR = right digit in wrong position.
  */
 
-/** @typedef {import('../types.js').Game} Game */
-/** @typedef {import('../types.js').Player} Player */
-/** @typedef {import('../types.js').GameState} GameState */
-/** @typedef {import('../types.js').Action} Action */
+import { seededRandom, assertPlaying, currentPlayer, advanceTurn, declareWinner, declareDraw, assertTurn } from './shared.js';
 
-import { advanceTurn, assertPlaying, assertTurn, makeRandom, newBase } from './shared.js';
-
-/**
- * @param {Game} game
- * @param {Player[]} players
- * @param {string} [seed]
- * @returns {GameState}
- */
 export function createInitialState(game, players, seed) {
-  const random = makeRandom(`${seed}:${game.id}:code`);
-  const digits = game.options.digits;
-  const symbols = Number(game.options.symbols) || 6;
-  const secret = Array.from({ length: digits }, () => Math.floor(random() * symbols));
+  const rng = seededRandom(seed);
+  const { digits, symbols } = game.options;
+
+  // Generate secret code
+  const code = [];
+  for (let i = 0; i < digits; i++) {
+    code.push(Math.floor(rng() * symbols));
+  }
+
   return {
-    ...newBase(players),
-    secret,
-    guesses: [],
+    engine: 'code',
+    code, // hidden: only sent via private view
     digits,
     symbols,
     maxGuesses: game.options.maxGuesses,
+    guesses: [], // array of { uid, guess: number[], exact, near }
     turnIndex: 0,
+    status: 'playing',
+    winner: '',
+    seed,
   };
 }
 
-/**
- * @param {Game} game
- * @param {GameState} state
- * @param {string} uid
- * @param {Action} action
- * @param {Player[]} players
- * @returns {GameState}
- */
 export function applyAction(game, state, uid, action, players) {
   assertPlaying(state);
-  assertTurn(state, uid);
-  const guess = Array.isArray(action.guess) ? action.guess.map(Number) : [];
-  const symbols = state.symbols || 6;
-  if (guess.length !== state.digits || guess.some((digit) => !Number.isInteger(digit) || digit < 0 || digit >= symbols)) {
-    throw new Error(`Enter ${state.digits} digits from 0 to ${symbols - 1}.`);
-  }
-  const exact = guess.reduce((count, digit, index) => count + (digit === state.secret[index] ? 1 : 0), 0);
-  const unmatchedSecret = [];
-  const unmatchedGuess = [];
-  for (let index = 0; index < state.digits; index += 1) {
-    if (guess[index] !== state.secret[index]) {
-      unmatchedGuess.push(guess[index]);
-      unmatchedSecret.push(state.secret[index]);
+  const current = currentPlayer(state, players);
+  assertTurn(uid, current);
+
+  const { guess } = action;
+  if (!Array.isArray(guess) || guess.length !== state.digits)
+    throw new Error(`Guess must have ${state.digits} digits.`);
+  if (guess.some(g => !Number.isInteger(g) || g < 0 || g >= state.symbols))
+    throw new Error(`Each digit must be 0–${state.symbols - 1}.`);
+
+  // Calculate exact and near matches
+  let exact = 0;
+  let near = 0;
+  const codeUsed = [...state.code];
+  const guessUsed = [...guess];
+
+  // First pass: exact matches
+  for (let i = 0; i < state.digits; i++) {
+    if (guess[i] === state.code[i]) {
+      exact++;
+      codeUsed[i] = -1;
+      guessUsed[i] = -1;
     }
   }
-  let misplaced = 0;
-  for (const digit of unmatchedGuess) {
-    const found = unmatchedSecret.indexOf(digit);
-    if (found !== -1) {
-      misplaced += 1;
-      unmatchedSecret.splice(found, 1);
+
+  // Second pass: near matches
+  for (let i = 0; i < state.digits; i++) {
+    if (guessUsed[i] === -1) continue;
+    const idx = codeUsed.indexOf(guessUsed[i]);
+    if (idx !== -1) {
+      near++;
+      codeUsed[idx] = -1;
     }
   }
-  state.guesses = [...state.guesses, { uid, guess, exact, misplaced }];
-  state.moves += 1;
+
+  state.guesses.push({ uid, guess: [...guess], exact, near });
+
+  // Win: all exact
   if (exact === state.digits) {
-    state.phase = 'finished';
-    state.winnerUid = uid;
-    state.result = 'winner';
-    state.revealedSecret = [...state.secret];
-  } else if (state.guesses.length >= state.maxGuesses) {
-    state.phase = 'finished';
-    state.result = 'draw';
-  } else {
-    advanceTurn(state, players, uid);
+    declareWinner(state, uid);
+    return state;
   }
+
+  // Lose: max guesses reached (per player total, not just one player)
+  if (state.guesses.length >= state.maxGuesses * players.length) {
+    declareDraw(state);
+    return state;
+  }
+
+  advanceTurn(state, players.length);
   return state;
 }

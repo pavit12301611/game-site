@@ -1,142 +1,131 @@
 /**
- * maze engine — simultaneous tile race: everyone moves at once, first to the star gate wins.
- * Games: Maze Runner (7x7 classic), Neon Labyrinth (7x7 spiral), Byte Escape (7x7 pillars),
- * Star Runner (9x9 zigzag).
+ * Maze engine: labyrinth races.
  *
- * Each game has its own wall layout rather than the same board with a new title: `classic` keeps the
- * original hand-drawn 7x7 wall set, and the generated layouts are pruned until every starting tile
- * can still reach the star, so no variant can deal an impossible maze. Every player sees exactly the
- * same walls, and `scores` counts steps taken, so the winner is also the shortest route.
+ * Options: { width: number, height: number, layout: 'classic'|'spiral'|'pillars'|'zigzag' }
+ * All players move simultaneously. First to reach the star wins.
  */
 
-/** @typedef {import('../types.js').Game} Game */
-/** @typedef {import('../types.js').Player} Player */
-/** @typedef {import('../types.js').GameState} GameState */
-/** @typedef {import('../types.js').Action} Action */
+import { seededRandom, assertPlaying, declareWinner } from './shared.js';
 
-import { assertPlaying, newBase, scoresFor } from './shared.js';
+export function createInitialState(game, players, seed) {
+  const { width, height, layout } = game.options;
+  const rng = seededRandom(seed);
+  const grid = generateMaze(width, height, layout, rng);
 
-export const MAZE_WALLS = [8, 9, 11, 15, 18, 22, 24, 25, 29, 32, 33, 37, 38];
-
-const DIRECTIONS = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
-
-/** Wall cells, as a set, for each named layout. Each returns flat board indices. */
-const LAYOUTS = {
-  classic: (width, height) => (width === 7 && height === 7 ? new Set(MAZE_WALLS) : pillarWalls(width, height)),
-  spiral: (width, height) => {
-    const walls = new Set();
-    for (let x = 1; x <= width - 2; x += 1) walls.add(2 * width + x);
-    for (let y = 2; y <= height - 3; y += 1) walls.add(y * width + (width - 3));
-    for (let x = 3; x <= width - 3; x += 1) walls.add((height - 3) * width + x);
-    return walls;
-  },
-  pillars: (width, height) => pillarWalls(width, height),
-  zigzag: (width, height) => {
-    const walls = new Set();
-    for (let y = 0; y < height; y += 1) {
-      for (let x = 0; x < width; x += 1) {
-        if ((x + y * 2) % 5 === 2) walls.add(y * width + x);
+  // Place players at random walkable positions (not the goal)
+  const walkable = [];
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (grid[y][x] === 0 && !(x === width - 1 && y === height - 1)) {
+        walkable.push({ x, y });
       }
     }
-    return walls;
-  },
-};
-
-/** Evenly spaced pillars: open enough to always be solvable. */
-function pillarWalls(width, height) {
-  const walls = new Set();
-  for (let y = 1; y < height - 1; y += 2) {
-    for (let x = 1; x < width - 1; x += 2) walls.add(y * width + x);
   }
-  return walls;
-}
 
-/** @param {string} layout @param {number} width @param {number} height @returns {number[]} */
-export function wallsForLayout(layout, width, height) {
-  const build = LAYOUTS[layout] ?? LAYOUTS.classic;
-  const walls = build(width, height);
-  // Start tiles are the bottom row at x = 0, 2, 4 …; the goal is the top-right corner.
-  const starts = [0, 2, 4].map((x) => ({ x, y: height - 1 }));
-  const goal = { x: width - 1, y: 0 };
-  const candidates = [...walls].sort((a, b) => a - b);
-  for (const wall of candidates) {
-    if (starts.every((start) => canReach(start, goal, walls, width, height))) break;
-    walls.delete(wall);
+  // Shuffle walkable positions
+  for (let i = walkable.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [walkable[i], walkable[j]] = [walkable[j], walkable[i]];
   }
-  return [...walls].sort((a, b) => a - b);
-}
 
-/**
- * Breadth-first search used to guarantee a layout is playable.
- * @param {{x: number, y: number}} from @param {{x: number, y: number}} to
- * @param {Set<number>} walls @param {number} width @param {number} height
- */
-export function canReach(from, to, walls, width, height) {
-  const seen = new Set([from.y * width + from.x]);
-  const queue = [from];
-  while (queue.length) {
-    const current = /** @type {{x: number, y: number}} */ (queue.shift());
-    if (current.x === to.x && current.y === to.y) return true;
-    for (const [dx, dy] of Object.values(DIRECTIONS)) {
-      const x = current.x + dx;
-      const y = current.y + dy;
-      const index = y * width + x;
-      if (x < 0 || x >= width || y < 0 || y >= height || walls.has(index) || seen.has(index)) continue;
-      seen.add(index);
-      queue.push({ x, y });
-    }
-  }
-  return false;
-}
+  const positions = {};
+  const steps = {};
+  players.forEach((p, i) => {
+    const pos = walkable[i % walkable.length];
+    positions[p.uid] = { x: pos.x, y: pos.y };
+    steps[p.uid] = 0;
+  });
 
-/**
- * @param {Game} game
- * @param {Player[]} players
- * @returns {GameState}
- */
-export function createInitialState(game, players) {
-  const width = game.options.width;
-  const height = game.options.height;
-  const layout = game.options.layout || 'classic';
-  const starts = players.map((_, index) => ({ x: index * 2, y: height - 1 }));
   return {
-    ...newBase(players),
-    turnUid: null,
+    engine: 'maze',
+    grid,
     width,
     height,
-    layout,
-    walls: wallsForLayout(layout, width, height),
-    positions: Object.fromEntries(players.map((player, index) => [player.uid, starts[index]])),
-    goal: { x: width - 1, y: 0 },
-    scores: scoresFor(players.map((player) => player.uid)),
+    goalX: width - 1,
+    goalY: height - 1,
+    positions,
+    steps,
+    turnIndex: 0,
+    status: 'playing',
+    winner: '',
+    seed,
   };
 }
 
-/**
- * @param {Game} game
- * @param {GameState} state
- * @param {string} uid
- * @param {Action} action
- * @returns {GameState}
- */
-export function applyAction(game, state, uid, action) {
+export function applyAction(game, state, uid, action, players) {
   assertPlaying(state);
-  const delta = DIRECTIONS[action.direction];
-  if (!delta) throw new Error('Choose a direction to move.');
-  const position = state.positions[uid];
-  const x = position.x + delta[0];
-  const y = position.y + delta[1];
-  const index = y * state.width + x;
-  if (x < 0 || x >= state.width || y < 0 || y >= state.height || state.walls.includes(index)) {
-    throw new Error('There is a wall in the way.');
+  if (!players.some(p => p.uid === uid)) throw new Error('You are not in this game.');
+  if (!state.positions[uid]) throw new Error('You are not in the maze.');
+
+  const { direction } = action;
+  const pos = state.positions[uid];
+  const dx = { left: -1, right: 1, up: 0, down: 0 }[direction] ?? null;
+  const dy = { up: -1, down: 1, left: 0, right: 0 }[direction] ?? null;
+
+  if (dx === null || dy === null) throw new Error('Use up, down, left or right.');
+
+  const nx = pos.x + dx;
+  const ny = pos.y + dy;
+
+  if (nx < 0 || nx >= state.width || ny < 0 || ny >= state.height) throw new Error('You hit the edge.');
+  if (state.grid[ny][nx] === 1) throw new Error('There is a wall in the way.');
+
+  pos.x = nx;
+  pos.y = ny;
+  state.steps[uid]++;
+
+  // Check if reached the goal
+  if (nx === state.goalX && ny === state.goalY) {
+    declareWinner(state, uid);
   }
-  state.positions[uid] = { x, y };
-  state.scores[uid] = (state.scores[uid] ?? 0) + 1;
-  state.moves += 1;
-  if (x === state.goal.x && y === state.goal.y) {
-    state.phase = 'finished';
-    state.winnerUid = uid;
-    state.result = 'winner';
-  }
+
   return state;
+}
+
+/**
+ * Generates a maze grid: 0 = walkable, 1 = wall.
+ * Uses a recursive backtracker modified for the desired layout.
+ */
+function generateMaze(width, height, layout, rng) {
+  // Initialize all walls
+  const grid = Array.from({ length: height }, () => Array(width).fill(1));
+
+  // Carve passages
+  const carve = (x, y) => {
+    grid[y][x] = 0;
+    const dirs = [[0, -2], [0, 2], [-2, 0], [2, 0]];
+    // Shuffle directions
+    for (let i = dirs.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      [dirs[i], dirs[j]] = [dirs[j], dirs[i]];
+    }
+    for (const [dx, dy] of dirs) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx >= 0 && nx < width && ny >= 0 && ny < height && grid[ny][nx] === 1) {
+        grid[y + dy / 2][x + dx / 2] = 0;
+        carve(nx, ny);
+      }
+    }
+  };
+
+  carve(1, 1);
+
+  // Ensure goal and start are walkable
+  grid[height - 1][width - 1] = 0;
+  grid[0][0] = 0;
+  // Ensure neighbors of goal are reachable
+  if (width > 1) grid[height - 1][width - 2] = 0;
+  if (height > 1) grid[height - 2][width - 1] = 0;
+
+  // Apply layout modifications
+  if (layout === 'pillars') {
+    for (let y = 1; y < height - 1; y += 2) {
+      for (let x = 1; x < width - 1; x += 2) {
+        if (rng() > 0.5) grid[y][x] = 1;
+      }
+    }
+  }
+
+  return grid;
 }

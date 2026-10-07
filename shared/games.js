@@ -1,24 +1,14 @@
 /**
  * The game catalog data: one entry per playable game, shared by the browser app and the trusted
- * backend (Cloud Functions) so both sides validate the same catalog.
+ * backend so both sides validate the same catalog.
  *
- * This module is deliberately free of anything browser-facing (no artwork paths, no DOM, no
- * imports), which is why it lives outside src/: Cloud Functions load shared/games.js to check that
- * a requested game id exists and to read the rule options that a room was created with.
- *
- * Every entry must describe what the game actually does:
- *
- *   engine     which rule set plays it (see shared/engines/*)
- *   options    the rule knobs that engine reads — two games sharing an engine must differ in at
- *              least one option that changes how the game feels, not only in its title
- *   blurb      one sentence shown on the card, and it must match the engine's real behaviour
- *   duration   rough time for one full round, used by the library filters
- *   difficulty Easy | Medium | Tricky — how much thinking one turn needs
- *   input      Tap | Keys | Tap or keys — how you actually play it
- *
- * `src/catalog.js` adds the artwork and the how-to-play copy on top of this list, and
- * `tests/catalog-integrity.test.js` checks the promises above (distinct options per variant,
- * honest blurbs, quiz banks that are big enough for the rounds they deal).
+ * Every entry describes what the game actually does:
+ *   engine     which rule set plays it
+ *   options    the rule knobs that engine reads
+ *   blurb      one sentence shown on the card
+ *   duration   rough time for one full round
+ *   difficulty Easy | Medium | Tricky
+ *   input      Tap | Keys | Tap or keys
  */
 
 /** @typedef {'Arcade'|'Party'|'Strategy'|'Puzzle'} Category */
@@ -57,7 +47,7 @@ export const GAMES = [
   { id: 'emoji-flip', title: 'Emoji Flip', category: 'Party', engine: 'memory', icon: '☺', accent: 'pink', blurb: 'Two pairs start face-up and every match passes the turn on — quick, noisy rounds.', options: { pairs: 6, openPairs: 2, matchKeepsTurn: false }, duration: '3 min', difficulty: 'Easy', input: 'Tap' },
   { id: 'arcade-pairs', title: 'Arcade Pairs', category: 'Puzzle', engine: 'memory', icon: '▣', accent: 'orange', blurb: 'Eight pairs with one already turned over, built for three players.', options: { pairs: 8, openPairs: 1, matchKeepsTurn: true }, duration: '7 min', difficulty: 'Medium', input: 'Tap' },
 
-  // ── Tap races (a shorter tap gap means the game plays faster) ───────────────────────────────────
+  // ── Tap races ───────────────────────────────────────────────────────────────────────────────────
   { id: 'pixel-tap', title: 'Pixel Tap Sprint', category: 'Arcade', engine: 'race', icon: '↗', accent: 'blue', blurb: 'A flat-out sprint: 16 taps, no measured tempo, fastest fingers win.', options: { target: 16, tapGapMs: 0 }, duration: '1 min', difficulty: 'Easy', input: 'Tap or keys' },
   { id: 'button-masher', title: 'Button Masher', category: 'Party', engine: 'race', icon: '⌁', accent: 'orange', blurb: 'Twenty taps at a brisk 90 ms pace — mash, but the game makes you keep rhythm.', options: { target: 20, tapGapMs: 90 }, duration: '1 min', difficulty: 'Easy', input: 'Tap or keys' },
   { id: 'turbo-charge', title: 'Turbo Charge', category: 'Arcade', engine: 'race', icon: 'ϟ', accent: 'cyan', blurb: 'A steadier race: 18 charge taps accepted at one every 140 ms.', options: { target: 18, tapGapMs: 140 }, duration: '2 min', difficulty: 'Easy', input: 'Tap or keys' },
@@ -71,7 +61,7 @@ export const GAMES = [
   { id: 'coin-flip-clash', title: 'Coin Flip Clash', category: 'Party', engine: 'rps', icon: '◉', accent: 'gold', blurb: 'Call heads or tails in secret; the flip is fixed per round, not per player.', options: { target: 3, mode: 'coin' }, duration: '2 min', difficulty: 'Easy', input: 'Tap' },
   { id: 'dice-duel', title: 'Dice Duel', category: 'Party', engine: 'rps', icon: '⚄', accent: 'cyan', blurb: 'Lock in a die face and hope it is the highest; four wins takes the duel.', options: { target: 4, mode: 'dice' }, duration: '3 min', difficulty: 'Easy', input: 'Tap' },
 
-  // ── Quiz rounds (every one draws from its own curated bank) ─────────────────────────────────────
+  // ── Quiz rounds ─────────────────────────────────────────────────────────────────────────────────
   { id: 'retro-trivia', title: 'Retro Trivia', category: 'Party', engine: 'quiz', icon: '?', accent: 'violet', blurb: 'Five arcade-history questions before the reveal.', options: { rounds: 5 }, duration: '4 min', difficulty: 'Medium', input: 'Tap' },
   { id: 'emoji-decode', title: 'Emoji Decode', category: 'Party', engine: 'quiz', icon: '☺', accent: 'pink', blurb: 'Read an emoji clue and decode what it means before anyone else.', options: { rounds: 5 }, duration: '4 min', difficulty: 'Easy', input: 'Tap' },
   { id: 'arcade-facts', title: 'Arcade Facts', category: 'Puzzle', engine: 'quiz', icon: '▣', accent: 'cyan', blurb: 'How the old cabinets actually worked: sprites, hitboxes and ROMs.', options: { rounds: 5 }, duration: '5 min', difficulty: 'Tricky', input: 'Tap' },
@@ -83,7 +73,7 @@ export const GAMES = [
   { id: 'eight-bit-riddles', title: '8-Bit Riddles', category: 'Puzzle', engine: 'quiz', icon: '◈', accent: 'cyan', blurb: 'Bits, bytes and binary — five puzzles in machine arithmetic.', options: { rounds: 5 }, duration: '5 min', difficulty: 'Tricky', input: 'Tap' },
   { id: 'retro-rewind', title: 'Retro Rewind', category: 'Party', engine: 'quiz', icon: '↶', accent: 'gold', blurb: 'Five questions looking back at the decades that made the arcade.', options: { rounds: 5 }, duration: '4 min', difficulty: 'Medium', input: 'Tap' },
 
-  // ── Maze races (a different wall layout each time, not a different label) ───────────────────────
+  // ── Maze races ──────────────────────────────────────────────────────────────────────────────────
   { id: 'maze-runner', title: 'Maze Runner', category: 'Arcade', engine: 'maze', icon: '⌗', accent: 'green', blurb: 'A seven-by-seven hedge maze; everyone moves at once towards the star.', options: { width: 7, height: 7, layout: 'classic' }, duration: '2 min', difficulty: 'Easy', input: 'Keys' },
   { id: 'neon-labyrinth', title: 'Neon Labyrinth', category: 'Puzzle', engine: 'maze', icon: '╳', accent: 'violet', blurb: 'A spiral of neon walls that keeps pulling you off the straight line.', options: { width: 7, height: 7, layout: 'spiral' }, duration: '3 min', difficulty: 'Medium', input: 'Keys' },
   { id: 'byte-escape', title: 'Byte Escape', category: 'Arcade', engine: 'maze', icon: '↗', accent: 'cyan', blurb: 'A circuit-board pillar maze: short diagonal routes past regular blocks.', options: { width: 7, height: 7, layout: 'pillars' }, duration: '3 min', difficulty: 'Medium', input: 'Keys' },
@@ -94,12 +84,12 @@ export const GAMES = [
   { id: 'pixel-fleet', title: 'Pixel Fleet', category: 'Strategy', engine: 'battle', icon: '▥', accent: 'cyan', blurb: 'A smaller five-by-five radar with three hidden cells — a quick hunt.', options: { board: 5, fleet: 3 }, duration: '4 min', difficulty: 'Easy', input: 'Tap' },
   { id: 'alien-skirmish', title: 'Alien Skirmish', category: 'Arcade', engine: 'battle', icon: '✣', accent: 'green', blurb: 'A seven-by-seven sweep with five dispersed targets to clear.', options: { board: 7, fleet: 5 }, duration: '9 min', difficulty: 'Tricky', input: 'Tap' },
 
-  // ── Court volleys (more lanes means more guessing) ──────────────────────────────────────────────
+  // ── Court volleys ───────────────────────────────────────────────────────────────────────────────
   { id: 'pong-rally', title: 'Pong Rally', category: 'Arcade', engine: 'rally', icon: '▰', accent: 'cyan', blurb: 'Three return lanes on your turn; first to seven clean volleys wins.', options: { target: 7, lanes: 3 }, duration: '4 min', difficulty: 'Easy', input: 'Tap or keys' },
   { id: 'paddle-wars', title: 'Paddle Wars', category: 'Party', engine: 'rally', icon: '▱', accent: 'pink', blurb: 'Two lanes and five points — a short, read-your-rival duel.', options: { target: 5, lanes: 2 }, duration: '3 min', difficulty: 'Easy', input: 'Tap or keys' },
   { id: 'air-hockey', title: 'Air Hockey', category: 'Party', engine: 'rally', icon: '◉', accent: 'blue', blurb: 'Five lanes and a nine-point table: the longest volley game in the arcade.', options: { target: 9, lanes: 5 }, duration: '8 min', difficulty: 'Medium', input: 'Tap or keys' },
 
-  // ── Cipher logic (digits and the size of the digit alphabet both change) ────────────────────────
+  // ── Cipher logic ────────────────────────────────────────────────────────────────────────────────
   { id: 'codebreaker', title: 'Codebreaker', category: 'Puzzle', engine: 'code', icon: '⌗', accent: 'green', blurb: 'Break a four-digit code from 0–5 in ten turned-based guesses.', options: { digits: 4, maxGuesses: 10, symbols: 6 }, duration: '6 min', difficulty: 'Medium', input: 'Tap' },
   { id: 'mastermind', title: 'Mastermind', category: 'Puzzle', engine: 'code', icon: '▦', accent: 'violet', blurb: 'Five digits, but only four choices each and eight guesses — fewer options, tighter clues.', options: { digits: 5, maxGuesses: 8, symbols: 4 }, duration: '8 min', difficulty: 'Tricky', input: 'Tap' },
 ];

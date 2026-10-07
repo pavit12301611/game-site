@@ -1,66 +1,52 @@
 /**
- * Shared JSDoc types for the app. This module is types only: it exports nothing at runtime, so it
- * costs nothing in the bundle and is never imported by the browser.
- *
- * It exists so `npm run typecheck` (tsc --checkJs) has one place to name the shapes that every
- * engine, view and helper passes around.
- *
- * @typedef {Object} Game
- * @property {string} id          catalog id, e.g. "pixel-tac-toe"
- * @property {string} title       display name
- * @property {string} category    one of CATEGORIES
- * @property {string} engine      which src/engines module runs it
- * @property {string} icon        one-glyph sigil
- * @property {string} accent      colour token, e.g. "violet"
- * @property {string} blurb       one-line description
- * @property {string} duration    shown duration label, e.g. "3 min"
- * @property {string} difficulty  shown difficulty label: Easy | Medium | Hard
- * @property {string} input       shown input style, e.g. "Tap or keys"
- * @property {Record<string, any>} options  engine settings (size, target, rounds, ...)
+ * Shared type definitions for JSDoc. No runtime code.
  */
 
 /**
- * @typedef {Object} Player
- * @property {string} uid   Firestore uid, or "local-you" / "local-cpu" in practice mode
+ * @typedef {object} Game
+ * @property {string} id
+ * @property {string} title
+ * @property {string} category
+ * @property {string} engine
+ * @property {string} icon
+ * @property {string} accent
+ * @property {string} blurb
+ * @property {Record<string, any>} options
+ * @property {string} duration
+ * @property {string} difficulty
+ * @property {string} input
+ */
+
+/**
+ * @typedef {object} Player
+ * @property {string} uid
  * @property {string} [name]
  */
 
 /**
- * The five fields every engine state carries.
- * @typedef {Object} BaseState
- * @property {'playing' | 'finished'} phase
- * @property {string | null} turnUid    null for engines where everyone moves at once
- * @property {string | null} winnerUid
- * @property {'winner' | 'draw' | null} result
- * @property {number} moves
+ * @typedef {object} GameState
+ * @property {string} engine
+ * @property {string} status  'playing' | 'finished'
+ * @property {string} winner
+ * @property {number} turnIndex
+ * @property {string} [seed]
  */
 
 /**
- * A full engine state: the base fields plus whatever the engine adds.
- * @typedef {BaseState & Record<string, any>} GameState
+ * @typedef {object} Action
+ * @property {string} [type]
+ * @property {number} [index]
+ * @property {number} [col]
+ * @property {string} [choice]
+ * @property {number} [answer]
+ * @property {string} [direction]
+ * @property {string} [targetUid]
+ * @property {number[]} [guess]
+ * @property {number} [lane]
  */
 
 /**
- * A move. Each engine documents the shape it accepts: { index }, { col }, { choice },
- * { type: 'tap' | 'next' }, { direction }, { targetUid, index }, { lane }, { guess }.
- * @typedef {Record<string, any>} Action
+ * @typedef {object} Engine
+ * @property {function} createInitialState
+ * @property {function} applyAction
  */
-
-/**
- * @typedef {Object} Engine
- * @property {(game: Game, players: Player[], seed?: string, deps?: Record<string, any>) => GameState} createInitialState
- * @property {(game: Game, state: GameState, uid: string, action: Action, players: Player[]) => GameState} applyAction
- */
-
-/**
- * What the connection status is derived from.
- * @typedef {Object} FirebaseSetup
- * @property {'ok' | 'missing' | 'invalid'} status
- * @property {string} code
- * @property {string} message
- * @property {string} hint
- * @property {string} projectId
- * @property {string} authDomain
- */
-
-export {};

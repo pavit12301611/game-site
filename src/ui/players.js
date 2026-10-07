@@ -1,33 +1,33 @@
 /**
- * Player presentation helpers: the name shown for a uid, a player's seat index, and the mark drawn
- * for that seat on the boards.
+ * Player display helpers: names, colours, shapes.
  */
-import { currentPlayers, state } from '../state.js';
 
-export function activeName(uid, players = currentPlayers()) {
-  return players.find((player) => player.uid === uid)?.name || 'A player';
-}
+import { state } from '../state.js';
 
-export function playerIndex(uid, players) {
-  return players.findIndex((player) => player.uid === uid);
-}
+const PLAYER_COLORS = ['--p1', '--p2', '--p3', '--p4'];
+const PLAYER_SHAPES = ['✕', '●', '◎', '◆'];
 
-export function playerMark(index) {
-  return ['✕', '◯', '◇'][Math.max(0, index) % 3];
+/**
+ * Gets a player's display name.
+ */
+export function playerDisplayName(uid, players) {
+  if (uid === 'local-you') return state.displayName || 'You';
+  if (uid === 'local-cpu') return 'CPU';
+  const player = players?.find(p => p.uid === uid);
+  if (player?.name) return player.name;
+  return state.room?.playerNames?.[uid] || 'Player';
 }
 
 /**
- * True when this account is linked to Google. Google accounts land here after a redirect with no
- * username chosen yet, so the UI nudges them into the username step instead of the sign-up form.
+ * Gets the CSS variable for a player's colour.
  */
-export function isGoogleUser(user = state.user) {
-  return Boolean(user?.providerData?.some((provider) => provider.providerId === 'google.com'));
+export function playerColor(index) {
+  return `var(${PLAYER_COLORS[index % PLAYER_COLORS.length]})`;
 }
 
-/** The best name to show for a player: claimed username > chosen display name > Google name > guest tag. */
-export function playerDisplayName(user = state.user) {
-  if (state.profile?.username && user?.uid === state.user?.uid) return state.profile.username;
-  if (state.displayName.trim()) return state.displayName.trim().slice(0, 20);
-  if (user?.displayName) return user.displayName;
-  return user?.isAnonymous ? `Guest ${user.uid.slice(0, 4)}` : 'Arcade player';
+/**
+ * Gets the shape icon for a player.
+ */
+export function playerShape(index) {
+  return PLAYER_SHAPES[index % PLAYER_SHAPES.length];
 }

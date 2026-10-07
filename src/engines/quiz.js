@@ -1,126 +1,86 @@
 /**
- * quiz engine — everyone answers the same question, then anyone advances to the next round.
- * Games: Retro Trivia, Emoji Decode, Arcade Facts, Pixel Pop Quiz, Movie Mayhem, Word Scramble,
- * Number Chase, Brain Busters, 8-Bit Riddles, Retro Rewind.
+ * Quiz engine: multiple-choice rounds.
  *
- * Two rules keep the answer key out of other players' browsers:
- *
- * - the engine deals a **deck of whole items** (prompt, clue, choices and answer) into the state,
- *   and the trusted backend keeps that state in a server-only document. The public room document
- *   only ever carries `question` — the current prompt, clue and choices, without the answer.
- * - the browser only ever bundles the warm-up subset (`shared/content/quiz-practice.js`) for local
- *   practice against the CPU. Online rooms are dealt by the backend from the full bank minus that
- *   subset, so a player cannot look up an online answer in their own copy of the bundle.
- *
- * Round length always matches the deck: `state.rounds === state.deck.length`.
+ * Options: { rounds: number }
+ * Questions are dealt from a bank (seeded). All players answer, then the round reveals.
  */
 
-/** @typedef {import('../types.js').Game} Game */
-/** @typedef {import('../types.js').Player} Player */
-/** @typedef {import('../types.js').GameState} GameState */
-/** @typedef {import('../types.js').Action} Action */
-/** @typedef {{ id: string, kind: 'emoji'|'number'|'riddle'|'scramble'|'trivia', prompt: string, clue?: string, label?: string, choices: string[], answer: number, note?: string }} QuizItem */
+import { seededRandom, assertPlaying, declareWinner } from './shared.js';
 
-import { practiceBankFor } from '../../shared/content/quiz-practice.js';
-import { quizDeck } from '../../shared/content/quiz-banks.js';
-import { assertPlaying, finishByScore, newBase, scoresFor, shuffled } from './shared.js';
+export function createInitialState(game, players, seed, deps) {
+  const bank = deps?.bank || [];
+  const rng = seededRandom(seed);
+  const { rounds } = game.options;
 
-/**
- * The public half of one item: everything a player needs to answer, and nothing that gives the
- * answer away. The item id is deliberately absent — the id would let a client match the question
- * against a shipped bank.
- * @param {QuizItem} item
- * @returns {{ prompt: string, clue: string, label: string, kind: string, choices: string[], note: string }}
- */
-export function publicQuestionFor(item) {
+  // Shuffle and pick questions
+  const shuffled = [...bank];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  const questions = shuffled.slice(0, rounds);
+
   return {
-    prompt: item.prompt,
-    clue: item.clue ?? '',
-    label: item.label ?? '',
-    kind: item.kind,
-    choices: [...item.choices],
-    note: item.note ?? '',
+    engine: 'quiz',
+    questions,
+    currentRound: 0,
+    answers: {}, // uid -> answer index for current round
+    roundRevealed: false,
+    scores: Object.fromEntries(players.map(p => [p.uid, 0])),
+    turnIndex: 0,
+    status: 'playing',
+    winner: '',
+    seed,
   };
 }
 
-/**
- * @param {Game} game
- * @param {Player[]} players
- * @param {string} [seed]
- * @param {{ bank?: QuizItem[] }} [deps] `bank` lets the trusted backend deal from the server-only
- *   bank (shared/content/quiz-banks.js, minus the warm-up items); the browser and the tests fall
- *   back to the shipped warm-up subset.
- * @returns {GameState}
- */
-export function createInitialState(game, players, seed = 'psd', deps = {}) {
-  const ids = players.map((player) => player.uid);
-  const bank = deps.bank ?? practiceBankFor(game.id);
-  const rounds = Math.max(1, Math.min(Number(game.options.rounds) || 5, bank.length));
-  const deck = quizDeck(game.id, seed, rounds, { shuffle: (values, deckSeed) => shuffled(values, deckSeed), bank });
-  const items = deck.map((id) => bank.find((item) => item.id === id)).filter(Boolean);
-  const first = items[0];
-  if (!first) throw new Error('This quiz has no questions to deal. Add items to its bank first.');
-  return {
-    ...newBase(players),
-    turnUid: null,
-    deck,
-    items,
-    questionIndex: 0,
-    question: publicQuestionFor(first),
-    answers: {},
-    answeredUids: [],
-    scores: scoresFor(ids),
-    rounds: items.length,
-    lastRound: null,
-  };
-}
-
-/**
- * @param {Game} game
- * @param {GameState} state
- * @param {string} uid
- * @param {Action} action
- * @param {Player[]} players
- * @returns {GameState}
- */
 export function applyAction(game, state, uid, action, players) {
   assertPlaying(state);
-  const ids = players.map((player) => player.uid);
+  if (!players.some(p => p.uid === uid)) throw new Error('You are not in this game.');
+
+  // "next" action: reveal and advance
   if (action.type === 'next') {
-    const allAnswered = ids.every((playerUid) => state.answeredUids.includes(playerUid));
-    if (!allAnswered) throw new Error('Wait for everyone to answer first.');
-    if (state.questionIndex + 1 >= state.rounds) {
-      finishByScore(state, players, state.scores);
+    if (!state.roundRevealed) {
+      // Reveal the round
+      state.roundRevealed = true;
+      const q = state.questions[state.currentRound];
+      if (q) {
+        for (const [pUid, ans] of Object.entries(state.answers)) {
+          if (ans === q.answer) state.scores[pUid] = (state.scores[pUid] || 0) + 1;
+        }
+      }
       return state;
     }
-    state.questionIndex += 1;
-    state.question = publicQuestionFor(state.items[state.questionIndex]);
+
+    // Advance to next round
+    state.currentRound++;
     state.answers = {};
-    state.answeredUids = [];
-    state.lastRound = null;
-    state.moves += 1;
+    state.roundRevealed = false;
+
+    if (state.currentRound >= game.options.rounds) {
+      // Game over: find winner
+      let max = -1;
+      let winner = 'draw';
+      for (const [pUid, score] of Object.entries(state.scores)) {
+        if (score > max) { max = score; winner = pUid; }
+        else if (score === max) winner = 'draw';
+      }
+      state.status = 'finished';
+      state.winner = winner;
+      return state;
+    }
+
     return state;
   }
-  if (state.answeredUids.includes(uid)) throw new Error('You have already answered this round.');
-  const item = state.items[state.questionIndex];
-  if (!item) throw new Error('This round has no question left.');
-  const answer = Number(action.answer);
-  if (!Number.isInteger(answer) || answer < 0 || answer >= item.choices.length) throw new Error('Choose one of the answers.');
-  const answers = { ...state.answers, [uid]: answer };
-  state.answers = answers;
-  state.answeredUids = [...state.answeredUids, uid];
-  state.moves += 1;
-  if (ids.every((playerUid) => answers[playerUid] !== undefined)) {
-    const scores = { ...state.scores };
-    for (const player of players) if (answers[player.uid] === item.answer) scores[player.uid] = (scores[player.uid] ?? 0) + 1;
-    state.scores = scores;
-    state.lastRound = {
-      answers,
-      correct: item.answer,
-      questionIndex: state.questionIndex,
-      choices: [...item.choices],
-      explanation: item.note ?? '',
-    };
-  }
+
+  // Answer action
+  if (state.roundRevealed) throw new Error('This round is already revealed.');
+  if (state.answers[uid] !== undefined) throw new Error('You already answered this round.');
+
+  const { answer } = action;
+  if (typeof answer !== 'number' || answer < 0 || answer > 3)
+    throw new Error('Pick an answer between A and D.');
+
+  state.answers[uid] = answer;
   return state;
 }

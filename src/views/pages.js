@@ -1,637 +1,659 @@
 /**
- * Page views: the five screens the router can show (home, catalog, friends, admin, room/game) plus
- * the smaller renderers they share - game cards and grid, the personal shelves, date labels, the
- * lobby, the "how to play" panel and the live match screen.
- *
- * Every function here is "state in, HTML string out": they read `state` and the derived getters but
- * never write to it, never talk to Firebase, and never install event handlers. Buttons carry a
- * `data-action` attribute and the click router in `src/app.js` decides what they do, which is what
- * keeps these views testable without a browser.
- *
- * Every value that comes from another player (names, room ids, game titles) goes through `esc()`.
+ * Page content renderers: home, catalog, friends, reviews, admin, privacy, safety, room, game.
  */
 
-import { CATEGORIES, CATEGORY_ARTWORK, GAMES, HERO_ARTWORK, getGame, getGameArtwork, getGameGuide } from '../catalog.js';
+import { state, currentGame, currentPlayers, currentGameState, currentPresence } from '../state.js';
+import { GAMES, CATEGORIES, getGame, HERO_ARTWORK, CATEGORY_ARTWORK, GAME_ARTWORK, getGameArtwork, getGameGuide, ENGINE_LABELS } from '../catalog.js';
 import { connection, onlineUnavailableNote } from '../connection.js';
-import { firebaseReady, firebaseSetup } from '../firebase.js';
-import { isRoomExpired } from '../helpers.js';
-import { state, currentGame, currentGameState, currentPlayers, currentPresence, currentUid, presenceNow } from '../state.js';
-import { artImage, esc, icon } from '../ui/html.js';
-import { formatAwayFor } from '../presence-status.js';
-import { activeName, isGoogleUser } from '../ui/players.js';
-import { renderEngineBoard } from './boards.js';
-import {
-  REVIEW_SENTIMENTS,
-  buildImprovementIdeas,
-  summarizeReviewSentiment,
-} from '../../shared/reviews/agent.js';
-import {
-  MAINTENANCE_PIN_DEFAULT_HOURS,
-  MAINTENANCE_PIN_DIGITS,
-  MAINTENANCE_REASON_MAX,
-  MAINTENANCE_REASON_LINES_MAX,
-  MAINTENANCE_PIN_DURATIONS,
-  formatMaintenancePin,
-  maintenancePinGroupHint,
-} from '../../shared/online/maintenance.js';
-import { renderMaintenanceCodePin } from './maintenance.js';
+import { esc, icon } from '../ui/html.js';
+import { playerDisplayName } from '../ui/players.js';
+import { presenceLabel } from '../views/modals.js';
 
-/** The 640 px picture of a game, used as the backdrop of the game stage heading. */
-function stageArt(game) {
-  const art = getGameArtwork(game);
-  return (art.srcset || '').split(' ')[0] || art.src;
-}
-
-export function renderGameCard(game, level = 3) {
-  const artwork = getGameArtwork(game);
-  const isFavorite = state.favorites.includes(game.id);
-  return `<article class="game-card" data-category="${esc(game.category)}">
-    <span class="game-art art-${game.accent || 'blue'}">${artImage(artwork, { className: 'game-art-image', sizes: '(min-width: 1024px) 320px, (min-width: 640px) 45vw, calc(100vw - 32px)' })}</span>
-    <div class="game-card-copy"><span class="game-card-meta">${esc(game.category)} · 2–3 players · ${esc(artwork.engineLabel)}</span><h${level} class="game-card-title"><button class="game-card-hit" data-action="open-game" data-game-id="${game.id}" aria-label="Open ${esc(game.title)}">${esc(game.title)}</button></h${level}><p>${esc(game.blurb)}</p><span class="card-play" aria-hidden="true">Open ${icon('arrow')}</span></div>
-    <button class="favorite-button ${isFavorite ? 'is-favorite' : ''}" data-action="toggle-favorite" data-game-id="${game.id}" aria-label="${isFavorite ? 'Remove' : 'Add'} ${esc(game.title)} ${isFavorite ? 'from' : 'to'} favorites" aria-pressed="${isFavorite}">${isFavorite ? '★' : '☆'}</button>
-  </article>`;
-}
-
-export function renderGameGrid(games, level = 3) {
-  if (!games.length) return `<div class="empty-state"><div class="empty-icon">⌕</div><h3>No games found</h3><p>Try another name, or reset the category and filters.</p><button class="button button-outline" data-action="clear-filters">Reset search and filters</button></div>`;
-  return `<div class="game-grid">${games.map((game) => renderGameCard(game, level)).join('')}</div>`;
-}
-
-export function gamesForIds(ids) {
-  return ids.map((id) => getGame(id)).filter(Boolean);
-}
-
-export function renderPersonalShelves() {
-  const favoriteGames = gamesForIds(state.favorites).slice(0, 4);
-  const recentGames = gamesForIds(state.recentGames).slice(0, 4);
-  if (!favoriteGames.length && !recentGames.length) return '';
-  return `<section class="personal-shelves"><div class="personal-shelf-head"><div><div class="eyebrow">Your shortlist</div><h2>Keep the good ones close<span>.</span></h2><p>Favorites and recent games stay on this device, no extra account data required.</p></div><button class="text-button" data-action="navigate" data-page="catalog">Open the full shelf ${icon('arrow')}</button></div>${favoriteGames.length ? `<div class="personal-shelf"><div class="shelf-label"><span>★ FAVORITES</span><b>${favoriteGames.length}</b></div>${renderGameGrid(favoriteGames)}</div>` : ''}${recentGames.length ? `<div class="personal-shelf"><div class="shelf-label"><span>↺ RECENTLY PLAYED</span><b>${recentGames.length}</b></div>${renderGameGrid(recentGames)}</div>` : ''}</section>`;
-}
-
-/**
- * The filter dimensions the shelf really has data for. `duration` is bucketed because a 5-minute
- * game and a 6-minute game are the same promise to a player choosing what fits their evening.
- */
-export const FILTERS = Object.freeze({
-  duration: Object.freeze([
-    { label: 'Any length', test: () => true },
-    { label: 'Under 5 min', test: (game) => Number.parseInt(game.duration, 10) < 5 },
-    { label: '5–8 min', test: (game) => { const minutes = Number.parseInt(game.duration, 10); return minutes >= 5 && minutes <= 8; } },
-    { label: '9 min and up', test: (game) => Number.parseInt(game.duration, 10) >= 9 },
-  ]),
-});
-
-/** Difficulty and input style come straight from the catalog, so the options can never drift. */
-export const DIFFICULTIES = ['Any difficulty', ...new Set(GAMES.map((game) => game.difficulty))];
-export const INPUT_STYLES = ['Any input', ...new Set(GAMES.map((game) => game.input))];
-
-/**
- * The catalog after the search box, the category pills and the three real filters. Every game
- * supports a 2- or 3-seat room and local practice, so "players" and "mode" are choices made when a
- * room is created rather than per-game facts to filter on — the panel says so instead of pretending.
- */
+/** Games filtered by the current search and filter state. */
 export function filteredGames() {
-  const term = state.query.trim().toLowerCase();
-  const filters = state.filters || {};
-  const durationRule = (FILTERS.duration.find((entry) => entry.label === filters.duration) || FILTERS.duration[0]).test;
-  return GAMES.filter((game) => (state.category === 'All games' || game.category === state.category)
-    && (!term || `${game.title} ${game.category} ${game.blurb}`.toLowerCase().includes(term))
-    && durationRule(game)
-    && (!filters.difficulty || filters.difficulty === 'Any difficulty' || game.difficulty === filters.difficulty)
-    && (!filters.input || filters.input === 'Any input' || game.input === filters.input));
-}
-
-/** True when anything narrows the shelf, so the empty state can offer the right reset. */
-export function filtersActive() {
-  const filters = state.filters || {};
-  return Boolean(state.query.trim()) || state.category !== 'All games'
-    || Boolean(filters.duration && filters.duration !== 'Any length')
-    || Boolean(filters.difficulty && filters.difficulty !== 'Any difficulty')
-    || Boolean(filters.input && filters.input !== 'Any input');
-}
-
-export function renderSetupCallout(conn = connection()) {
-  if (!conn.setupNeeded) return '';
-  return `<aside class="setup-callout is-alert" aria-label="Firebase setup needed">${icon('spark')}<span><b>${esc(conn.detail)}</b>${conn.hint ? ` <small>${esc(conn.hint)}</small>` : ''}<small>Online rooms, accounts and friends are off until this is fixed. Local practice works.</small></span><button data-action="show-setup">Setup guide ${icon('arrow')}</button></aside>`;
-}
-
-export function renderCategoryRow() {
-  const cards = Object.keys(CATEGORY_ARTWORK).map((name) => {
-    const count = GAMES.filter((game) => game.category === name).length;
-    return `<li><button class="category-card" data-action="filter-category" data-category="${esc(name)}">${artImage(CATEGORY_ARTWORK[name], { className: 'category-card-image', sizes: '(min-width: 1024px) 280px, (min-width: 560px) 45vw, 100vw' })}<span class="category-card-copy"><b>${esc(name)}</b><small>${count} games</small></span></button></li>`;
-  }).join('');
-  return `<section class="section-block category-section" aria-labelledby="category-title"><div class="section-heading"><div><div class="eyebrow">Find your mood</div><h2 id="category-title">Browse by category<span>.</span></h2></div></div><ul class="category-row">${cards}</ul></section>`;
-}
-
-function reviewStars(rating) {
-  const stars = Math.max(0, Math.min(5, Number(rating) || 0));
-  return `<span class="review-stars" aria-label="${stars} out of 5 stars">${'★'.repeat(stars)}<span class="review-stars-empty">${'☆'.repeat(5 - stars)}</span></span>`;
-}
-
-function reviewGameName(gameId) {
-  return gameId === 'arcade' ? 'Whole arcade' : getGame(gameId)?.title || 'Arcade game';
-}
-
-function renderReviewSpotlight({ compact = false } = {}) {
-  const review = state.featuredReview;
-  if (!review) {
-    return `<section class="review-spotlight ${compact ? 'is-compact' : ''}" aria-labelledby="review-spotlight-title"><div class="review-spotlight-art" aria-hidden="true"><span>★</span><i>★</i><b>★</b></div><div class="review-spotlight-copy"><span class="eyebrow">Community spotlight</span><h2 id="review-spotlight-title">Find your next favorite review<span>.</span></h2><p>Read what players think, see every reply, and leave a note of your own for the arcade.</p><button class="button button-primary" data-action="navigate" data-page="reviews">Read reviews &amp; share yours ${icon('arrow')}</button></div></section>`;
+  let games = [...GAMES];
+  if (state.query) {
+    const q = state.query.toLowerCase();
+    games = games.filter(g =>
+      g.title.toLowerCase().includes(q) ||
+      g.category.toLowerCase().includes(q) ||
+      g.engine.toLowerCase().includes(q) ||
+      g.blurb.toLowerCase().includes(q)
+    );
   }
-  const sentiment = REVIEW_SENTIMENTS.includes(review.sentiment) ? review.sentiment : 'neutral';
-  const rating = Math.max(1, Math.min(5, Number(review.rating) || 1));
-  return `<section class="review-spotlight ${compact ? 'is-compact' : ''}" aria-labelledby="review-spotlight-title"><div class="review-spotlight-art" aria-hidden="true"><span>★</span><i>★</i><b>★</b></div><div class="review-spotlight-copy"><div class="review-spotlight-kicker"><span class="eyebrow">Top community review</span><span class="review-featured-badge">${icon('trophy')} Featured</span></div><div class="review-spotlight-stars">${reviewStars(rating)}<span>${rating}.0 / 5</span></div><h2 id="review-spotlight-title">${esc(review.title || 'A player’s take on the arcade')}</h2><blockquote>“${esc(review.message || '')}”</blockquote><div class="review-spotlight-byline"><b>${esc(review.reviewerName || 'Arcade player')}</b><span>${esc(reviewGameName(review.gameId))}</span><span class="review-sentiment-chip sentiment-${sentiment}">${esc(sentiment)}</span></div>${review.assistantReply ? `<div class="review-spotlight-reply"><span>✦ ${esc(review.assistantName || 'Arcade Review Agent')} replied</span><p>${esc(review.assistantReply)}</p></div>` : ''}<button class="text-button" data-action="navigate" data-page="reviews">See every review ${icon('arrow')}</button></div></section>`;
+  if (state.category && state.category !== 'All games') {
+    games = games.filter(g => g.category === state.category);
+  }
+  const { duration, difficulty, input } = state.filters;
+  if (duration && duration !== 'Any length') games = games.filter(g => g.duration === duration);
+  if (difficulty && difficulty !== 'Any difficulty') games = games.filter(g => g.difficulty === difficulty);
+  if (input && input !== 'Any input') games = games.filter(g => g.input === input);
+  return games;
 }
 
-function renderPublicReviewCard(review) {
-  const sentiment = REVIEW_SENTIMENTS.includes(review.sentiment) ? review.sentiment : 'neutral';
-  const rating = Math.max(1, Math.min(5, Number(review.rating) || 1));
-  return `<article class="review-card"><div class="review-card-top"><div>${reviewStars(rating)}<span class="review-rating-number">${rating}.0</span></div><span class="review-sentiment-chip sentiment-${sentiment}">${esc(sentiment)}</span></div><h3>${esc(review.title || 'A player review')}</h3><p class="review-card-message">${esc(review.message || '')}</p><div class="review-card-meta"><b>${esc(review.reviewerName || 'Arcade player')}</b><span>${esc(reviewGameName(review.gameId))}</span><time>${esc(timeAgo(review.createdAtMs))}</time></div><section class="review-agent-reply" aria-label="Reply from the Arcade Review Agent"><div><span class="review-agent-mark">✦</span><b>${esc(review.assistantName || 'Arcade Review Agent')}</b><small>replied automatically</small></div><p>${esc(review.assistantReply || 'Thanks for sharing your experience with the community.')}</p></section></article>`;
-}
-
-function renderReviewForm() {
-  const disabled = !firebaseReady || state.reviewSubmitting;
-  const disabledAttr = disabled ? 'disabled' : '';
-  const name = state.profile?.username || state.displayName || '';
-  return `<section class="surface review-form-panel" aria-labelledby="review-form-title"><div class="review-form-heading"><span class="review-form-icon">${icon('star')}</span><div><span class="eyebrow">Add your voice</span><h2 id="review-form-title">Leave a review<span>.</span></h2></div></div><p class="review-form-intro">Your note is public. A pretrained DistilBERT model classifies it in this browser and the agent posts a reply. It learned from short English movie-review sentences, not game reviews, so game slang can be misread. First use fetches about 67 MB of public weights and loads this site’s on-demand WebAssembly runtime; both are cached. If the model cannot load, the local fallback still answers.</p><form class="review-form" data-form="review"><fieldset class="review-form-fields" ${firebaseReady ? '' : 'disabled'}><legend class="sr-only">Review details</legend><div class="review-form-grid"><fieldset class="review-rating-field"><legend>Rating <span class="required-mark">*</span></legend><span class="rating-picker">${[1, 2, 3, 4, 5].map((value) => `<label><input name="rating" type="radio" value="${value}" required><span aria-hidden="true">★</span><span class="sr-only">${value} ${value === 1 ? 'star' : 'stars'}</span></label>`).join('')}</span></fieldset><label>What are you reviewing?<select name="gameId"><option value="arcade">The whole arcade</option>${GAMES.map((game) => `<option value="${esc(game.id)}">${esc(game.title)}</option>`).join('')}</select></label></div><label>Headline <span class="review-field-optional">optional</span><input name="title" type="text" maxlength="80" placeholder="A quick take" autocomplete="off"></label><label>Your review <span class="required-mark">*</span><textarea name="message" rows="5" maxlength="800" minlength="8" required placeholder="What worked well? What should we improve? A game name or concrete example helps."></textarea><small class="review-character-note">8–800 characters. Please leave out personal information.</small></label><label>Display name <span class="review-field-optional">optional</span><input name="reviewerName" type="text" maxlength="24" value="${esc(name)}" placeholder="Arcade player" ${state.profile?.username ? 'readonly' : ''}></label><button class="button button-primary button-full" type="submit" ${disabledAttr}>${state.reviewSubmitting ? 'Analyzing & posting…' : 'Post review'} ${icon('arrow')}</button></fieldset>${state.reviewSubmitting ? `<small class="review-model-status" role="status" aria-live="polite">${esc(state.reviewModelStatus || 'Preparing the on-device model…')}</small>` : ''}<small class="review-privacy-note">Your review text is not sent to Hugging Face. Its public static model files are downloaded on first use; no inference API or API key is used. The review itself is sent to Firebase when you post and is visible to everyone with its automatic reply.</small>${firebaseReady ? '' : `<small class="review-privacy-note is-warning">${esc(onlineUnavailableNote(connection()))}</small>`}</form></section>`;
-}
-
-export function renderReviews() {
-  const reviews = state.reviews || [];
-  const loaded = reviews.length;
-  const average = loaded ? (reviews.reduce((sum, review) => sum + (Number(review.rating) || 0), 0) / loaded).toFixed(1) : '—';
-  const positive = loaded ? Math.round((reviews.filter((review) => review.sentiment === 'positive').length / loaded) * 100) : 0;
-  const entries = reviews.length
-    ? `<div class="review-list">${reviews.map((review) => renderPublicReviewCard(review)).join('')}</div>`
-    : state.reviewsLoading
-      ? `<div class="empty-inline"><span class="loader"></span><b>Fetching community reviews…</b><small>Everyone can read this wall; no account is needed.</small></div>`
-      : `<div class="empty-inline review-empty"><span>✦</span><b>No reviews yet</b><small>Be the first to share a specific, useful note. The review agent will answer it.</small></div>`;
-  return `<section class="reviews-heading"><div><div class="eyebrow">The arcade, through your eyes</div><h1>Player reviews<span>.</span></h1><p>Real notes from the people playing. Every posted review gets a public reply from our local review agent.</p></div><span class="review-public-pill">${icon('people')} Public to everyone</span></section>
-    ${state.reviewsError ? `<div class="notice-panel notice-warn" role="status">${icon('spark')}<div><b>Reviews could not be loaded.</b><p>${esc(state.reviewsError)}</p></div></div>` : ''}
-    ${renderReviewSpotlight()}
-    <div class="review-page-grid"><div class="review-feed-column"><section class="review-pulse" aria-label="Reviews loaded on this page"><div><b>${loaded}${state.reviewsHasMore ? '+' : ''}</b><span>reviews loaded</span></div><div><b>${average}</b><span>average stars shown</span></div><div><b>${loaded ? `${positive}%` : '—'}</b><span>positive in this sample</span></div></section><section class="review-feed-panel" aria-labelledby="review-feed-title"><div class="panel-heading"><div><span class="eyebrow">Community wall · newest first</span><h2 id="review-feed-title">All player reviews</h2></div><span class="review-feed-count">${loaded ? `Showing ${loaded}${state.reviewsHasMore ? '+' : ''}` : ''}</span></div>${entries}${state.reviewsHasMore && !state.reviewsLoading ? `<button class="button button-outline review-load-more" data-action="load-more-reviews">Load older reviews ${icon('arrow')}</button>` : ''}${state.reviewsLoading && loaded ? `<div class="review-loading-more" role="status">Loading more reviews…</div>` : ''}</section></div>${renderReviewForm()}</div>`;
-}
-
-export function renderHome() {
-  const featured = GAMES.slice(0, 6);
-  const conn = connection();
-  return `${state.routeNotice ? `<div class="notice-panel notice-warn" role="status">${icon('spark')}<div><b>No page called “${esc(state.routeNotice)}”.</b><p>You are on the arcade home. The library, friends and your rooms are one click away.</p></div><button class="text-button" data-action="navigate" data-page="catalog">Open the game library ${icon('arrow')}</button></div>` : ''}
-  <section class="hero-panel">
-    ${artImage(HERO_ARTWORK, { className: 'hero-artwork', hero: true })}
-    <div class="hero-copy"><div class="hero-kicker"><span class="live-pulse is-${conn.kind}"></span>${esc(conn.label)}<i>·</i> No downloads</div><p class="press-start" aria-hidden="true">▶ PRESS START</p><h1>Your arcade.<br><em>Everywhere.</em></h1><p>Forty bite-size retro games. Your people on the other side of the link. That’s the whole setup.</p><div class="hero-actions"><button class="button button-primary" data-action="navigate" data-page="catalog">Explore all 40 games ${icon('arrow')}</button><button class="button button-glass" data-action="open-friends">Play with friends ${icon('people')}</button></div><div class="hero-footnote">Made for <b>2–3 players</b> · works on laptops &amp; phones</div></div>
-  </section>
-  <div class="marquee" aria-hidden="true"><span>★ INSERT FRIENDS ★ PRESS START ★ 40 GAMES ★ 2–3 PLAYERS ★ NO DOWNLOADS ★ SHARE A LINK ★ HIGH SCORE IS WAITING ★</span></div>
-  ${renderSetupCallout(conn)}
-  <section class="stat-strip" aria-label="Arcade facts"><div><b>40</b><span>tiny game worlds</span></div><div><b>2–3</b><span>players per room</span></div><div><b>0</b><span>downloads required</span></div></section>
-  ${renderReviewSpotlight({ compact: true })}
-  <section class="join-code-panel" aria-labelledby="join-code-title"><div><div class="eyebrow">Got a code instead of a link?</div><h2 id="join-code-title">Join a room by code<span>.</span></h2><p>Room codes are 7 characters and only work while the room is open. Anyone who has the code can join — links and codes are equivalent, so share them the same way.</p></div><form class="join-code-form" data-form="join-code"><label for="room-code-input">Room code</label><div class="join-code-row"><input id="room-code-input" name="code" type="text" inputmode="latin" autocomplete="off" spellcheck="false" maxlength="12" placeholder="ABCD234" ${conn.onlineFeatures ? '' : 'disabled'} required><button class="button button-primary" type="submit" ${conn.onlineFeatures ? '' : 'disabled'}>Join room ${icon('arrow')}</button></div>${conn.onlineFeatures ? '<small>Codes are not listed anywhere; the host has to send you one.</small>' : `<small class="join-code-off">${esc(onlineUnavailableNote(conn))}</small>`}</form></section>
-  <section class="first-run" aria-labelledby="first-run-title"><h2 id="first-run-title" class="first-run-title">Two ways to play<span>.</span></h2>
-    <div class="first-run-card is-practice"><span class="first-run-icon" aria-hidden="true">${icon('gamepad')}</span><div><b>Practice on this device</b><p>Open any game and press <b>Practice locally</b>. You play against a browser rival, one screen, no account, no Firebase project needed. Favorites and recent games stay in this browser.</p></div><button class="button button-outline" data-action="navigate" data-page="catalog">Pick a game ${icon('arrow')}</button></div>
-    <div class="first-run-card is-online"><span class="first-run-icon" aria-hidden="true">${icon('link')}</span><div><b>Play together online</b><p>Create a private room, then send the invite link or the 7-character room code. Friends join as guests in their browser; a username account adds a friends list and direct challenges.</p></div><button class="button button-primary" data-action="quick-room" ${conn.onlineFeatures ? '' : 'disabled'}>Create a room ${icon('arrow')}</button></div>
-    ${conn.onlineFeatures ? '' : `<p class="first-run-note">${esc(onlineUnavailableNote(conn))}</p>`}
-  </section>
-  <section class="section-block featured-section"><div class="section-heading"><div><div class="eyebrow">Pick up and play</div><h2>Start with a classic<span>.</span></h2><p>Easy to learn. Hard to leave the lobby.</p></div><button class="text-button" data-action="navigate" data-page="catalog">Browse all 40 ${icon('arrow')}</button></div>${renderGameGrid(featured)}</section>
-  ${renderCategoryRow()}
-  ${renderPersonalShelves()}
-  <section class="invite-banner"><div class="invite-symbol">${icon('link')}</div><div><div class="eyebrow">A better way to say “you on?”</div><h2>Make a room. Share the link.</h2><p>Your friends join in the browser. No install, no matching accounts required to try a guest room.</p></div><button class="button button-dark" data-action="quick-room">Create a game room ${icon('arrow')}</button></section>
-`;
-}
-
-export function renderCatalog() {
-  const games = filteredGames();
-  return `<section class="catalog-heading"><div><div class="eyebrow">Insert friends here</div><h1>The game shelf<span>.</span></h1><p>Every game runs in your browser and supports 2–3 players in a shared room.</p></div><button class="button button-primary" data-action="quick-room">${icon('link')} Create invite room</button></section>
-    <div class="catalog-toolbar"><div class="filter-pills">${CATEGORIES.map((category) => `<button class="filter-pill ${state.category === category ? 'is-active' : ''}" data-action="filter-category" data-category="${esc(category)}">${esc(category)}${category === 'All games' ? `<i>${GAMES.length}</i>` : ''}</button>`).join('')}</div><span class="game-count">SHOWING <b>${games.length}</b> / ${GAMES.length}</span></div>
-    <div class="catalog-filters" aria-label="Filter the game shelf"><label>Length<select data-filter="duration" aria-label="Filter by round length">${FILTERS.duration.map(({ label }) => `<option value="${esc(label)}" ${state.filters?.duration === label ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select></label><label>Difficulty<select data-filter="difficulty" aria-label="Filter by difficulty">${DIFFICULTIES.map((label) => `<option value="${esc(label)}" ${state.filters?.difficulty === label ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select></label><label>Input<select data-filter="input" aria-label="Filter by input style">${INPUT_STYLES.map((label) => `<option value="${esc(label)}" ${state.filters?.input === label ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select></label>${filtersActive() ? '<button class="button button-quiet button-small" data-action="clear-filters">Reset filters</button>' : ''}<p class="catalog-filter-note">Every game works with 2 or 3 players and in local practice; choose those when you open a room. Games run 1–10 minutes.</p></div>
-    <div id="catalog-grid">${renderGameGrid(games, 2)}</div>
-    <div class="catalog-bottom"><span>Every room is private by invite link.</span><button class="text-button" data-action="show-setup">How online play works ${icon('arrow')}</button></div>`;
-}
-
-export function getFriendName(friend) {
-  const names = friend.memberNames || {};
-  const otherUid = (friend.memberUids || []).find((uid) => uid !== state.user?.uid);
-  return names[otherUid] || 'Arcade friend';
-}
-
-export function getFriendUid(friend) {
-  return (friend.memberUids || []).find((uid) => uid !== state.user?.uid) || '';
-}
-
-export function renderFriends() {
-  const conn = connection();
-  const accountReady = Boolean(state.user && !state.user.isAnonymous && state.profile);
-  const incoming = state.requests;
-  const invites = state.invites;
-  return `<section class="friends-heading"><div><div class="eyebrow">Good games are better shared</div><h1>Your crew<span>.</span></h1><p>Add friends by username, then invite them straight into a game room.</p></div><span class="friend-online-label is-${conn.kind}"><i></i> ${esc(conn.label)}</span></section>
-    ${conn.setupNeeded ? `<div class="notice-panel notice-warn">${icon('spark')}<div><b>Friends need Firebase.</b><p>${esc(conn.detail)}${conn.hint ? ` ${esc(conn.hint)}` : ''} Local practice still works.</p></div><button class="text-button" data-action="show-setup">Setup steps ${icon('arrow')}</button></div>` : !accountReady ? `<div class="notice-panel">${icon('people')}<div><b>${state.user && !state.user.isAnonymous && isGoogleUser(state.user) ? 'Finish your player setup to add friends.' : 'Make a free arcade account to add friends.'}</b><p>${state.user && !state.user.isAnonymous && isGoogleUser(state.user) ? 'Choose a unique PSD-gaming username first. Your Google account is already confirmed.' : 'Guests can play online with a link. A username account is only needed for friend lists and direct challenges.'}</p></div><button class="button button-primary" data-action="${state.user && !state.user.isAnonymous && isGoogleUser(state.user) ? 'open-username-setup' : 'open-auth'}">${state.user && !state.user.isAnonymous && isGoogleUser(state.user) ? 'Choose username' : 'Create account'} ${icon('arrow')}</button></div>` : ''}
-    ${conn.kind === 'offline' ? `<div class="notice-panel notice-warn">${icon('wifi')}<div><b>You’re offline.</b><p>${esc(conn.detail)}</p></div></div>` : ''}
-    ${state.socialError ? `<div class="notice-panel notice-warn">${icon('spark')}<div><b>Friends are not available yet.</b><p>${esc(state.socialError)}</p></div><button class="text-button" data-action="show-setup">Setup steps ${icon('arrow')}</button></div>` : ''}
-    <div class="social-grid"><section class="surface friend-search-panel"><div class="panel-heading"><div><span class="eyebrow">Find your player two</span><h2>Add by username</h2></div><span class="search-panel-icon">${icon('search')}</span></div><form class="friend-search-form" data-form="friend-search"><label for="friend-username">Arcade username</label><div class="friend-search-row"><span>@</span><input id="friend-username" name="username" type="text" minlength="3" maxlength="18" pattern="[A-Za-z0-9_]{3,18}" placeholder="try pixelpilot" ${accountReady ? '' : 'disabled'} required><button class="button button-primary" type="submit" ${accountReady ? '' : 'disabled'}>Find ${icon('arrow')}</button></div><small>They’ll need an account with a username to show up here.</small></form>
-      ${state.friendResults.length ? `<div class="search-results">${state.friendResults.map((profile) => `<div class="search-result"><span class="avatar">${esc(profile.username.slice(0, 1).toUpperCase())}</span><div><b>@${esc(profile.username)}</b><small>Ready for a challenge</small></div><button class="button button-outline button-small" data-action="send-friend-request" data-uid="${esc(profile.uid)}" data-name="${esc(profile.username)}">Add friend ${icon('plus')}</button></div>`).join('')}</div>` : ''}</section>
-      <section class="surface incoming-panel"><div class="panel-heading"><div><span class="eyebrow">Your invites</span><h2>Waiting for you <i>${incoming.length + invites.length}</i></h2></div><span class="invite-icon">${icon('bell')}</span></div>
-      ${incoming.length || invites.length ? `<div class="invite-list">${incoming.map((request) => `<div class="invite-row"><span class="avatar avatar-purple">${esc((request.fromName || 'P').slice(0, 1).toUpperCase())}</span><div class="invite-row-copy"><b>@${esc(request.fromName || 'player')} wants to connect</b><small>Friend request · ${timeAgo(request.createdAt)}</small></div><button class="button button-primary button-small" data-action="accept-friend" data-request-id="${request.id}">Accept</button><button class="icon-button subtle" data-action="decline-friend" data-request-id="${request.id}" aria-label="Decline request">${icon('close')}</button></div>`).join('')}${invites.map((invite) => `<div class="invite-row"><span class="avatar avatar-cyan">${esc((invite.fromName || 'P').slice(0, 1).toUpperCase())}</span><div class="invite-row-copy"><b>${esc(invite.fromName || 'A friend')} invited you</b><small>${esc(getGame(invite.gameId)?.title || 'A game')} · ${timeAgo(invite.createdAt)}</small></div><button class="button button-primary button-small" data-action="join-game-invite" data-invite-id="${invite.id}" data-room-id="${esc(invite.roomId)}">Join ${icon('arrow')}</button></div>`).join('')}</div>` : `<div class="empty-inline"><span>✦</span><b>It’s quiet in here.</b><small>Friend requests and game invites will land here.</small></div>`}</section>
-    </div>
-    <section class="surface friends-list-panel"><div class="panel-heading"><div><span class="eyebrow">Your regulars</span><h2>Friends <i>${state.friends.length}</i></h2></div><button class="button button-outline button-small" data-action="navigate" data-page="catalog">Pick a game ${icon('arrow')}</button></div>
-      ${state.blocked.length ? `<div class="blocked-panel"><div class="panel-heading"><div><span class="eyebrow">Hidden from you</span><h2>Blocked players <i>${state.blocked.length}</i></h2></div><button class="text-button" data-action="open-report">Report a problem ${icon('arrow')}</button></div><p>Blocked players do not appear in your search results and cannot send you requests or invites. Unblocking does not restore anything that was cleared.</p><div class="blocked-list">${state.blocked.map((block) => `<div class="blocked-row"><span>${esc(shortUid(block.blockedUid))}</span><button class="button button-outline button-small" data-action="unblock-player" data-uid="${esc(block.blockedUid)}">Unblock</button></div>`).join('')}</div></div>` : ''}
-      ${state.friends.length ? `<div class="friends-list">${state.friends.map((friend) => `<div class="friend-row"><span class="avatar avatar-${friendColor(friend.id)}">${esc(getFriendName(friend).slice(0, 1).toUpperCase())}</span><div class="friend-row-copy"><b>${esc(getFriendName(friend))}</b><small>Friends since ${dateLabel(friend.createdAt)}</small></div><span class="friend-status"><i></i> Ready</span><span class="friend-row-actions"><button class="button button-outline button-small" data-action="challenge-friend" data-uid="${esc(getFriendUid(friend))}" data-name="${esc(getFriendName(friend))}" data-friendship-id="${esc(friend.id)}">Challenge ${icon('arrow')}</button><button class="icon-button subtle" data-action="block-player" data-uid="${esc(getFriendUid(friend))}" data-name="${esc(getFriendName(friend))}" aria-label="Block ${esc(getFriendName(friend))}" title="Block ${esc(getFriendName(friend))}">${icon('close')}</button></span></div>`).join('')}</div>` : `<div class="empty-inline"><span>◎</span><b>No friends yet</b><small>Find them by username, or send a private game link from any game card.</small></div>`}
-    </section>`;
-}
-
-export function friendColor(id = '') {
-  return ['blue', 'purple', 'cyan', 'green'][Array.from(id).reduce((sum, char) => sum + char.charCodeAt(0), 0) % 4];
-}
-
-export function timestampDate(timestamp) {
-  if (!timestamp) return null;
-  if (typeof timestamp.toDate === 'function') return timestamp.toDate();
-  if (timestamp.seconds) return new Date(timestamp.seconds * 1000);
-  return new Date(timestamp);
-}
-
-export function dateLabel(timestamp) {
-  const date = timestampDate(timestamp);
-  return date ? date.toLocaleDateString(undefined, { month: 'short', year: 'numeric' }) : 'recently';
-}
-
-export function timeAgo(timestamp) {
-  const date = timestampDate(timestamp);
-  if (!date) return 'just now';
-  const minutes = Math.max(0, Math.floor((Date.now() - date.getTime()) / 60000));
-  if (minutes < 1) return 'just now';
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  return hours < 24 ? `${hours}h ago` : `${Math.floor(hours / 24)}d ago`;
-}
-
-
-/** The seven admin studio sections. */
-const ADMIN_TABS = [
-  ['overview', 'Overview'],
-  ['maintenance', 'Maintenance'],
-  ['rooms', 'Rooms'],
-  ['players', 'Players'],
-  ['social', 'Social'],
-  ['reviews', 'Review agent'],
-  ['access', 'Access'],
-];
-
-/** A short, recognisable slice of a Firebase UID. */
-function shortUid(uid = '') {
-  return uid.length > 10 ? `${uid.slice(0, 6)}…${uid.slice(-3)}` : uid;
-}
-
-/** The delete button every destructive admin row shares (confirmations live in src/app.js). */
-function adminDeleteButton(action, attrs, label) {
-  return `<button class="icon-button subtle is-danger" data-action="${action}" ${attrs} aria-label="${esc(label)}" title="${esc(label)}">${icon('trash')}</button>`;
-}
-
-/** Kick chips for the players of a waiting lobby, each with its own confirm behind it. */
-function adminRoomPlayers(room) {
-  const uids = room.playerUids || [];
-  const names = room.playerNames || {};
-  return `<div class="admin-chip-row">${uids.map((uid) => {
-    const name = names[uid] || 'Player';
-    const kick = room.status === 'waiting'
-      ? `<button class="chip-kick" data-action="admin-kick-player" data-room-id="${esc(room.id)}" data-uid="${esc(uid)}" data-name="${esc(name)}" aria-label="Kick ${esc(name)} from this lobby" title="Kick from lobby">${icon('close')}</button>`
-      : '';
-    return `<span class="player-chip">${esc(name)}${uid === room.hostUid ? '<i class="host-chip">Host</i>' : ''}${kick}</span>`;
-  }).join('')}</div>`;
-}
-
-function renderAdminRoomsTable(rooms, { limitRows = Infinity } = {}) {
-  const nowMs = presenceNow();
-  const activeRooms = rooms.filter((room) => !isRoomExpired(room, nowMs));
-  if (!activeRooms.length) return `<div class="empty-inline"><span>◉</span><b>No rooms yet</b><small>The first private room will show up here.</small></div>`;
-  const rows = [...activeRooms]
-    .sort((a, b) => (timestampDate(b.createdAt)?.getTime() || 0) - (timestampDate(a.createdAt)?.getTime() || 0))
-    .slice(0, limitRows)
-    .map((room) => `<tr><td><span class="table-game">${esc(getGame(room.gameId)?.title || room.gameId)}</span></td><td>${adminRoomPlayers(room)}</td><td><span class="status-pill status-${room.status}">${esc(room.status || 'unknown')}</span></td><td>${timeAgo(room.createdAt)}</td><td class="admin-actions">${adminDeleteButton('admin-delete-room', `data-room-id="${esc(room.id)}" data-name="${esc(room.hostName || 'this room')}"`, `Delete the ${esc(getGame(room.gameId)?.title || 'room')} room`)}</td></tr>`)
-    .join('');
-  return `<div class="admin-table-wrap"><table class="admin-table"><thead><tr><th scope="col">Game</th><th scope="col">Players</th><th scope="col">Status</th><th scope="col">Created</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead><tbody>${rows}</tbody></table></div>`;
-}
-
-function renderAdminOverview(data) {
-  const nowMs = presenceNow();
-  const activeRooms = data.rooms.filter((room) => !isRoomExpired(room, nowMs));
-  const pendingRequests = data.requests.filter((request) => request.status === 'pending').length;
-  const pendingInvites = data.invites.filter((invite) => invite.status === 'pending' && !isRoomExpired(invite, nowMs)).length;
-  const liveRooms = activeRooms.filter((room) => room.status === 'playing').length;
-  const metrics = [
-    ['Registered players', data.profiles.length, 'Accounts with a username'],
-    ['Admins', data.admins.length, 'UIDs with studio access'],
-    ['Rooms (latest 100)', activeRooms.length, `${liveRooms} match in progress`],
-    ['Friend connections', data.friendships.length, 'Accepted friend links'],
-    ['Pending requests', pendingRequests, 'Friend requests unanswered'],
-    ['Pending invites', pendingInvites, 'Game invites unanswered'],
-  ];
-  return `<div class="admin-metrics">${metrics.map(([label, value, hint]) => `<article><span>${esc(label)}</span><b>${state.adminLoading ? '…' : value}</b><small>${esc(hint)}</small></article>`).join('')}</div>
-    <div class="admin-grid">
-      <section class="surface admin-table-panel"><div class="panel-heading"><div><span class="eyebrow">Live room snapshot</span><h2>Recent rooms</h2></div><button class="text-button" data-action="admin-tab" data-tab="rooms">Manage all ${icon('arrow')}</button></div>${renderAdminRoomsTable(activeRooms, { limitRows: 8 })}</section>
-      <aside class="surface admin-powers"><div class="panel-heading"><div><span class="eyebrow">God mode, on</span><h2>What this studio can do</h2></div><span class="admin-live"><i></i> ${GAMES.length} games</span></div><ul class="admin-powers-list"><li><b>Rooms:</b> inspect every room, kick anyone from a waiting lobby, delete a room with its heartbeats.</li><li><b>Players:</b> remove a profile and free its username, so repeat offenders cannot hide.</li><li><b>Social:</b> unlink friend pairs, clear stale requests and game invites.</li><li><b>Access:</b> grant and revoke admin flags without opening the Firebase console.</li><li><b>Maintenance:</b> close the site with a reason, and hand out a temporary code that lets one device keep testing.</li></ul><div class="notice-panel"><span>${icon('shield')}</span><div><b>Firestore enforces every button.</b><p>Each action above checks <code>admins/{yourUid}.admin == true</code> on the server. A forged flag in someone else's browser cannot touch this data.</p></div></div></aside>
-    </div>`;
-}
-
-function renderAdminPlayers(data) {
-  const adminIds = new Set(data.admins.map((admin) => admin.id));
-  const profiles = [...data.profiles].sort((a, b) => (timestampDate(b.createdAt)?.getTime() || 0) - (timestampDate(a.createdAt)?.getTime() || 0));
-  if (!profiles.length) return `<div class="empty-inline"><span>◎</span><b>No players yet</b><small>Profiles appear the moment someone claims a username.</small></div>`;
-  return `<div class="admin-table-wrap"><table class="admin-table"><thead><tr><th scope="col">Player</th><th scope="col">UID</th><th scope="col">Joined</th><th scope="col">Access</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead><tbody>${profiles.map((profile) => {
-    const isSelf = profile.uid === state.user?.uid;
-    const isAdminRow = adminIds.has(profile.uid);
-    const access = isAdminRow ? `<span class="status-pill status-playing">admin</span>` : `<span class="status-pill">player</span>`;
-    const actions = [
-      `<button class="icon-button subtle" data-action="admin-copy-uid" data-uid="${esc(profile.uid)}" aria-label="Copy the full UID of @${esc(profile.username || 'player')}" title="Copy UID">${icon('copy')}</button>`,
-      isAdminRow
-        ? isSelf ? '' : `<button class="icon-button subtle is-warn" data-action="admin-revoke" data-uid="${esc(profile.uid)}" data-name="${esc(profile.username || 'player')}" aria-label="Revoke admin access for @${esc(profile.username || 'player')}" title="Revoke admin">${icon('crown')}</button>`
-        : `<button class="icon-button subtle" data-action="admin-grant" data-uid="${esc(profile.uid)}" data-name="${esc(profile.username || 'player')}" aria-label="Make @${esc(profile.username || 'player')} an admin" title="Grant admin">${icon('crown')}</button>`,
-      isSelf ? '' : adminDeleteButton('admin-remove-player', `data-uid="${esc(profile.uid)}" data-name="${esc(profile.username || 'player')}" data-username="${esc(profile.usernameLower || '')}"`, `Remove @${esc(profile.username || 'player')} and free their username`),
-    ].join('');
-    return `<tr><td><span class="admin-player"><span class="avatar avatar-${friendColor(profile.uid)}">${esc((profile.username || 'P').slice(0, 1).toUpperCase())}</span><b>@${esc(profile.username || 'player')}</b></span></td><td><code class="uid-chip">${esc(shortUid(profile.uid))}</code></td><td>${dateLabel(profile.createdAt)}</td><td>${access}</td><td class="admin-actions">${actions}</td></tr>`;
-  }).join('')}</tbody></table></div>`;
-}
-
-function renderAdminSocial(data) {
-  const friendships = data.friendships.length
-    ? `<div class="admin-table-wrap"><table class="admin-table"><thead><tr><th scope="col">Pair</th><th scope="col">Since</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead><tbody>${data.friendships.map((link) => {
-      const names = link.memberNames || {};
-      const pair = (link.memberUids || []).map((uid) => names[uid] || shortUid(uid)).join(' & ');
-      return `<tr><td><b>${esc(pair)}</b></td><td>${dateLabel(link.createdAt)}</td><td class="admin-actions">${adminDeleteButton('admin-delete-friendship', `data-friendship-id="${esc(link.id)}" data-name="${esc(pair)}"`, `Unlink ${esc(pair)}`)}</td></tr>`;
-    }).join('')}</tbody></table></div>`
-    : `<div class="empty-inline"><span>◎</span><b>No friend links yet</b><small>Accepted requests form links here.</small></div>`;
-  const requests = data.requests.length
-    ? `<div class="admin-list">${data.requests.map((request) => `<div class="admin-list-row"><div><b>@${esc(request.fromName || 'player')}</b> → <b>@${esc(request.toName || 'player')}</b><small class="admin-dim">${esc(request.status || 'pending')} · ${timeAgo(request.createdAt)}</small></div>${adminDeleteButton('admin-delete-request', `data-request-id="${esc(request.id)}" data-name="@${esc(request.fromName || '?')} → @${esc(request.toName || '?')}"`, 'Delete this friend request')}</div>`).join('')}</div>`
-    : `<div class="empty-inline"><span>✦</span><b>No friend requests</b><small>Nothing unanswered or declined right now.</small></div>`;
-  const invites = data.invites.length
-    ? `<div class="admin-list">${data.invites.map((invite) => `<div class="admin-list-row"><div><b>@${esc(invite.fromName || 'player')}</b> invited <b>@${esc(invite.toName || 'player')}</b><small class="admin-dim">${esc(getGame(invite.gameId)?.title || 'A game')} · ${esc(invite.status || 'pending')} · ${timeAgo(invite.createdAt)}</small></div>${adminDeleteButton('admin-delete-invite', `data-invite-id="${esc(invite.id)}" data-name="${esc(getGame(invite.gameId)?.title || 'game invite')}"`, 'Delete this game invite')}</div>`).join('')}</div>`
-    : `<div class="empty-inline"><span>✦</span><b>No game invites</b><small>Direct challenges will land here.</small></div>`;
-  return `<section class="surface admin-table-panel"><div class="panel-heading"><div><span class="eyebrow">The friend graph</span><h2>Friend links <i>${data.friendships.length}</i></h2></div></div>${friendships}</section>
-    <div class="admin-grid"><section class="surface admin-table-panel"><div class="panel-heading"><div><span class="eyebrow">Inbox traffic</span><h2>Friend requests <i>${data.requests.length}</i></h2></div></div>${requests}</section>
-    <section class="surface admin-table-panel"><div class="panel-heading"><div><span class="eyebrow">Direct challenges</span><h2>Game invites <i>${data.invites.length}</i></h2></div></div>${invites}</section></div>`;
-}
-
-function renderAdminReviews(data) {
-  const reviews = data.reviews || [];
-  const annotations = data.reviewAnnotations || [];
-  const labelsById = new Map(annotations.map((annotation) => [annotation.id, annotation.sentiment]));
-  const counts = summarizeReviewSentiment(reviews);
-  const labelCounts = Object.fromEntries(REVIEW_SENTIMENTS.map((label) => [label, annotations.filter((annotation) => annotation.sentiment === label).length]));
-  const trainableClasses = REVIEW_SENTIMENTS.filter((label) => labelCounts[label] >= 2);
-  const canTrain = trainableClasses.length >= 2;
-  const model = data.reviewAgentModel;
-  const ideas = buildImprovementIdeas(reviews);
-  const ideasMarkup = ideas.map((idea) => `<article class="review-idea-card"><span class="review-idea-evidence">${idea.evidence ? `${idea.evidence} ${idea.evidence === 1 ? 'review' : 'reviews'}` : 'Watchlist'}</span><h3>${esc(idea.title)}</h3><p>${esc(idea.action)}</p><small>${esc(idea.note)}</small></article>`).join('');
-  const reviewRows = reviews.length
-    ? `<div class="admin-review-list">${reviews.map((review) => {
-      const currentLabel = labelsById.get(review.id) || '';
-      const labelButtons = REVIEW_SENTIMENTS.map((label) => `<button class="review-label-button ${currentLabel === label ? 'is-selected' : ''}" data-action="admin-label-review" data-review-id="${esc(review.id)}" data-label="${label}" aria-pressed="${currentLabel === label}" title="Use ${label} as the human-checked training label">${esc(label)}</button>`).join('');
-      return `<article class="admin-review-row">${renderPublicReviewCard(review)}<div class="review-training-panel"><div><b>Human training label</b><small>${currentLabel ? `Currently ${esc(currentLabel)} · click to correct` : 'Not labelled yet · choose the sentiment that best fits'}</small></div><div class="review-label-buttons" role="group" aria-label="Training sentiment label for review by ${esc(review.reviewerName || 'player')}">${labelButtons}</div></div></article>`;
-    }).join('')}</div>`
-    : `<div class="empty-inline"><span>✦</span><b>No community reviews yet</b><small>Reviews and their automatic replies will appear here after the first player posts.</small></div>`;
-  return `<section class="review-agent-console"><div class="review-agent-console-heading"><div><span class="eyebrow">On-device transformer · no inference API</span><h2>Arcade Review Agent</h2><p>A pretrained DistilBERT classifier runs in the player’s browser before submission; its first use downloads about 67 MB of public weights and loads this site’s on-demand WASM runtime. Review text is not sent to the model host—only the normal Firebase submission receives it. No inference API or API key is used; replies remain server-generated templates.</p></div><span class="review-agent-orb" aria-hidden="true">✦</span></div><div class="review-agent-metrics"><article><span>Reviews analyzed</span><b>${counts.total}</b><small>latest ${reviews.length} loaded</small></article><article><span>Positive</span><b>${counts.positive}</b><small>local sentiment estimate</small></article><article><span>Mixed / neutral</span><b>${counts.mixed + counts.neutral}</b><small>needs more context</small></article><article><span>Negative</span><b>${counts.negative}</b><small>themes feed the ideas below</small></article></div><div class="review-distillation-panel"><div><span class="eyebrow">Real-feedback distillation</span><h3>${model ? `Human-distilled model · ${Number(model.trainingSize) || 0} reviewed examples` : 'Pretrained DistilBERT is primary'}</h3><p>${model ? `Trained ${esc(timeAgo(model.trainedAtMs))} on first-party reviews. It takes over only when confident; otherwise DistilBERT leads. ${Number(model.vocabularySize) || 0} token weights; no source review text is stored in the model.` : `The day-one transformer is pretrained on the Stanford Sentiment Treebank (movie-review sentences), not game reviews. It runs in-browser; the small synthetic starter is only a fallback, not the real model. Label at least two reviews in each of two classes to train a first-party specialist.`}</p><small>Human-labelled examples: ${REVIEW_SENTIMENTS.map((label) => `${label} ${labelCounts[label] || 0}`).join(' · ')}</small></div><button class="button button-primary" data-action="admin-train-review-agent" ${canTrain ? '' : 'disabled'}>${model ? 'Retrain local model' : 'Distill labeled reviews'} ${icon('spark')}</button></div></section><section class="review-ideas-section"><div class="panel-heading"><div><span class="eyebrow">Grounded in negative &amp; mixed feedback</span><h2>Improvement ideas</h2></div><span class="review-ideas-note">Suggestions are rules-based, not promises</span></div><div class="review-ideas-grid">${ideasMarkup}</div></section><section class="surface admin-table-panel admin-reviews-panel"><div class="panel-heading"><div><span class="eyebrow">Every public review · newest first</span><h2>Review inbox <i>${reviews.length}</i></h2></div><span class="admin-live"><i></i> latest 300</span></div>${reviewRows}</section>`;
-}
-
-function renderAdminAccess(data) {
-  const profileNames = new Map(data.profiles.map((profile) => [profile.uid, profile.username]));
-  const admins = data.admins.length
-    ? `<div class="admin-list">${data.admins.map((admin) => {
-      const isSelf = admin.id === state.user?.uid;
-      const name = profileNames.get(admin.id);
-      return `<div class="admin-list-row"><div><b>${esc(name ? `@${name}` : shortUid(admin.id))} ${isSelf ? '<span class="status-pill status-playing">you</span>' : ''}</b><small class="admin-dim"><code class="uid-chip">${esc(shortUid(admin.id))}</code> · full studio access</small></div>${isSelf ? `<span class="admin-dim">Self-lockout is blocked by the rules</span>` : `<button class="button button-outline button-small" data-action="admin-revoke" data-uid="${esc(admin.id)}" data-name="${esc(name || shortUid(admin.id))}">${icon('crown')} Revoke</button>`}</div>`;
-    }).join('')}</div>`
-    : `<div class="empty-inline"><span>◉</span><b>No admins?!</b><small>You are reading this page, so one flag exists - refresh may be behind.</small></div>`;
-  return `<div class="admin-grid"><section class="surface admin-table-panel"><div class="panel-heading"><div><span class="eyebrow">Who holds the keys</span><h2>Admin access <i>${data.admins.length}</i></h2></div></div>${admins}
-    <div class="admin-grant-panel"><div class="eyebrow">Promote someone</div><form data-form="admin-grant"><label for="admin-uid-input">Firebase user UID<div class="admin-grant-row"><input id="admin-uid-input" name="uid" type="text" minlength="8" maxlength="64" placeholder="kR8vN…b2z" required autocomplete="off"><button class="button button-primary" type="submit">${icon('crown')} Make admin</button></div></label><small>Find UIDs under Firebase Console → Authentication → Users, or copy one from the Players tab. Their studio appears on next refresh.</small></form></div></section>
-    <aside class="surface admin-powers"><div class="panel-heading"><div><span class="eyebrow">Safety rails</span><h2>Still enforced by Firestore</h2></div><span>${icon('shield')}</span></div><ul class="admin-powers-list"><li>Nobody can mint their first flag from the client - the <b>first</b> admin is still created in the Firebase console.</li><li>A flag document can only ever contain <code>admin: true/false</code>, nothing else.</li><li>You cannot revoke yourself (rules block it), so the studio can never lock itself out.</li><li>Revoked admins lose access the moment their token refreshes.</li></ul></aside></div>`;
-}
-
-/** A clock label short enough to read in a panel: "today at 21:40" or "Oct 8 at 09:05". */
-function maintenanceTimeLabel(ms) {
-  const time = Number(ms) || 0;
-  if (!time) return 'not set';
-  const date = new Date(time);
-  const clock = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-  if (date.toDateString() === new Date().toDateString()) return `today at ${clock}`;
-  return `${date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} at ${clock}`;
-}
-
-/** How much the studio trusts the maintenance numbers it is showing. */
-function maintenanceSourceLabel(maintenance) {
-  if (maintenance.status === 'live') return 'Read live from Firestore - this panel moves by itself when the document changes.';
-  if (maintenance.status === 'cached') return 'Still showing what this browser saw last time; the live read has not answered yet.';
-  if (maintenance.status === 'error') return `The status document could not be read: ${maintenance.error || 'permission denied'}`;
-  if (maintenance.status === 'unavailable') return 'Firebase is not configured here, so maintenance mode cannot be switched on from this build.';
-  return 'Waiting for the first read of the status document…';
-}
-
-/**
- * The maintenance studio: the switch, the reason visitors read, and the temporary 16-digit code that
- * lets a device keep testing while the site is closed. Writes go straight to `siteStatus/maintenance`
- * and `maintenanceAccess/active` under the rules in `firestore.rules` (admin only, exact shape), so
- * this panel is a convenience and Firestore is the gatekeeper.
- */
-function renderAdminMaintenance() {
-  const maintenance = state.maintenance;
-  const on = maintenance.enabled === true;
-  const draft = maintenance.draft || {};
-  const reason = String(draft.reason ?? maintenance.reason ?? '');
-  const hours = Number(draft.hours) || MAINTENANCE_PIN_DEFAULT_HOURS;
-  const access = maintenance.access;
-  const pinLive = on && Boolean(maintenance.pinHash) && !maintenance.pinExpired;
-  const switchButton = on
-    ? `<button class="button button-primary" data-action="maintenance-off" ${state.maintenance.saving ? 'disabled' : ''}>${icon('check')} Open the site again</button>`
-    : `<button class="button button-primary" type="submit" ${state.maintenance.saving ? 'disabled' : ''}>${icon('settings')} Close the site</button>`;
-  const codePanel = on && access?.pin
-    ? `${renderMaintenanceCodePin(access.pin)}
-      <div class="maintenance-panel-foot"><small>Valid until ${esc(maintenanceTimeLabel(access.expiresAtMs))} · ${MAINTENANCE_PIN_DIGITS} digits, grouped ${maintenancePinGroupHint().replace(/^\d+ digits in /, '')}</small><div class="maintenance-actions"><button class="button button-outline button-small" data-action="maintenance-copy-pin" data-pin="${esc(formatMaintenancePin(access.pin, ''))}">${icon('copy')} Copy code</button><button class="button button-quiet button-small" data-action="maintenance-rotate-pin">${icon('spark')} New code</button></div></div>`
-    : on
-      ? `<div class="maintenance-pin-facts"><span>The code for this window is <b>${maintenance.pinExpired ? 'expired' : 'still live'}</b>, but it is kept in an admin-only document, so this panel has to fetch it.</span></div><div class="maintenance-panel-foot"><small>${esc(maintenance.accessError ? `Could not read it: ${maintenance.accessError}` : 'Nothing typed here is stored: the code lives in Firestore, not in this page.')}</small><div class="maintenance-actions"><button class="button button-outline button-small" data-action="maintenance-reveal-pin">${icon('search')} Show the code</button><button class="button button-quiet button-small" data-action="maintenance-rotate-pin">${icon('spark')} New code</button></div></div>`
-      : `<div class="maintenance-pin-facts"><span>No window is open, so no code exists right now. Switching maintenance on mints a fresh ${MAINTENANCE_PIN_DIGITS}-digit code and shows it here once.</span></div>`;
-  return `<section class="maintenance-status-strip">
-    <span class="maintenance-status-pill is-${on ? 'on' : 'off'}"><i></i> ${on ? 'Site closed to visitors' : 'Site open to everyone'}</span>
-    <div class="maintenance-actions">${on ? `<button class="button button-outline" data-action="maintenance-preview-on">${icon('search')} See the notice</button>` : ''}<button class="button button-quiet" data-action="maintenance-reload">${icon('spark')} Re-read status</button></div>
-    <p class="maintenance-note">${esc(maintenanceSourceLabel(maintenance))}${maintenance.updatedAtMs ? ` Switched ${on ? 'on' : 'off'} ${esc(maintenanceTimeLabel(maintenance.updatedAtMs))}.` : ''}</p>
-  </section>
-  <div class="maintenance-grid">
-    <form class="surface maintenance-panel" data-form="admin-maintenance">
-      <div class="panel-heading"><div><span class="eyebrow">What visitors read</span><h2>Reason for the maintenance<span>.</span></h2></div><span class="status-pill ${on ? 'status-waiting' : 'status-playing'}">${on ? 'shown now' : 'saved for next time'}</span></div>
-      <label for="maintenance-reason">Why is the site closed?<textarea id="maintenance-reason" name="reason" rows="5" maxlength="${MAINTENANCE_REASON_MAX + 40}" data-maintenance-reason placeholder="Scheduled maintenance: the arcade is being upgraded. Back within the hour.">${esc(reason)}</textarea></label>
-      <small id="maintenance-reason-count">${reason.length} / ${MAINTENANCE_REASON_MAX} characters · up to ${MAINTENANCE_REASON_LINES_MAX} lines · plain text, no links needed</small>
-      <label for="maintenance-hours">${on ? 'How long should the next testing code stay valid?' : 'How long should a testing code stay valid?'}<select id="maintenance-hours" name="hours" data-maintenance-hours>${MAINTENANCE_PIN_DURATIONS.map((option) => `<option value="${option.hours}" ${option.hours === hours ? 'selected' : ''}>${esc(option.label)}</option>`).join('')}</select></label>
-      <div class="maintenance-panel-foot"><small>${on ? 'Saving the reason does not touch the code, so nobody is locked out by a typo fix.' : 'Closing the site shows this text on the notice and mints a code for one device at a time.'}</small><div class="maintenance-actions">${on ? `<button class="button button-primary" type="button" data-action="maintenance-save-reason">${icon('check')} Save reason</button>` : switchButton}${on ? '' : `<button class="button button-outline" type="button" data-action="maintenance-save-reason">Save for next time</button>`}</div></div>
-    </form>
-    <div class="maintenance-column">
-      <section class="surface maintenance-panel maintenance-code-panel">
-        <div class="panel-heading"><div><span class="eyebrow">Temporary access</span><h2>${MAINTENANCE_PIN_DIGITS}-digit code<span>.</span></h2></div><span class="admin-live"><i></i> ${on ? (pinLive ? 'live' : 'inactive') : 'off'}</span></div>
-        ${codePanel}
-      </section>
-      <aside class="surface admin-powers">
-        <div class="panel-heading"><div><span class="eyebrow">How a device uses it</span><h2>What the notice does</h2></div><span>${icon('shield')}</span></div>
-        <ol class="maintenance-steps">
-          <li><i>1</i><span>Type or paste the code into the notice. Spaces are ignored, so a copied <code>1234 5678 …</code> works as is.</span></li>
-          <li><i>2</i><span>The device is let in for as long as the code is valid - on a phone, a laptop, any browser. Nothing is sent to a friend who does not have the code.</span></li>
-          <li><i>3</i><span>New code, or opening the site again, ends every device pass at once: the pass is only worth as much as the code it came from.</span></li>
-        </ol>
-        <ul class="admin-powers-list"><li><b>Rules, not hope:</b> only an account with <code>admins/{uid}.admin = true</code> can write either document, and the shape of both is fixed in <code>firestore.rules</code>.</li><li><b>Admins never get locked out:</b> your own account always sees the arcade - which is also why closing the site cannot strand you.</li><li><b>It is a soft door:</b> a determined person can open the arcade without the code, so treat maintenance as a notice, not a vault. Player data stays behind rules regardless.</li></ul>
-      </aside>
-    </div>
+/** Renders the game grid. */
+export function renderGameGrid(games, featuredCount = 0) {
+  if (!games.length) {
+    return '<div class="empty-state"><p>No games match your filters. Try a different search.</p></div>';
+  }
+  return `<div class="game-grid" id="catalog-grid">
+    ${games.map((game, i) => {
+      const art = getGameArtwork(game);
+      const isFav = state.favorites.includes(game.id);
+      return `
+        <article class="game-card" data-action="open-game" data-game-id="${game.id}" tabindex="0" role="button" aria-label="${esc(game.title)}">
+          <div class="card-image">
+            <img src="${art.src}" srcset="${art.srcset}" width="${art.width}" height="${art.height}" alt="${esc(art.alt)}" loading="${i < 6 ? 'eager' : 'lazy'}" decoding="async" />
+            <span class="engine-badge">${esc(art.engineLabel)}</span>
+            <button class="fav-btn ${isFav ? 'is-fav' : ''}" data-action="toggle-favorite" data-game-id="${game.id}" aria-label="${isFav ? 'Remove from favorites' : 'Add to favorites'}" onclick="event.stopPropagation()">${isFav ? '★' : '☆'}</button>
+          </div>
+          <div class="card-body">
+            <h3>${esc(game.title)}</h3>
+            <p class="card-blurb">${esc(game.blurb)}</p>
+            <div class="card-meta">
+              <span class="meta-chip">${esc(game.duration)}</span>
+              <span class="meta-chip">${esc(game.difficulty)}</span>
+              <span class="meta-chip">${esc(game.input)}</span>
+            </div>
+          </div>
+        </article>
+      `;
+    }).join('')}
   </div>`;
 }
 
-export function renderAdmin() {
-  if (!state.isAdmin) return `<section class="admin-denied"><span>${icon('shield')}</span><h1>Restricted area</h1><p>This Firebase account is not marked as an administrator.</p><button class="button button-primary" data-action="navigate" data-page="home">Back to the arcade</button></section>`;
-  const data = state.adminData;
-  const tab = ADMIN_TABS.some(([id]) => id === state.adminTab) ? state.adminTab : 'overview';
-  // A real tablist: each pill is a tab, owns its panel through aria-controls, and moves the
-  // selection with the arrow keys (src/app.js). Axe flagged the old markup for role=tablist with no tabs.
-  const tabs = ADMIN_TABS.map(([id, label]) => `<button class="filter-pill ${tab === id ? 'is-active' : ''}" role="tab" id="admin-tab-${id}" aria-selected="${tab === id}" aria-controls="admin-panel" data-action="admin-tab" data-tab="${id}">${label}</button>`).join('');
-  const activeRooms = data?.rooms ? data.rooms.filter((room) => !isRoomExpired(room, presenceNow())) : [];
-  let body;
-  if (!data) body = `<div class="empty-inline"><b>Loading the control room…</b></div>`;
-  else if (data.error) body = `<div class="notice-panel notice-warn">${esc(data.error)}</div>`;
-  else if (tab === 'rooms') body = `<section class="surface admin-table-panel"><div class="panel-heading"><div><span class="eyebrow">Every private room</span><h2>Rooms <i>${activeRooms.length}</i></h2></div><span class="admin-live"><i></i> latest 100 · 1h auto-delete</span></div>${renderAdminRoomsTable(activeRooms)}</section>`;
-  else if (tab === 'players') body = `<section class="surface admin-table-panel"><div class="panel-heading"><div><span class="eyebrow">Everyone who claimed a name</span><h2>Players <i>${data.profiles.length}</i></h2></div><span class="admin-live"><i></i> latest 300</span></div>${renderAdminPlayers(data)}</section>`;
-  else if (tab === 'maintenance') body = renderAdminMaintenance();
-  else if (tab === 'social') body = renderAdminSocial(data);
-  else if (tab === 'reviews') body = renderAdminReviews(data);
-  else if (tab === 'access') body = renderAdminAccess(data);
-  else body = renderAdminOverview(data);
-  return `<section class="admin-heading"><div><div class="eyebrow">Private admin area · UID verified · god mode</div><h1>Arcade control<span>.</span></h1><p>Only accounts with <code>admins/{uid}.admin = true</code> can see this workspace - and Firestore re-checks the flag on every action.</p></div><button class="button button-outline" data-action="refresh-admin">${icon('spark')} Refresh data</button></section>
-    <div class="filter-pills admin-tabs" role="tablist" aria-label="Admin sections">${tabs}</div>
-    ${state.adminLoading && data && !data.error ? `<div class="admin-refreshing"><i></i> Syncing with Firestore…</div>` : ''}
-    <div id="admin-panel" role="tabpanel" aria-labelledby="admin-tab-${tab}" tabindex="0">${body}</div>`;
+/** Renders the current page. */
+export function renderPage() {
+  switch (state.page) {
+    case 'home': return renderHomePage();
+    case 'catalog': return renderCatalogPage();
+    case 'friends': return renderFriendsPage();
+    case 'reviews': return renderReviewsPage();
+    case 'admin': return renderAdminPage();
+    case 'privacy': return renderPrivacyPage();
+    case 'safety': return renderSafetyPage();
+    case 'room': return renderRoomPage();
+    case 'game': return renderGamePage();
+    default: return renderHomePage();
+  }
 }
 
-export function renderRoom() {
-  if (!firebaseReady) return `<section class="room-error"><div class="error-badge">!</div><div class="eyebrow">Online arcade setup needed</div><h1>Can’t open this room yet.</h1><p>${esc(connection().detail)} Once the owner fixes that, open the same invite link again.</p>${firebaseSetup.hint ? `<p class="room-error-hint">${esc(firebaseSetup.hint)}</p>` : ''}<div class="room-error-actions"><button class="button button-primary" data-action="show-setup">Show exact setup steps ${icon('arrow')}</button><button class="button button-outline" data-action="navigate" data-page="catalog">Practice locally</button></div></section>`;
-  if (state.roomError) return `<section class="room-error"><div class="error-badge">!</div><div class="eyebrow">Room link</div><h1>We couldn’t join this room.</h1><p>${esc(state.roomError)}</p><div class="room-error-actions"><button class="button button-primary" data-action="retry-room">Try again ${icon('arrow')}</button><button class="button button-outline" data-action="navigate" data-page="catalog">Back to games</button></div></section>`;
-  if (!state.room) return `<section class="room-loading"><span class="loader"></span><div class="eyebrow">Connecting to your room</div><h1>Finding the arcade…</h1><p>Joining as a guest. You can choose an account later.</p></section>`;
-  const game = getGame(state.room.gameId);
-  if (!game) return `<section class="room-error"><h1>Unknown game room.</h1><button class="button button-primary" data-action="navigate" data-page="catalog">Back to game shelf</button></section>`;
-  if (state.room.status === 'waiting') return renderLobby(game, state.room);
-  return renderGameScreen();
-}
-
-/**
- * The "is the host still here?" line under the Start button, for everyone who is not the host.
- * @param {{ hostName?: string, hostUid: string }} room
- * @param {Record<string, import('../presence-status.js').PresenceVerdict>} presence
- */
-export function renderHostWait(room, presence) {
-  const host = esc(room.hostName || 'the host');
-  const verdict = presence[room.hostUid];
-  const canTakeOver = verdict?.kind === 'away' || verdict?.kind === 'left';
-  const note = verdict?.kind === 'away'
-    ? `<em>${host} has been away for ${esc(formatAwayFor(verdict.awayForMs || 0))}. Any player in the lobby can take over and start.</em>`
-    : verdict?.kind === 'left'
-      ? `<em>${host} left the room. Any player in the lobby can take over and start.</em>`
-      : '';
-  // The server decides whether the host really is away (it reads the heartbeat), so this button
-  // only asks; a lobby whose host is present is rejected with a sentence, not a takeover.
-  const takeOver = canTakeOver
-    ? `<button class="button button-glow" data-action="claim-host">${icon('shield')} Take over as host</button>`
-    : '';
-  return `<span class="host-wait ${verdict ? `is-${verdict.kind}` : ''}">Waiting for <b>${host}</b> to start…${note}</span>${takeOver}`;
-}
-
-export function renderLobby(game, room) {
-  const players = currentPlayers();
-  const presence = currentPresence();
-  const isHost = state.user?.uid === room.hostUid;
-  return `<div class="lobby-topline"><button class="text-button" data-action="leave-room">${icon('exit')} Leave room</button><span class="room-code">Room <b>${esc((room.code || room.id.slice(0, 7)).toUpperCase())}</b> <i class="room-code-note" title="The host can share this code instead of the link">code</i></span><span class="private-tag"><i></i> Private room</span></div>
-    <section class="lobby-hero"><div class="lobby-art art-${game.accent}">${artImage(getGameArtwork(game), { className: 'lobby-art-image', sizes: '(min-width: 900px) 50vw, 100vw' })}<div class="lobby-art-label">${esc(getGameArtwork(game).engineLabel)}</div></div><div class="lobby-copy"><div class="eyebrow">You’re in the right place</div><h1>${esc(game.title)}<span>.</span></h1><p>${esc(game.blurb)} Invite one or two people and the game is on.</p><div class="lobby-badges"><span>${icon('people')} 2–${room.maxPlayers} players</span><span>${icon('link')} Invite-only</span><span>${icon('gamepad')} Browser game</span></div><div class="lobby-actions"><button class="button button-primary" data-action="copy-room-link">${icon('copy')} Copy invite link</button><button class="button button-outline" data-action="share-room-link">${icon('link')} Share</button>${isHost ? `<button class="button button-glow" data-action="start-room" ${players.length < 2 ? 'disabled' : ''}>Start match ${icon('arrow')}</button>` : renderHostWait(room, presence)}</div><small class="lobby-hint">${players.length < 2 ? 'Share the link with at least one friend to unlock Start match.' : `All set. ${isHost ? 'Start when your crew is ready.' : 'The host can start the match now.'}`}</small></div></section>
-    <section class="lobby-players"><div class="panel-heading"><div><span class="eyebrow">The lobby</span><h2>Players ready <i>${players.length} / ${room.maxPlayers}</i></h2></div><span class="lobby-live"><i></i> Link sharing on</span></div><div class="player-slot-grid">${Array.from({ length: room.maxPlayers }, (_, index) => players[index] ? `<article class="player-slot is-filled"><span class="slot-avatar slot-${index}">${esc(players[index].name.slice(0, 1).toUpperCase())}</span><span class="slot-label">Player ${index + 1}</span><b>${esc(players[index].name)}${players[index].uid === room.hostUid ? `<i class="host-chip">Host</i>` : ''}</b><small class="slot-presence is-${presence[players[index].uid]?.kind || 'unknown'}"><i></i> ${esc(presence[players[index].uid]?.label || 'IN THE ROOM')}</small></article>` : `<article class="player-slot is-empty"><span class="slot-avatar">+</span><span class="slot-label">Player ${index + 1}</span><b>Waiting for a friend</b><small>Share your invite link</small></article>`).join('')}</div></section>
-    <section class="lobby-bottom"><div><b>Playing from different places?</b><span>That’s the point. Your moves sync to everyone in the room.</span></div><button class="text-button" data-action="copy-room-link">Copy link again ${icon('arrow')}</button></section>`;
-}
-
-export function renderHowToPlay(game) {
-  const guide = getGameGuide(game);
-  if (!guide) return '';
-  return `<details class="how-to-play"><summary><span class="how-to-icon">?</span><span><b>How to play</b><small>${esc(guide.mode)}</small></span><i>⌄</i></summary><div class="how-to-content"><div><span class="eyebrow">Goal</span><p>${esc(guide.goal)}</p></div><div><span class="eyebrow">Controls</span><p>${esc(guide.controls)}</p></div><div><span class="eyebrow">Rules</span><p>${esc(guide.rules)}</p></div><kbd>${esc(guide.shortcut)}</kbd></div></details>`;
-}
-
-/** Format a chat timestamp as a short clock (e.g. "14:03") using local time. */
-function chatClock(ms) {
-  const date = new Date(Number(ms) || Date.now());
-  const hh = String(date.getHours()).padStart(2, '0');
-  const mm = String(date.getMinutes()).padStart(2, '0');
-  return `${hh}:${mm}`;
-}
-
-/**
- * In-match chat panel. Lives inside the match rail while a live game is in progress.
- *
- * Chat is ephemeral: messages are deleted from the database the second the match ends or a
- * rematch starts (see `purgeRoomChat` in functions/src/handlers.js). The 1-hour room TTL is a
- * safety net. This UI reflects that contract — when the game is not in the "playing" phase the
- * panel is not rendered, so there is no way to see messages after the game is over.
- */
-export function renderChatPanel() {
-  // Chat is only drawn for online live rooms that are currently playing. The lobby and the
-  // finished-result screen have no panel.
-  if (state.local || !state.room || state.room.status !== 'playing') return '';
-  const me = currentUid();
-  const messages = state.chatMessages || [];
-  const open = !!state.chatOpen;
-  const unread = Number(state.chatUnreadCount) || 0;
-  const sending = !!state.chatSending;
-  const error = state.chatError ? `<small class="chat-error">${esc(state.chatError)}</small>` : '';
-  const empty = !messages.length
-    ? `<div class="chat-empty"><span>${icon('chat')}</span><b>Say hi.</b><small>Chat disappears when the match ends — nothing is stored after the game.</small></div>`
-    : '';
-  const list = messages.map((message) => {
-    const mine = message.uid === me;
-    const initial = (message.name || 'P').slice(0, 1).toUpperCase();
-    return `<div class="chat-bubble ${mine ? 'is-mine' : ''}"><span class="chat-bubble-avatar" aria-hidden="true">${esc(initial)}</span><div class="chat-bubble-body"><b>${esc(message.name)}</b><p>${esc(message.text)}</p><small>${esc(chatClock(message.createdAtMs))}</small></div></div>`;
-  }).join('');
-  return `<section class="chat-panel surface" aria-label="In-match chat">
-    <button class="chat-toggle" type="button" data-action="toggle-chat" aria-expanded="${open ? 'true' : 'false'}" aria-controls="chat-panel-body">
-      <span>${icon('chat')} <b>Chat</b></span>
-      ${unread > 0 ? `<span class="chat-unread">${unread > 99 ? '99+' : unread}</span>` : ''}
-      <span class="chat-toggle-chevron">${icon('chevron')}</span>
-    </button>
-    <div class="chat-body" id="chat-panel-body"${open ? '' : ' hidden'}>
-      <div class="chat-log" role="log" aria-live="polite">
-        ${empty}
-        ${list}
+function renderHomePage() {
+  const conn = connection();
+  return `
+    <section class="hero-section">
+      <img class="hero-img" src="${HERO_ARTWORK.src}" srcset="${HERO_ARTWORK.srcset}" width="${HERO_ARTWORK.width}" height="${HERO_ARTWORK.height}" alt="" fetchpriority="high" />
+      <div class="hero-content">
+        <h1 data-page-heading>Play together, anywhere</h1>
+        <p class="hero-sub">Forty bite-size retro games for 2–3 friends. Share a link and play in the browser.</p>
+        ${!conn.onlineFeatures ? `<div class="setup-banner"><p>${esc(onlineUnavailableNote(conn))}</p><button class="btn btn-sm" data-action="show-setup">Setup guide</button></div>` : ''}
+        <div class="hero-actions">
+          <button class="btn btn-primary" data-action="quick-play">Quick Play</button>
+          ${conn.onlineFeatures ? `<button class="btn btn-secondary" data-action="quick-room">Create Room</button>` : ''}
+          <button class="btn btn-ghost" data-action="navigate" data-page="catalog">Browse Games</button>
+        </div>
       </div>
-      <form class="chat-form" data-form="chat" data-room-id="${esc(state.roomId || '')}">
-        <label class="sr-only" for="chat-input">Message</label>
-        <input id="chat-input" class="chat-input" name="text" type="text" maxlength="240" placeholder="Say something nice…" autocomplete="off"${sending ? ' disabled' : ''} required>
-        <button class="chat-send" type="submit" aria-label="Send message"${sending ? ' disabled' : ''}>${icon('send')}</button>
-      </form>
-      ${error}
-      <small class="chat-privacy-note">Messages are permanently deleted when the match ends and are never kept for more than an hour.</small>
-    </div>
-  </section>`;
+    </section>
+    <section class="section-recent">
+      <h2>Recently Played</h2>
+      ${state.recentGames.length ? renderGameGrid(state.recentGames.map(id => getGame(id)).filter(Boolean), 0) : '<p class="empty-hint">No recently played games yet.</p>'}
+    </section>
+    <section class="section-favorites">
+      <h2>Favorites</h2>
+      ${state.favorites.length ? renderGameGrid(state.favorites.map(id => getGame(id)).filter(Boolean), 0) : '<p class="empty-hint">Star a game to add it here.</p>'}
+    </section>
+  `;
 }
 
-export function renderGameScreen() {
-  const game = currentGame();
-  const gameState = currentGameState();
-  const players = currentPlayers();
-  if (!game || !gameState) return `<section class="room-loading"><span class="loader"></span><div class="eyebrow">Loading game</div><h1>Setting up the cabinet…</h1></section>`;
-  const me = currentUid();
+function renderCatalogPage() {
+  const games = filteredGames();
+  return `
+    <section class="catalog-page">
+      <h1 data-page-heading>Game Library</h1>
+      <div class="filter-bar">
+        <div class="filter-chips">
+          ${CATEGORIES.map(c => `<button class="chip ${state.category === c ? 'active' : ''}" data-action="filter-category" data-category="${esc(c)}">${esc(c)}</button>`).join('')}
+        </div>
+        <div class="filter-selects">
+          <select data-filter="duration">
+            <option>Any length</option>
+            ${[...new Set(GAMES.map(g => g.duration))].map(d => `<option ${state.filters.duration === d ? 'selected' : ''}>${esc(d)}</option>`).join('')}
+          </select>
+          <select data-filter="difficulty">
+            <option>Any difficulty</option>
+            ${[...new Set(GAMES.map(g => g.difficulty))].map(d => `<option ${state.filters.difficulty === d ? 'selected' : ''}>${esc(d)}</option>`).join('')}
+          </select>
+          <select data-filter="input">
+            <option>Any input</option>
+            ${[...new Set(GAMES.map(g => g.input))].map(d => `<option ${state.filters.input === d ? 'selected' : ''}>${esc(d)}</option>`).join('')}
+          </select>
+          <button class="btn btn-sm" data-action="clear-filters">Clear</button>
+        </div>
+      </div>
+      <p class="game-count"><b>${games.length}</b> games</p>
+      ${renderGameGrid(games)}
+    </section>
+  `;
+}
+
+function renderFriendsPage() {
+  if (!state.user) {
+    return `<section class="friends-page"><h1 data-page-heading>Friends</h1><div class="empty-state"><p>Sign in to find and challenge friends.</p><button class="btn btn-primary" data-action="open-auth">Sign in</button></div></section>`;
+  }
+  return `
+    <section class="friends-page">
+      <h1 data-page-heading>Friends</h1>
+      <form data-form="friend-search" class="friend-search">
+        <input type="text" name="search" placeholder="Search by username…" autocomplete="off" value="${esc(state.friendSearchTerm)}" />
+        <button type="submit" class="btn btn-primary">Search</button>
+      </form>
+      ${state.socialError ? `<p class="error-text">${esc(state.socialError)}</p>` : ''}
+      ${state.friendResults.length ? `
+        <div class="friend-results">
+          ${state.friendResults.map(u => `
+            <div class="friend-card">
+              <span class="friend-name">@${esc(u.username)}</span>
+              <button class="btn btn-sm" data-action="send-friend-request" data-name="${esc(u.username)}">Add Friend</button>
+            </div>
+          `).join('')}
+        </div>
+      ` : ''}
+      ${state.friends.length ? `
+        <h2>Your Friends</h2>
+        <div class="friend-list">
+          ${state.friends.map(f => `
+            <div class="friend-card">
+              <span class="friend-name">@${esc(f.displayName || f.username)}</span>
+              <div class="friend-actions">
+                <button class="btn btn-sm btn-primary" data-action="challenge-friend" data-uid="${esc(f.uid)}" data-name="${esc(f.displayName || f.username)}" data-friendship-id="${esc(f.friendshipId || '')}">Challenge</button>
+                <button class="btn btn-sm btn-ghost" data-action="block-player" data-uid="${esc(f.uid)}" data-name="${esc(f.displayName || f.username)}">Block</button>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      ` : ''}
+      ${state.requests.length ? `
+        <h2>Friend Requests</h2>
+        <div class="friend-list">
+          ${state.requests.map(r => `
+            <div class="friend-card">
+              <span class="friend-name">@${esc(r.fromName || r.fromUid)}</span>
+              <div class="friend-actions">
+                <button class="btn btn-sm btn-primary" data-action="accept-friend" data-request-id="${esc(r.id)}">Accept</button>
+                <button class="btn btn-sm btn-ghost" data-action="decline-friend" data-request-id="${esc(r.id)}">Decline</button>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      ` : ''}
+      ${state.invites.length ? `
+        <h2>Game Invites</h2>
+        <div class="friend-list">
+          ${state.invites.map(inv => `
+            <div class="friend-card">
+              <span>@${esc(inv.fromName || inv.fromUid)} invited you to play ${esc(inv.gameTitle || 'a game')}</span>
+              <button class="btn btn-sm btn-primary" data-action="join-game-invite" data-invite-id="${esc(inv.id)}" data-room-id="${esc(inv.roomId)}">Join</button>
+            </div>
+          `).join('')}
+        </div>
+      ` : ''}
+      ${!state.friends.length && !state.requests.length && !state.invites.length && !state.friendResults.length ? '<div class="empty-state"><p>Search for friends by username to get started.</p></div>' : ''}
+    </section>
+  `;
+}
+
+function renderReviewsPage() {
+  return `
+    <section class="reviews-page">
+      <h1 data-page-heading>Player Reviews</h1>
+      ${state.featuredReview ? `
+        <div class="featured-review">
+          <div class="review-stars">${'★'.repeat(state.featuredReview.rating || 5)}</div>
+          <blockquote>${esc(state.featuredReview.message)}</blockquote>
+          <cite>— ${esc(state.featuredReview.reviewerName || 'Anonymous')}</cite>
+          ${state.featuredReview.reply ? `<div class="review-reply"><strong>${esc(state.featuredReview.reply.assistantName || 'Arcade Agent')}:</strong> ${esc(state.featuredReview.reply.message)}</div>` : ''}
+        </div>
+      ` : ''}
+      <div class="reviews-list">
+        ${state.reviews.map(r => `
+          <article class="review-card">
+            <div class="review-header">
+              <span class="review-stars">${'★'.repeat(r.rating || 0)}</span>
+              <span class="review-game">${esc(r.gameTitle || 'Arcade')}</span>
+            </div>
+            ${r.title ? `<h3>${esc(r.title)}</h3>` : ''}
+            <p>${esc(r.message)}</p>
+            <cite>— ${esc(r.reviewerName || 'Anonymous')}</cite>
+            ${r.reply ? `<div class="review-reply"><strong>${esc(r.reply.assistantName || 'Agent')}:</strong> ${esc(r.reply.message)}</div>` : ''}
+          </article>
+        `).join('')}
+      </div>
+      ${state.reviewsLoading ? '<p class="loading-text">Loading reviews…</p>' : ''}
+      ${state.reviewsHasMore && !state.reviewsLoading ? '<button class="btn btn-secondary" data-action="load-more-reviews">Load more</button>' : ''}
+      ${state.reviewsError ? `<p class="error-text">${esc(state.reviewsError)}</p>` : ''}
+      <h2>Write a Review</h2>
+      <form data-form="review" class="review-form">
+        <div class="star-rating">
+          ${[1,2,3,4,5].map(n => `<label><input type="radio" name="rating" value="${n}" ${n === 5 ? 'checked' : ''} /> ${'★'.repeat(n)}</label>`).join('')}
+        </div>
+        <input type="hidden" name="gameId" value="arcade" />
+        <input type="text" name="title" placeholder="Title (optional)" maxlength="100" />
+        <input type="text" name="reviewerName" placeholder="Your name" maxlength="30" value="${esc(state.displayName)}" />
+        <textarea name="message" placeholder="Share your experience…" maxlength="1000" rows="4" required></textarea>
+        <button type="submit" class="btn btn-primary" ${state.reviewSubmitting ? 'disabled' : ''}>
+          ${state.reviewSubmitting ? 'Submitting…' : 'Submit Review'}
+        </button>
+        ${state.reviewModelStatus ? `<p class="model-status">${esc(state.reviewModelStatus)}</p>` : ''}
+      </form>
+    </section>
+  `;
+}
+
+function renderAdminPage() {
+  if (!state.isAdmin) return '<section class="admin-page"><h1 data-page-heading>Admin</h1><p>You do not have admin access.</p></section>';
+  const d = state.adminData;
+  return `
+    <section class="admin-page">
+      <h1 data-page-heading>Admin Studio</h1>
+      <div class="admin-tabs" role="tablist">
+        ${['overview', 'rooms', 'players', 'social', 'reviews', 'access'].map(tab => `
+          <button role="tab" data-action="admin-tab" data-tab="${tab}" class="tab ${state.adminTab === tab ? 'active' : ''}" aria-selected="${state.adminTab === tab}">${tab[0].toUpperCase() + tab.slice(1)}</button>
+        `).join('')}
+      </div>
+      <button class="btn btn-sm" data-action="refresh-admin">Refresh</button>
+      ${state.adminLoading ? '<p class="loading-text">Loading…</p>' : ''}
+      <div class="admin-content">
+        ${state.adminTab === 'overview' && d ? `<p><b>${d.rooms?.length || 0}</b> rooms · <b>${d.players?.length || 0}</b> players</p>` : ''}
+        ${state.adminTab === 'rooms' && d ? renderAdminRooms(d.rooms || []) : ''}
+        ${state.adminTab === 'players' && d ? renderAdminPlayers(d.players || []) : ''}
+        ${state.adminTab === 'access' ? '<p>Admin access is managed through the Firebase console or by other admins.</p>' : ''}
+      </div>
+    </section>
+  `;
+}
+
+function renderAdminRooms(rooms) {
+  if (!rooms.length) return '<p>No rooms found.</p>';
+  return rooms.map(r => `
+    <div class="admin-row">
+      <span><b>${esc(r.gameId || '?')}</b> · ${esc(r.status || '?')} · ${esc(r.playerUids?.length || 0)} players</span>
+      <button class="btn btn-sm btn-danger" data-action="admin-delete-room" data-room-id="${esc(r.id)}" data-name="${esc(r.hostName || r.hostUid)}">Delete</button>
+    </div>
+  `).join('');
+}
+
+function renderAdminPlayers(players) {
+  if (!players.length) return '<p>No players found.</p>';
+  return players.map(p => `
+    <div class="admin-row">
+      <span>@${esc(p.username || '?')} · <code>${esc(p.id?.slice(0, 8))}…</code></span>
+      <div class="admin-actions">
+        <button class="btn btn-sm" data-action="admin-copy-uid" data-uid="${esc(p.id)}">Copy UID</button>
+        <button class="btn btn-sm btn-danger" data-action="admin-remove-player" data-uid="${esc(p.id)}" data-name="${esc(p.username)}">Remove</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function renderPrivacyPage() {
+  return `
+    <section class="legal-page">
+      <h1 data-page-heading>Privacy Policy</h1>
+      <p>PSD-gaming is a browser arcade. Here is what happens with your data:</p>
+      <h2>What we store</h2>
+      <ul>
+        <li><b>Guest accounts:</b> a Firebase anonymous ID. No email, no name.</li>
+        <li><b>Registered accounts:</b> email, chosen username, and your friend list.</li>
+        <li><b>Game rooms:</b> room state, moves, and chat messages. Rooms expire after 1 hour.</li>
+        <li><b>Reviews:</b> your review text, rating, and the agent's reply. Public.</li>
+      </ul>
+      <h2>What we do not do</h2>
+      <ul>
+        <li>No analytics, no cookies, no third-party tracking.</li>
+        <li>No selling or sharing of personal data.</li>
+      </ul>
+      <h2>Deletion</h2>
+      <p>You can delete your account from the account menu. This removes your profile, username, friendships, and all associated data.</p>
+      <h2>On-device AI</h2>
+      <p>The review sentiment model runs entirely in your browser. No text is sent to any external API for analysis.</p>
+    </section>
+  `;
+}
+
+function renderSafetyPage() {
+  return `
+    <section class="legal-page">
+      <h1 data-page-heading>Terms & Safety</h1>
+      <h2>Rules</h2>
+      <ul>
+        <li>Be respectful in chat and reviews.</li>
+        <li>Do not exploit bugs; report them instead.</li>
+        <li>Do not share room links publicly if you want a private game.</li>
+      </ul>
+      <h2>Limitations</h2>
+      <ul>
+        <li>This is a casual arcade, not a competitive platform. Collusion is possible but there are no prizes or rankings.</li>
+        <li>Rooms expire after 1 hour and are automatically deleted.</li>
+        <li>Reports are read by a human operator. There is no automatic moderation.</li>
+      </ul>
+    </section>
+  `;
+}
+
+function renderRoomPage() {
+  if (state.roomError) {
+    return `
+      <section class="room-page">
+        <h1 data-page-heading>Game Room</h1>
+        <div class="error-state">
+          <p>${esc(state.roomError)}</p>
+          <button class="btn btn-primary" data-action="retry-room">Try again</button>
+          <button class="btn btn-ghost" data-action="navigate" data-page="catalog">Back to games</button>
+        </div>
+      </section>
+    `;
+  }
+
+  if (!state.room) {
+    return `<section class="room-page"><h1 data-page-heading>Game Room</h1><p class="loading-text">Joining room…</p></section>`;
+  }
+
+  const room = state.room;
+  const game = getGame(room.gameId);
+  const art = game ? getGameArtwork(game) : null;
+  const isHost = room.hostUid === state.user?.uid;
+  const status = room.status || 'waiting';
   const presence = currentPresence();
-  const isTurn = !gameState.turnUid || gameState.turnUid === me;
-  const turnPresence = gameState.turnUid ? presence[gameState.turnUid] : undefined;
-  const turnNote = turnPresence?.kind === 'away' ? ` · away ${formatAwayFor(turnPresence.awayForMs || 0)}` : turnPresence?.kind === 'left' ? ' · left the room' : '';
-  const pendingActions = state.local ? 0 : state.onlineActionsPending;
-  // Offline is not a claim about queued work: while the browser has no connection, a move cannot be
-  // sent at all, and the screen says exactly that instead of promising a later sync.
-  const syncLabel = !state.online
-    ? 'Offline · moves will not be sent until the connection is back'
-    : pendingActions
-      ? `Applied instantly · syncing ${pendingActions} ${pendingActions === 1 ? 'move' : 'moves'}…`
-      : 'Instant moves · live sync ready';
-  const statusText = gameState.phase === 'finished'
-    ? gameState.winnerUid ? `${activeName(gameState.winnerUid, players)} takes the round` : 'That’s a draw'
-    : isTurn ? 'Your move' : `${activeName(gameState.turnUid, players)} is up${turnNote}`;
-  return `<div class="play-topline"><button class="text-button" data-action="leave-session">${icon('exit')} Leave game</button><div class="playing-label"><span class="playing-pulse"></span>${state.local ? 'Local practice' : 'Live room'} <i>·</i> ${esc(game.category)}</div><span class="room-code">${state.local ? 'Practice' : `Room ${esc((state.room?.id || '').slice(0, 7).toUpperCase())}`}</span></div>
-    <div class="play-layout"><section class="game-stage surface"><div class="game-stage-heading" style="--stage-art:url('${esc(stageArt(game))}')"><div class="game-stage-title"><span class="game-mini-icon art-${game.accent}">${esc(game.icon)}</span><div><div class="eyebrow">${esc(game.category)} · Round ${gameState.round || gameState.questionIndex + 1 || 1}</div><h1>${esc(game.title)}</h1></div></div><div class="turn-chip ${gameState.phase === 'finished' ? 'is-finished' : ''}"><span></span>${esc(statusText)}</div></div>
-      ${renderHowToPlay(game)}
-      ${renderEngineBoard(game, gameState, players, me)}
-      <div class="stage-foot">${gameState.phase === 'finished' ? `<div class="result-banner ${gameState.winnerUid === me ? 'is-win' : ''}"><span class="result-mark">${gameState.winnerUid === me ? '✦' : gameState.winnerUid ? '◉' : '＝'}</span><div><b>${gameState.winnerUid ? (gameState.winnerUid === me ? 'Nice one — you win!' : `${esc(activeName(gameState.winnerUid, players))} wins this one.`) : 'A perfectly even match.'}</b><small>${gameState.result === 'draw' ? 'Run it back and settle the score.' : 'Well played. Fancy another round?'}</small></div><button class="button button-outline button-small" data-action="play-again" ${pendingActions ? 'disabled title="Finishing sync…"' : ''}>${pendingActions ? 'Syncing…' : 'Play again'} ${icon('arrow')}</button></div>` : `<div class="game-stage-footer"><span>${icon('spark')} ${esc(game.blurb)}</span>${state.local ? '<span>Moves apply instantly on this device</span>' : `<span class="move-sync ${pendingActions ? 'is-syncing' : ''} ${!state.online ? 'is-offline' : ''}" role="status"><i></i>${esc(syncLabel)}</span>`}</div>`}</div>
-    </section><aside class="match-rail surface" aria-label="Match players"><div class="match-rail-heading"><div><span class="eyebrow">Match room</span><h2>The players</h2></div><span class="live-tag is-${state.local ? 'local' : state.online ? 'live' : 'offline'}"><i></i> ${state.local ? 'Local' : state.online ? 'Live' : 'Offline'}</span></div><div class="match-player-list">${players.map((player, index) => `<div class="match-player ${player.uid === me ? 'is-me' : ''} ${gameState.turnUid === player.uid ? 'is-turn' : ''} ${presence[player.uid] ? `is-${presence[player.uid].kind}` : ''}"><span class="match-player-avatar player-avatar-${index}">${player.uid === 'local-cpu' ? 'CPU' : esc(player.name.slice(0, 1).toUpperCase())}</span><span class="match-player-copy"><b>${esc(player.name)} ${player.uid === me ? '<i>You</i>' : ''}</b><small>${presence[player.uid]?.detail ? esc(presence[player.uid].detail) : gameState.turnUid === player.uid && gameState.phase !== 'finished' ? 'Playing now' : player.uid === state.room?.hostUid ? 'Room host' : 'In the match'}</small></span>${gameState.scores ? `<strong>${gameState.scores[player.uid] || 0}<small>pts</small></strong>` : gameState.turnUid === player.uid ? `<span class="player-turn-dot"></span>` : ''}</div>`).join('')}</div>
-      ${state.local ? `<div class="rail-note"><span>${icon('spark')}</span><div><b>Just you and the browser.</b><small>Want a real rival? Create a room and send a link.</small></div></div><button class="button button-primary rail-main-button" data-action="quick-room">Invite a friend ${icon('arrow')}</button>` : `<div class="room-share-card"><span class="eyebrow">Bring in another player</span><p>Send the room link. They can join as a guest.</p><div class="room-share-actions"><button class="button button-outline" data-action="copy-room-link">${icon('copy')} Copy room link</button><button class="button button-quiet" data-action="share-room-link">${icon('link')} Share</button></div></div>`}
-      ${renderChatPanel()}
-      <button class="text-button" data-action="open-report" data-room-id="${esc(state.room?.id || '')}">Report a problem in this game</button>
-      <button class="text-button rail-back" data-action="navigate" data-page="catalog">Back to game shelf ${icon('arrow')}</button></aside></div>`;
+
+  return `
+    <section class="room-page">
+      <h1 data-page-heading>${esc(game?.title || 'Game Room')}</h1>
+      ${art ? `<div class="room-banner"><img src="${art.src}" srcset="${art.srcset}" width="${art.width}" height="${art.height}" alt="" loading="lazy" /><span class="engine-badge">${esc(art.engineLabel)}</span></div>` : ''}
+      <div class="room-info">
+        <p>Room code: <code class="room-code">${esc(room.code || room.id?.slice(0, 7))}</code></p>
+        <div class="room-actions">
+          <button class="btn btn-sm" data-action="copy-room-link">Copy Link</button>
+          <button class="btn btn-sm" data-action="share-room-link">Share</button>
+        </div>
+      </div>
+      <div class="player-list">
+        ${(room.playerUids || []).map((uid, i) => `
+          <div class="player-row">
+            <span class="player-color" style="--pc: var(--p${i + 1})">${playerDisplayName(uid, [])}</span>
+            <span class="presence-badge ${presence[uid]?.status || 'here'}">${presenceLabel(presence[uid])}</span>
+          </div>
+        `).join('')}
+      </div>
+      ${status === 'waiting' ? `
+        ${isHost ? `<button class="btn btn-primary" data-action="start-room">Start Match</button>` : '<p>Waiting for the host to start…</p>'}
+        <button class="btn btn-ghost" data-action="claim-host">Claim Host</button>
+        <button class="btn btn-ghost" data-action="leave-room">Leave Room</button>
+      ` : ''}
+    </section>
+  `;
+}
+
+function renderGamePage() {
+  const game = currentGame();
+  const gs = currentGameState();
+  const players = currentPlayers();
+
+  if (!game || !gs) {
+    return `<section class="game-page"><h1 data-page-heading>No game loaded</h1><button class="btn btn-primary" data-action="navigate" data-page="catalog">Browse Games</button></section>`;
+  }
+
+  const art = getGameArtwork(game);
+  const guide = getGameGuide(game);
+  const isLocal = !!state.local;
+
+  return `
+    <section class="game-page">
+      <div class="game-header">
+        <h1 data-page-heading>${esc(game.title)}</h1>
+        <div class="game-meta">
+          <span class="engine-badge">${esc(art.engineLabel)}</span>
+          ${players.map((p, i) => `<span class="player-chip" style="--pc: var(--p${i + 1})">${esc(playerDisplayName(p.uid, players))}</span>`).join('')}
+        </div>
+      </div>
+      <div class="game-stage">
+        ${renderBoard(game, gs, players)}
+      </div>
+      ${gs.status === 'finished' ? `<div class="game-result-banner" data-announce-result>${gs.winner === 'draw' ? 'Draw!' : `${playerDisplayName(gs.winner, players)} wins!`}</div>` : `<div class="turn-indicator" data-announce-turn>${playerDisplayName(gs.turnIndex % players.length === 0 ? players[0]?.uid : players[gs.turnIndex % players.length]?.uid, players)}'s turn</div>`}
+      <div class="game-guide">
+        ${guide ? `<details><summary>How to play</summary><div class="guide-content"><p><b>${esc(guide.mode)}</b></p><p><b>Goal:</b> ${esc(guide.goal)}</p><p><b>Controls:</b> ${esc(guide.controls)}</p><p>${esc(guide.rules)}</p></div></details>` : ''}
+      </div>
+      <div class="game-actions">
+        <button class="btn btn-secondary" data-action="play-again">Play Again</button>
+        <button class="btn btn-ghost" data-action="leave-session">Leave</button>
+        <button class="btn btn-ghost" data-action="open-report" data-room-id="${state.roomId || ''}">Report</button>
+      </div>
+    </section>
+  `;
+}
+
+function renderBoard(game, gs, players) {
+  const uid = state.local ? 'local-you' : state.user?.uid;
+
+  switch (game.engine) {
+    case 'line': return renderLineBoard(game, gs, uid, players);
+    case 'drop': return renderDropBoard(game, gs, uid, players);
+    case 'memory': return renderMemoryBoard(game, gs, uid, players);
+    case 'race': return renderRaceBoard(game, gs, uid, players);
+    case 'rps': return renderRpsBoard(game, gs, uid, players);
+    case 'quiz': return renderQuizBoard(game, gs, uid, players);
+    case 'maze': return renderMazeBoard(game, gs, uid, players);
+    case 'battle': return renderBattleBoard(game, gs, uid, players);
+    case 'rally': return renderRallyBoard(game, gs, uid, players);
+    case 'code': return renderCodeBoard(game, gs, uid, players);
+    default: return '<div class="board-placeholder"><p>Board loading…</p></div>';
+  }
+}
+
+function playerIdx(uid, players) {
+  return players.findIndex(p => p.uid === uid);
+}
+
+function isMyTurn(gs, uid, players) {
+  return players[gs.turnIndex % players.length]?.uid === uid;
+}
+
+function renderLineBoard(game, gs, uid, players) {
+  const { size } = game.options;
+  return `<div class="board board-line" data-nav="grid" data-cols="${size}">
+    ${gs.board.map((cell, i) => {
+      const owner = cell ? playerIdx(cell, players) : -1;
+      const shape = owner >= 0 ? players[owner]?.uid === 'local-cpu' ? '●' : '✕' : '';
+      const canPlay = !cell && gs.status === 'playing' && isMyTurn(gs, uid, players);
+      return `<button class="board-cell ${owner >= 0 ? `p${owner + 1}` : ''} ${gs.winLine?.includes(i) ? 'is-win' : ''} ${gs.lastMove === i ? 'is-last' : ''}" data-action="line-move" data-index="${i}" ${canPlay ? '' : 'disabled'}>${shape}</button>`;
+    }).join('')}
+  </div>`;
+}
+
+function renderDropBoard(game, gs, uid, players) {
+  const { cols, rows } = game.options;
+  let html = '<div class="board board-drop">';
+  html += '<div class="drop-arrows">';
+  for (let c = 0; c < cols; c++) {
+    const canDrop = gs.status === 'playing' && isMyTurn(gs, uid, players) && gs.colHeights[c] < rows;
+    html += `<button class="drop-arrow" data-action="drop-move" data-col="${c}" ${canDrop ? '' : 'disabled'}>↓</button>`;
+  }
+  html += '</div>';
+  html += `<div class="drop-grid" data-nav="grid" data-cols="${cols}">`;
+  for (let r = rows - 1; r >= 0; r--) {
+    for (let c = 0; c < cols; c++) {
+      const idx = c * rows + r;
+      const cell = gs.board[idx];
+      const owner = cell ? playerIdx(cell, players) : -1;
+      html += `<div class="board-cell ${owner >= 0 ? `p${owner + 1}` : ''} ${gs.winLine?.includes(idx) ? 'is-win' : ''}">${owner >= 0 ? (players[owner]?.uid === 'local-cpu' ? '●' : '●') : ''}</div>`;
+    }
+  }
+  html += '</div></div>';
+  return html;
+}
+
+function renderMemoryBoard(game, gs, uid, players) {
+  return `<div class="board board-memory" data-nav="grid" data-cols="${Math.ceil(Math.sqrt(gs.cards.length))}">
+    ${gs.cards.map((card, i) => {
+      const visible = gs.revealed[i] || gs.matched[i];
+      const symbol = visible ? (gs.matched[i] ? ['♠','♥','♦','♣','★','◆','●','◎','✦','□','△','▽','⬡','⬢','⬟','⬠'][card % 16] : '?') : '?';
+      const isMatched = gs.matched[i];
+      const canFlip = !visible && gs.status === 'playing' && isMyTurn(gs, uid, players) && gs.selected.length < 2;
+      return `<button class="board-cell memory-card ${isMatched ? 'is-matched' : ''} ${gs.selected.includes(i) ? 'is-flipped' : ''}" data-action="memory-flip" data-index="${i}" ${canFlip ? '' : 'disabled'}>${symbol}</button>`;
+    }).join('')}
+  </div>
+  <div class="scoreboard">${players.map(p => `<span>${esc(playerDisplayName(p.uid, players))}: ${gs.scores[p.uid] || 0}</span>`).join(' · ')}</div>`;
+}
+
+function renderRaceBoard(game, gs, uid, players) {
+  const target = game.options.target;
+  return `<div class="board board-race">
+    ${players.map(p => {
+      const score = gs.scores[p.uid] || 0;
+      const pct = Math.min(100, (score / target) * 100);
+      return `<div class="race-lane">
+        <span class="race-name">${esc(playerDisplayName(p.uid, players))}</span>
+        <div class="race-bar"><div class="race-fill" style="width: ${pct}%"></div></div>
+        <span class="race-score">${score}/${target}</span>
+      </div>`;
+    }).join('')}
+    ${gs.status === 'playing' ? `<button class="btn btn-primary race-tap" data-action="race-tap">BOOST!</button>` : ''}
+  </div>`;
+}
+
+function renderRpsBoard(game, gs, uid, players) {
+  const mode = game.options.mode;
+  const choices = mode === 'coin' ? ['heads', 'tails'] : mode === 'dice' ? ['1','2','3','4','5','6'] : ['rock', 'paper', 'scissors'];
+  const labels = mode === 'coin' ? ['Heads', 'Tails'] : mode === 'dice' ? ['1','2','3','4','5','6'] : ['✊ Rock', '✋ Paper', '✌ Scissors'];
+  const hasPicked = gs.picks[uid] !== undefined;
+
+  return `<div class="board board-rps">
+    <p>Round ${gs.round} · First to ${game.options.target}</p>
+    <div class="rps-choices">
+      ${choices.map((c, i) => `<button class="btn ${gs.picks[uid] === c ? 'btn-primary' : 'btn-secondary'}" data-action="duel-choice" data-choice="${c}" ${hasPicked || gs.status !== 'playing' ? 'disabled' : ''}>${labels[i]}</button>`).join('')}
+    </div>
+    ${gs.roundResult ? `<div class="rps-result">${gs.roundResult.winners?.length ? `${gs.roundResult.winners.map(w => playerDisplayName(w, players)).join(', ')} win${gs.roundResult.winners.length > 1 ? '' : 's'} the round!` : 'Tie round!'}</div>` : ''}
+    <div class="scoreboard">${players.map(p => `<span>${esc(playerDisplayName(p.uid, players))}: ${gs.scores[p.uid] || 0}</span>`).join(' · ')}</div>
+  </div>`;
+}
+
+function renderQuizBoard(game, gs, uid, players) {
+  const q = gs.questions[gs.currentRound];
+  if (!q) return '<div class="board board-quiz"><p>Loading question…</p></div>';
+
+  const hasAnswered = gs.answers[uid] !== undefined;
+  const allAnswered = players.every(p => gs.answers[p.uid] !== undefined);
+
+  return `<div class="board board-quiz">
+    <p class="quiz-round">Question ${gs.currentRound + 1} of ${gs.questions.length}</p>
+    <h2 class="quiz-question">${esc(q.question)}</h2>
+    <div class="quiz-options">
+      ${q.options.map((opt, i) => {
+        const chosen = gs.answers[uid] === i;
+        const correct = gs.roundRevealed && i === q.answer;
+        const wrong = gs.roundRevealed && chosen && i !== q.answer;
+        return `<button class="quiz-option ${chosen ? 'chosen' : ''} ${correct ? 'correct' : ''} ${wrong ? 'wrong' : ''}" data-action="quiz-answer" data-answer="${i}" ${hasAnswered || gs.roundRevealed ? 'disabled' : ''}>${'ABCD'[i]}. ${esc(opt)}</button>`;
+      }).join('')}
+    </div>
+    ${gs.roundRevealed || (allAnswered && !gs.roundRevealed) ? `<button class="btn btn-primary" data-action="quiz-next">${gs.roundRevealed ? 'Next Question' : 'Reveal Answer'}</button>` : ''}
+    <div class="scoreboard">${players.map(p => `<span>${esc(playerDisplayName(p.uid, players))}: ${gs.scores[p.uid] || 0}</span>`).join(' · ')}</div>
+  </div>`;
+}
+
+function renderMazeBoard(game, gs, uid, players) {
+  const { width, height, grid, positions, goalX, goalY } = gs;
+  let html = `<div class="board board-maze" data-nav="grid" data-cols="${width}">`;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const isWall = grid[y]?.[x] === 1;
+      const isGoal = x === goalX && y === goalY;
+      const playersHere = players.filter(p => positions[p.uid]?.x === x && positions[p.uid]?.y === y);
+      const playerClass = playersHere.length ? `p${playerIdx(playersHere[0].uid, players) + 1}` : '';
+      html += `<div class="board-cell maze-cell ${isWall ? 'is-wall' : 'is-floor'} ${isGoal ? 'is-goal' : ''} ${playerClass}">${isGoal ? '✦' : playersHere.length ? '●' : ''}</div>`;
+    }
+  }
+  html += '</div>';
+  html += '<div class="maze-controls">';
+  if (gs.status === 'playing') {
+    html += `
+      <button class="btn maze-btn" data-action="maze-move" data-direction="up">↑</button>
+      <div class="maze-row">
+        <button class="btn maze-btn" data-action="maze-move" data-direction="left">←</button>
+        <button class="btn maze-btn" data-action="maze-move" data-direction="down">↓</button>
+        <button class="btn maze-btn" data-action="maze-move" data-direction="right">→</button>
+      </div>
+    `;
+  }
+  html += '</div>';
+  html += `<div class="scoreboard">${players.map(p => `<span>${esc(playerDisplayName(p.uid, players))}: ${gs.steps[p.uid] || 0} steps</span>`).join(' · ')}</div>`;
+  return html;
+}
+
+function renderBattleBoard(game, gs, uid, players) {
+  const { board, grid: grids, shots } = gs;
+  const myGrid = grids[uid];
+  const myShots = shots[uid] || Array(board * board).fill(false);
+  const isMyTurnNow = isMyTurn(gs, uid, players);
+  const target = state.selectedBattleTarget || players.find(p => p.uid !== uid)?.uid || '';
+
+  let html = '<div class="board board-battle">';
+  html += '<div class="battle-section"><h3>Your Waters</h3>';
+  html += `<div class="battle-grid" data-nav="grid" data-cols="${board}">`;
+  for (let i = 0; i < board * board; i++) {
+    const hasShip = myGrid?.ships?.includes(i);
+    const isHit = myGrid?.hits?.[i];
+    html += `<div class="board-cell battle-cell ${hasShip ? 'has-ship' : ''} ${isHit ? 'is-hit' : ''}">${isHit ? '✹' : hasShip ? '●' : ''}</div>`;
+  }
+  html += '</div></div>';
+
+  html += `<div class="battle-section"><h3>Fire At: ${players.filter(p => p.uid !== uid).map(p => `
+    <button class="btn btn-sm ${target === p.uid ? 'btn-primary' : ''}" data-action="battle-target" data-uid="${p.uid}">${esc(playerDisplayName(p.uid, players))}</button>
+  `).join('')}</h3>`;
+  html += `<div class="battle-grid" data-nav="grid" data-cols="${board}">`;
+  for (let i = 0; i < board * board; i++) {
+    const shot = myShots[i];
+    const hit = shot && target && grids[target]?.ships?.includes(i);
+    const canFire = !shot && isMyTurnNow && gs.status === 'playing' && target;
+    html += `<button class="board-cell battle-cell ${shot ? (hit ? 'is-hit' : 'is-miss') : ''}" data-action="battle-fire" data-index="${i}" data-uid="${target}" ${canFire ? '' : 'disabled'}>${shot ? (hit ? '✹' : '·') : ''}</button>`;
+  }
+  html += '</div></div></div>';
+  return html;
+}
+
+function renderRallyBoard(game, gs, uid, players) {
+  const { lanes } = game.options;
+  const isMyTurnNow = isMyTurn(gs, uid, players);
+  return `<div class="board board-rally">
+    <p>Rally count: ${gs.rallyCount}</p>
+    <div class="rally-lanes">
+      ${Array.from({ length: lanes }, (_, i) => `
+        <button class="btn rally-lane" data-action="rally-hit" data-lane="${i}" ${isMyTurnNow && gs.status === 'playing' ? '' : 'disabled'}>Lane ${i + 1}</button>
+      `).join('')}
+    </div>
+    <div class="scoreboard">${players.map(p => `<span>${esc(playerDisplayName(p.uid, players))}: ${gs.scores[p.uid] || 0}</span>`).join(' · ')}</div>
+  </div>`;
+}
+
+function renderCodeBoard(game, gs, uid, players) {
+  const isMyTurnNow = isMyTurn(gs, uid, players);
+  return `<div class="board board-code">
+    <p>Guesses: ${gs.guesses.length} / ${gs.maxGuesses * players.length}</p>
+    <div class="code-guesses">
+      ${gs.guesses.map(g => `
+        <div class="code-guess ${g.exact === gs.digits ? 'is-correct' : ''}">
+          <span class="guess-digits">${g.guess.map((d, i) => `<span class="digit">${d}</span>`).join('')}</span>
+          <span class="guess-feedback">EXACT: ${g.exact} · NEAR: ${g.near}</span>
+          <span class="guess-by">${esc(playerDisplayName(g.uid, players))}</span>
+        </div>
+      `).join('')}
+    </div>
+    ${gs.status === 'playing' && isMyTurnNow ? `
+      <div class="code-input">
+        ${Array.from({ length: gs.digits }, (_, i) => `
+          <button class="digit-btn" data-action="code-digit" data-index="${i}">${state.codeDraft[i] ?? 0}</button>
+        `).join('')}
+        <button class="btn btn-primary" data-action="code-submit">Try code</button>
+      </div>
+    ` : ''}
+    ${gs.status === 'finished' && gs.code ? `<p class="code-reveal">The code was: ${gs.code.join(' ')}</p>` : ''}
+  </div>`;
 }

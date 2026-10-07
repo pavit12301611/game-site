@@ -1,103 +1,95 @@
 /**
- * The app chrome: sidebar, topbar, mobile nav, and the shell that wraps them around the current
- * page (plus the modal and the toast when there is one). `renderPage` is the router's switch - it
- * maps `state.page` to one of the page views.
- *
- * There is one exception to "chrome around a page": while the site is in maintenance mode and the
- * viewer is not exempt, this module paints the maintenance screen instead of the shell (see
- * `src/maintenance.js` and docs/maintenance-mode.md).
- *
- * Pure rendering only: navigation happens through `data-action="navigate"` buttons and the hash
- * router in `src/app.js`.
+ * The app shell: sidebar, topbar, and page content area.
+ * This is the outer wrapper rendered on every paint.
  */
 
+import { state, maintenanceBlocks } from '../state.js';
 import { connection } from '../connection.js';
-import { maintenanceBlocks, state } from '../state.js';
-import { esc, icon, renderBrand } from '../ui/html.js';
-import { renderMaintenanceBanner, renderMaintenanceScreen } from './maintenance.js';
-import { renderModal } from './modals.js';
-import { renderAdmin, renderCatalog, renderFriends, renderGameScreen, renderHome, renderReviews, renderRoom } from './pages.js';
-import { renderPrivacy, renderSafety } from './legal.js';
-
-export function renderSidebar() {
-  const conn = connection();
-  const items = [
-    { page: 'home', icon: 'home', label: 'Home' },
-    { page: 'catalog', icon: 'grid', label: 'Game library', count: '40' },
-    { page: 'friends', icon: 'people', label: 'Friends', count: state.requests.length || null },
-    { page: 'reviews', icon: 'star', label: 'Reviews' },
-  ];
-  if (state.isAdmin) items.push({ page: 'admin', icon: 'shield', label: 'Admin studio' });
-  return `<aside class="sidebar" aria-label="Arcade menu">
-    <a class="brand-lockup" href="#/home" data-action="navigate" data-page="home" aria-label="PSD-gaming home">${renderBrand()}<span><b>PSD</b><small>GAMING</small></span></a>
-    <div class="side-caption">Your arcade</div>
-    <nav class="side-nav" aria-label="Main navigation">${items.map((item) => `<button class="nav-item ${state.page === item.page ? 'is-active' : ''}" data-action="navigate" data-page="${item.page}">${icon(item.icon)}<span>${item.label}</span>${item.count ? `<b class="nav-count">${item.count}</b>` : ''}</button>`).join('')}</nav>
-    <div class="sidebar-divider"></div>
-    <div class="side-caption">Quick play</div>
-    <button class="nav-item" data-action="quick-play">${icon('spark')}<span>Surprise me</span></button>
-    <div class="sidebar-promo">
-      <div class="promo-glyph">${icon('gamepad')}</div><span class="eyebrow">Friends, not distance</span>
-      <p>One link is all it takes to meet at the arcade.</p>
-      <button class="text-button" data-action="open-friends">Find your crew ${icon('arrow')}</button>
-    </div>
-    <nav class="sidebar-legal" aria-label="Privacy and safety">
-      <button class="text-button" data-action="navigate" data-page="privacy">Privacy</button><i>·</i><button class="text-button" data-action="navigate" data-page="safety">Terms &amp; safety</button>
-    </nav>
-    <div class="sidebar-bottom" title="${esc(conn.title)}">
-      <div class="connection-dot is-${conn.kind}"></div><span>${esc(conn.label)}</span>
-    </div>
-  </aside>`;
-}
-
-export function renderTopbar() {
-  const name = state.profile?.username || (state.user?.isAnonymous ? 'Guest player' : 'Welcome, player');
-  const unread = state.requests.length + state.invites.length;
-  const themeLabel = state.resolvedTheme === 'light' ? 'Switch to dark theme' : 'Switch to light theme';
-  return `<header class="topbar">
-    <div class="topbar-mobile-brand">${renderBrand()}<b>PSD<span>-GAMING</span></b></div>
-    <label class="search-box">${icon('search')}<input id="global-search" type="search" placeholder="Search 40 arcade games..." value="${esc(state.query)}" aria-label="Search the game library" /><kbd>⌘ K</kbd></label>
-    <div class="topbar-actions">
-      <button class="icon-button theme-toggle" data-action="toggle-theme" aria-label="${themeLabel}" title="${themeLabel}">${icon(state.resolvedTheme === 'light' ? 'moon' : 'sun')}</button>
-      <button class="icon-button notification-button" data-action="notifications" aria-label="Notifications">${icon('bell')}${unread ? `<i>${unread > 9 ? '9+' : unread}</i>` : ''}</button>
-      ${state.user ? `<button class="profile-button" data-action="account-menu"><span class="avatar ${state.user.isAnonymous ? 'avatar-guest' : ''}">${esc((state.profile?.username || state.user.email || 'G').slice(0, 1).toUpperCase())}</span><span class="profile-copy"><b>${esc(name)}</b><small>${state.user.isAnonymous ? 'Playing as a guest' : 'Arcade member'}</small></span><span class="profile-chevron">⌄</span></button>` : `<button class="button button-quiet top-signin" data-action="open-auth">Sign in</button>`}
-    </div>
-  </header>`;
-}
-
-export function renderMobileNav() {
-  const items = [
-    ['home', 'Home', 'home'], ['catalog', 'Games', 'grid'], ['friends', 'Friends', 'people'], ['reviews', 'Reviews', 'star'],
-  ];
-  if (state.isAdmin) items.push(['admin', 'Admin', 'shield']);
-  const pageItems = items.map(([page, label, iconName]) => `<button class="mobile-nav-item ${state.page === page ? 'is-active' : ''}" data-action="navigate" data-page="${page}">${icon(iconName)}<span>${label}</span></button>`).join('');
-  return `<nav class="mobile-nav has-settings ${state.isAdmin ? 'has-admin' : ''}" aria-label="Mobile navigation">${pageItems}<button class="mobile-nav-item" data-action="open-settings">${icon('settings')}<span>Settings</span></button></nav>`;
-}
-
-/** The dialog and the status line, which outlive whichever page is underneath them. */
-function renderOverlays() {
-  return `${state.modal ? renderModal() : ''}${state.toast ? `<div class="toast toast-${state.toast.kind}" role="status">${icon(state.toast.kind === 'success' ? 'check' : 'spark')}<span>${esc(state.toast.message)}</span></div>` : ''}`;
-}
+import { esc } from '../ui/html.js';
+import { renderPage } from './pages.js';
+import { renderModals } from './modals.js';
+import { renderToast } from './modals.js';
 
 export function renderShell() {
   const conn = connection();
-  const pageNames = { home: 'Welcome back', catalog: 'Game library', friends: 'Your crew', reviews: 'Player reviews', admin: 'Admin studio', room: 'Private room', game: 'Now playing', privacy: 'Privacy notice', safety: 'Terms & safety' };
-  // Maintenance mode replaces the whole chrome, not just the page: a sidebar full of doors that lead
-  // to the same notice would be a worse way to say "not yet". The dialog and the toast stay on top,
-  // because an admin signs in through a dialog and a typed code answers with a toast.
-  if (maintenanceBlocks()) return `${renderMaintenanceScreen()}${renderOverlays()}`;
-  return `<div class="app-shell"><button class="button button-primary skip-link" data-action="skip-to-content">Skip to content</button>${renderSidebar()}<div class="main-column">${renderTopbar()}<aside class="page-context" aria-label="Page status"><span class="page-context-name">${pageNames[state.page] || 'Arcade'}</span><span class="network-status is-${conn.kind}" title="${esc(conn.title)}"><i></i><span>${esc(conn.shortLabel)}</span></span></aside>${renderMaintenanceBanner()}<main class="page-content" id="page-content">${renderPage()}</main></div>${renderMobileNav()}</div>${renderOverlays()}`;
+  const isLocked = maintenanceBlocks();
+
+  if (isLocked) return renderMaintenanceNotice();
+
+  return `
+    <div class="app-shell">
+      <nav class="sidebar" aria-label="Main navigation">
+        <div class="sidebar-brand">
+          <span class="brand-icon">🕹️</span>
+          <span class="brand-name">PSD-gaming</span>
+        </div>
+        <div class="sidebar-nav">
+          <button class="nav-item ${state.page === 'home' ? 'active' : ''}" data-action="navigate" data-page="home">🏠 Home</button>
+          <button class="nav-item ${state.page === 'catalog' ? 'active' : ''}" data-action="navigate" data-page="catalog">🎮 Games</button>
+          <button class="nav-item ${state.page === 'friends' ? 'active' : ''}" data-action="navigate" data-page="friends">👥 Friends</button>
+          <button class="nav-item ${state.page === 'reviews' ? 'active' : ''}" data-action="navigate" data-page="reviews">⭐ Reviews</button>
+          ${state.isAdmin ? `<button class="nav-item ${state.page === 'admin' ? 'active' : ''}" data-action="navigate" data-page="admin">🛡 Admin</button>` : ''}
+          <button class="nav-item" data-action="navigate" data-page="privacy">📋 Privacy</button>
+          <button class="nav-item" data-action="navigate" data-page="safety">⚖ Safety</button>
+        </div>
+        <div class="sidebar-footer">
+          <div class="connection-badge ${conn.onlineFeatures ? 'online' : conn.offline ? 'offline' : 'local'}" data-action="show-setup">
+            <span class="status-dot"></span>
+            ${esc(conn.label)}
+          </div>
+          <div class="sidebar-actions">
+            <button class="icon-btn" data-action="toggle-theme" title="Toggle theme">${state.resolvedTheme === 'dark' ? '☀' : '🌙'}</button>
+            <button class="icon-btn" data-action="open-settings" title="Settings">⚙</button>
+            ${state.user ? `<button class="icon-btn" data-action="account-menu" title="Account">👤</button>` : `<button class="btn btn-sm" data-action="open-auth">Sign in</button>`}
+          </div>
+        </div>
+      </nav>
+      <main class="main-content">
+        <header class="topbar">
+          <div class="topbar-left">
+            <span class="topbar-brand">🕹️ PSD-gaming</span>
+          </div>
+          <div class="topbar-center">
+            <input type="search" id="global-search" placeholder="Search games… (Ctrl+K)" autocomplete="off" value="${esc(state.query)}" />
+          </div>
+          <div class="topbar-right">
+            <div class="connection-badge ${conn.onlineFeatures ? 'online' : conn.offline ? 'offline' : 'local'}" data-action="show-setup">
+              <span class="status-dot"></span>
+              ${esc(conn.label)}
+            </div>
+            <button class="icon-btn" data-action="toggle-theme">${state.resolvedTheme === 'dark' ? '☀' : '🌙'}</button>
+          </div>
+        </header>
+        <div id="page-content">
+          ${renderPage()}
+        </div>
+      </main>
+    </div>
+    ${renderModals()}
+    ${renderToast()}
+    <div id="psd-live-region" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+  `;
 }
 
-export function renderPage() {
-  switch (state.page) {
-    case 'catalog': return renderCatalog();
-    case 'friends': return renderFriends();
-    case 'reviews': return renderReviews();
-    case 'admin': return renderAdmin();
-    case 'room': return renderRoom();
-    case 'game': return renderGameScreen();
-    case 'privacy': return renderPrivacy();
-    case 'safety': return renderSafety();
-    default: return renderHome();
-  }
+function renderMaintenanceNotice() {
+  const m = state.maintenance;
+  return `
+    <div class="maintenance-notice">
+      <div class="maintenance-card">
+        <h1>🕹️ PSD-gaming</h1>
+        <h2>The arcade is temporarily closed</h2>
+        <p class="maintenance-reason">${esc(m.reason || 'We are performing maintenance. Please come back later.')}</p>
+        <form data-form="maintenance-pin" class="pin-form">
+          <label for="maintenance-pin-input">Access code</label>
+          <input id="maintenance-pin-input" type="text" inputmode="numeric" data-maintenance-pin placeholder="0000 0000 0000 0000" maxlength="19" autocomplete="off" value="${esc(m.pinDraft)}" />
+          <span id="maintenance-pin-tally" class="pin-tally">${m.pinDraft.length} of 16 digits typed</span>
+          <button type="submit" class="btn btn-primary" data-maintenance-submit ${m.checking ? 'disabled' : ''}>Unlock</button>
+        </form>
+        ${m.unlockMessage ? `<p class="pin-feedback ${m.unlockOk ? 'success' : 'error'}">${esc(m.unlockMessage)}</p>` : ''}
+        <div class="maintenance-footer">
+          <button class="icon-btn" data-action="toggle-theme">${state.resolvedTheme === 'dark' ? '☀' : '🌙'}</button>
+        </div>
+      </div>
+    </div>
+  `;
 }

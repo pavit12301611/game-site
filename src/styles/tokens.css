@@ -1,193 +1,62 @@
-/*
- * Design tokens. Every colour, size, radius, shadow and duration used by the other stylesheets comes
- * from here, so a theme is a short block of overrides and nothing else needs to know about it.
- * Values and contrast ratios are documented (and unit-tested) in docs/design-reboot.md section 3.
- * Direction: a night-time arcade. Dark is a midnight cabinet with neon; light is the same arcade in daylight
- * (white and lavender with saturated ink and hard shadows, like a sticker sheet).
- */
+/* Design tokens: colors, sizes, spacing, radii, shadows, timings */
 :root {
-  color-scheme: dark;
-
-  /* Surfaces and text (dark, midnight indigo) */
-  --bg: #0b0720;
-  --surface-1: #150d36;
-  --surface-2: #20154f;
-  --surface-3: #2e2068;
-  --ink: #f7f3ff;
-  --ink-muted: #cfc6f5;
-  --ink-subtle: #aa9fe0;
-  --control-edge: #8f80dc;
-  --line: #3b2c80;
-
-  /* Brand and status */
-  --primary: #ffd23f;
-  --primary-hover: #ffe27a;
-  --primary-ledge: #b07a00;
-  --on-primary: #140a2e;
-  --focus-ring: #5ef0ff;
-  --ok: #5dffa0;
-  --bad: #ff8aa0;
-  --warn: #ffd23f;
-  --info: #7adcff;
-
-  /* Neon accents: one per category, plus violet for glows */
-  --neon-pink: #ff4db8;
-  --neon-cyan: #2ee6ff;
-  --neon-lime: #86ff5c;
-  --neon-yellow: #ffd23f;
-  --neon-violet: #b79bff;
-  --page-wash: rgb(11 7 32 / 0.9);
-  --primary-glow: 0 0 22px rgb(255 210 63 / 0.35);
-  --neon-pink-rgb: 255 77 184;
-  --neon-cyan-rgb: 46 230 255;
-  --neon-lime-rgb: 134 255 92;
-  --neon-yellow-rgb: 255 210 63;
-
-  /* Players: colour + shape, never colour alone */
-  --p1: #ff5a7a;
-  --p2: #ffd23f;
-  --p3: #38c8ff;
-  --p4: #5dff9a;
-
-  /* Photo overlays always sit on a dark scrim, in both themes */
-  --photo-ink: #ffffff;
-  --photo-scrim: 11 7 32;
-
-  /* Board materials: neon cabinet glass (the same in both themes) */
-  --board-glass: #0d0826;
-  --board-glass-2: #1a1050;
-  --board-ink: #e6fbff;
-  --board-frame: #1b2a8f;
-  --board-frame-dark: #101a63;
-  --card-back: #2b1a7a;
-  --card-face: #fff7d6;
-  --card-face-ink: #140a2e;
-  --radar: #04141a;
-  --radar-ink: #5dffa0;
-  --court: #0b3a2f;
-  --court-ink: #eafff4;
-  --arcade-red: #b3123a;
-  /* Player colours on the dark board glass (the themed --p1..--p4 are for the page surfaces) */
-  --bn-pink: #ff4db8;
-  --bn-cyan: #2ee6ff;
-  --bn-lime: #86ff5c;
-  --bn-yellow: #ffd23f;
-  --bn-violet: #b79bff;
-  --bp1: #ff5a7a;
-  --bp2: #ffd23f;
-  --bp3: #38c8ff;
-  --bp4: #5dff9a;
-
-  /* Type */
-  --font-display: 'Chakra Petch', 'Inter', system-ui, sans-serif;
-  --font-body: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
-  --fs-1: 0.8125rem;
-  --fs-2: 0.9375rem;
-  --fs-3: 1.0625rem;
-  --fs-4: 1.1875rem;
-  --fs-5: 1.5rem;
-  --fs-6: 1.875rem;
-  --fs-7: clamp(2.125rem, 5vw, 3rem);
-  --fs-8: clamp(2.625rem, 7vw, 4.25rem);
-
-  /* Space (4-pt) */
-  --sp-1: 4px;
-  --sp-2: 8px;
-  --sp-3: 12px;
-  --sp-4: 16px;
-  --sp-5: 24px;
-  --sp-6: 32px;
-  --sp-7: 48px;
-  --sp-8: 64px;
-  --sp-9: 96px;
+  /* Dark theme (default) */
+  --bg: #0a0a12;
+  --surface-1: #12121e;
+  --surface-2: #1a1a2a;
+  --surface-3: #222236;
+  --ink: #e8e4f0;
+  --ink-muted: #a09bb0;
+  --ink-subtle: #6b6580;
+  --primary: #ffd84d;
+  --primary-hover: #ffe066;
+  --primary-ink: #1a1600;
+  --accent-blue: #4da6ff;
+  --accent-pink: #ff4da6;
+  --accent-cyan: #4dfff0;
+  --accent-lime: #88ff4d;
+  --accent-orange: #ff8c4d;
+  --accent-violet: #a64dff;
+  --accent-green: #4dff88;
+  --accent-gold: #ffd84d;
+  --bad: #ff4d6a;
+  --good: #4dff88;
+  --p1: #4da6ff;
+  --p2: #ff4da6;
+  --p3: #4dfff0;
+  --p4: #ffd84d;
+  --board-glass: rgba(18, 18, 30, 0.85);
+  --board-ink: #e8e4f0;
+  --focus-ring: 0 0 0 2px var(--primary);
+  --shadow-1: 2px 2px 0 rgba(0,0,0,0.4);
+  --shadow-2: 4px 4px 0 rgba(0,0,0,0.3);
+  --shadow-3: 6px 6px 0 rgba(0,0,0,0.2);
+  --glow-blue: 0 0 12px rgba(77,166,255,0.4);
+  --glow-pink: 0 0 12px rgba(255,77,166,0.4);
+  --glow-cyan: 0 0 12px rgba(77,255,240,0.4);
+  --glow-lime: 0 0 12px rgba(136,255,77,0.4);
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 24px; --sp-6: 32px; --sp-7: 48px; --sp-8: 64px; --sp-9: 96px;
+  --r-1: 4px; --r-2: 8px; --r-3: 12px; --r-4: 20px; --r-pill: 9999px;
   --target: 48px;
-
-  /* Radius */
-  --r-1: 4px;
-  --r-2: 8px;
-  --r-3: 12px;
-  --r-4: 20px;
-  --r-pill: 999px;
-
-  /* Elevation: hard offset shadows like a printed cabinet, plus neon glows */
-  --shadow-1: 2px 2px 0 rgb(0 0 0 / 0.55);
-  --shadow-2: 4px 4px 0 rgb(0 0 0 / 0.55), 0 12px 30px rgb(0 0 0 / 0.4);
-  --shadow-3: 6px 6px 0 rgb(0 0 0 / 0.6), 0 24px 60px rgb(0 0 0 / 0.5);
-  --shadow-inset: inset 2px 3px 8px rgb(0 0 0 / 0.5);
-  --shadow-piece: 2px 2px 0 rgb(0 0 0 / 0.6);
-  --glow-pink: 0 0 0 2px var(--neon-pink), 0 0 22px rgb(var(--neon-pink-rgb) / 0.45);
-  --glow-cyan: 0 0 0 2px var(--neon-cyan), 0 0 22px rgb(var(--neon-cyan-rgb) / 0.45);
-  --glow-lime: 0 0 0 2px var(--neon-lime), 0 0 22px rgb(var(--neon-lime-rgb) / 0.4);
-  --glow-yellow: 0 0 0 2px var(--neon-yellow), 0 0 22px rgb(var(--neon-yellow-rgb) / 0.4);
-  --text-glow: 0 0 14px rgb(var(--neon-pink-rgb) / 0.55);
-  --scanlines: repeating-linear-gradient(0deg, rgb(255 255 255 / 0.035) 0 1px, transparent 1px 3px);
-
-  /* Motion */
-  --dur-1: 100ms;
-  --dur-2: 180ms;
-  --dur-3: 280ms;
-  --dur-4: 600ms;
-  --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
-  --ease-io: cubic-bezier(0.4, 0, 0.2, 1);
-
-  /* Layout */
-  --sidebar-w: 264px;
-  --content-max: 1200px;
-  --nav-h: 64px;
+  --fs-1: 13px; --fs-2: 15px; --fs-3: 17px; --fs-4: 20px; --fs-5: 24px; --fs-6: 32px; --fs-hero: clamp(36px, 5vw, 68px);
+  --font-heading: 'Chakra Petch', sans-serif;
+  --font-body: 'Inter', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
 }
 
 [data-theme='light'] {
-  color-scheme: light;
-  --bg: #f6f1ff;
+  --bg: #f8f6f2;
   --surface-1: #ffffff;
-  --surface-2: #ece5ff;
-  --surface-3: #ddd2ff;
-  --ink: #1a1040;
-  --ink-muted: #463b86;
-  --ink-subtle: #574c96;
-  --control-edge: #7566c0;
-  --line: #d0c4f7;
-  --primary: #5b21d6;
-  --primary-hover: #4a14b8;
-  --primary-ledge: #2c0a7a;
-  --on-primary: #ffffff;
-  --focus-ring: #0b4bd6;
-  --ok: #087040;
-  --bad: #c1123a;
-  --warn: #8a5a00;
-  --info: #1250a8;
-  --neon-pink: #c4157f;
-  --neon-cyan: #006b8f;
-  --neon-lime: #256f00;
-  --neon-violet: #6a3df0;
-  --page-wash: rgb(246 241 255 / 0.93);
-  --primary-glow: 0 0 0 0 transparent;
-  --neon-pink-rgb: 196 21 127;
-  --neon-cyan-rgb: 0 107 143;
-  --neon-lime-rgb: 37 111 0;
-  --p1: #c8123f;
-  --p2: #d99a00;
-  --p3: #1676d6;
-  --p4: #1a9250;
-  --shadow-1: 2px 2px 0 rgb(26 16 64 / 0.85);
-  --shadow-2: 4px 4px 0 rgb(26 16 64 / 0.85);
-  --shadow-3: 6px 6px 0 rgb(26 16 64 / 0.9);
-  --shadow-inset: inset 2px 3px 0 rgb(26 16 64 / 0.12);
-  --shadow-piece: 2px 2px 0 rgb(26 16 64 / 0.7);
-  --glow-pink: 0 0 0 2px var(--neon-pink), 4px 4px 0 rgb(26 16 64 / 0.85);
-  --glow-cyan: 0 0 0 2px var(--neon-cyan), 4px 4px 0 rgb(26 16 64 / 0.85);
-  --glow-lime: 0 0 0 2px var(--neon-lime), 4px 4px 0 rgb(26 16 64 / 0.85);
-  --glow-yellow: 0 0 0 2px #1a1040, 4px 4px 0 rgb(26 16 64 / 0.85);
-  --text-glow: none;
-  --scanlines: none;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  :root {
-    --dur-1: 0ms;
-    --dur-2: 0ms;
-    --dur-3: 0ms;
-    --dur-4: 0ms;
-  }
+  --surface-2: #f0ede8;
+  --surface-3: #e4e0d8;
+  --ink: #1a1a2a;
+  --ink-muted: #555566;
+  --ink-subtle: #8888a0;
+  --primary: #7b3fe4;
+  --primary-hover: #6b2fd4;
+  --primary-ink: #ffffff;
+  --bad: #e03050;
+  --good: #20a050;
+  --board-glass: rgba(255, 255, 255, 0.9);
+  --board-ink: #1a1a2a;
 }

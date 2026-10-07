@@ -1,87 +1,40 @@
 /**
- * Single source of truth for the connection status shown in the sidebar, top bar, hero,
- * friends page and modals. The status is derived only from two real facts:
- *
- *   1. did the Firebase config parse, validate and initialize? (`setup`, from src/firebase.js)
- *   2. does the browser currently report that it is online?    (`online`, from navigator.onLine)
- *
- * Nothing here is hard-coded to "online". Precedence:
- *
- *   config missing / invalid / failed to initialize -> "Local practice mode"   (online play cannot work)
- *   config fine, but the browser is offline         -> "Offline · local play"
- *   config fine and the browser is online           -> "Online rooms ready"
- *
- * "Online rooms ready" means "Firebase is initialized and the browser is online". It does not
- * prove the Firebase project has its sign-in providers enabled or its rules published; those
- * problems are reported with specific messages (see src/firebase-errors.js) when they are hit,
- * and the setup dialog has an explicit live check.
+ * Connection status logic, pure: describes the connection from setup + online flags.
  */
-
-export const CONNECTION_LABELS = Object.freeze({
-  online: 'Online rooms ready',
-  offline: 'Offline · local play',
-  local: 'Local practice mode',
-});
-
-const FALLBACK_SETUP_MESSAGE = 'Firebase config is missing from this deployment. Add the VITE_FIREBASE_* variables (VITE_FIREBASE_API_KEY, VITE_FIREBASE_AUTH_DOMAIN, VITE_FIREBASE_PROJECT_ID, VITE_FIREBASE_APP_ID …) in Vercel and redeploy.';
 
 /**
- * @param {{ setup?: { status?: string, message?: string, hint?: string }, online?: boolean }} input
- * @returns {{
- *   kind: 'online' | 'offline' | 'local',
- *   label: string,
- *   shortLabel: string,
- *   tone: 'ok' | 'warn' | 'setup',
- *   detail: string,
- *   hint: string,
- *   title: string,
- *   onlineFeatures: boolean,
- *   setupNeeded: boolean,
- * }}
+ * @param {{ setup: { status: string, message: string }, online: boolean }} context
+ * @returns {{ label: string, detail: string, onlineFeatures: boolean, setupNeeded: boolean, offline: boolean }}
  */
-export function describeConnection({ setup, online = true } = {}) {
-  const configured = setup?.status === 'ok';
+export function describeConnection({ setup, online }) {
+  const setupNeeded = setup.status !== 'ok';
+  const offline = !online;
 
-  if (!configured) {
-    const detail = setup?.message || FALLBACK_SETUP_MESSAGE;
+  if (setupNeeded) {
     return {
-      kind: 'local',
-      label: CONNECTION_LABELS.local,
-      shortLabel: 'LOCAL',
-      tone: 'setup',
-      detail,
-      hint: setup?.hint || '',
-      title: `${CONNECTION_LABELS.local}. ${detail}`,
+      label: 'Local practice mode',
+      detail: setup.message || 'Firebase is not configured.',
       onlineFeatures: false,
       setupNeeded: true,
+      offline: false,
     };
   }
 
-  if (!online) {
-    const detail = 'Firebase is configured, but this browser is offline. Online rooms come back when you reconnect; local practice still works.';
+  if (offline) {
     return {
-      kind: 'offline',
-      label: CONNECTION_LABELS.offline,
-      shortLabel: 'OFFLINE',
-      tone: 'warn',
-      detail,
-      hint: '',
-      title: detail,
+      label: 'Offline · local play',
+      detail: 'You are offline. Reconnect to use online rooms.',
       onlineFeatures: false,
       setupNeeded: false,
+      offline: true,
     };
   }
 
-  const detail = 'Firebase is initialized and this browser is online.';
   return {
-    kind: 'online',
-    label: CONNECTION_LABELS.online,
-    shortLabel: 'ONLINE',
-    tone: 'ok',
-    detail,
-    hint: '',
-    title: detail,
+    label: 'Online rooms ready',
+    detail: '',
     onlineFeatures: true,
     setupNeeded: false,
+    offline: false,
   };
 }

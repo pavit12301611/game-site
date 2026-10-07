@@ -1,47 +1,42 @@
 /**
- * race engine — real-time button mashing, no turns: first player to the target score wins.
+ * Race engine: tap sprint games.
  *
- * `tapGapMs` is the tempo of the game: the shortest interval between two taps that count. It is a
- * real rule difference between the six races (Pixel Tap Sprint accepts every tap, Bug Blaster one
- * every 250 ms), and in online play the trusted backend enforces the same number, so a script that
- * fires thousands of taps a second gains nothing.
- * Games: Pixel Tap Sprint, Button Masher, Turbo Charge, Reaction Rush, Spacebar Showdown, Bug Blaster.
+ * Options: { target: number, tapGapMs: number }
+ * Real-time race: players tap to fill their meter. No turns.
  */
 
-/** @typedef {import('../types.js').Game} Game */
-/** @typedef {import('../types.js').Player} Player */
-/** @typedef {import('../types.js').GameState} GameState */
-/** @typedef {import('../types.js').Action} Action */
+import { assertPlaying, declareWinner } from './shared.js';
 
-import { assertPlaying, createRaceState } from './shared.js';
-
-/**
- * @param {Game} game
- * @param {Player[]} players
- * @returns {GameState}
- */
-export function createInitialState(game, players) {
-  return { ...createRaceState(game, players), tapGapMs: Number(game.options.tapGapMs) || 0 };
+export function createInitialState(game, players, seed) {
+  return {
+    engine: 'race',
+    scores: Object.fromEntries(players.map(p => [p.uid, 0])),
+    lastTapMs: Object.fromEntries(players.map(p => [p.uid, 0])),
+    turnIndex: 0, // not used for turns but kept for consistency
+    status: 'playing',
+    winner: '',
+    target: game.options.target,
+    seed,
+  };
 }
 
-/**
- * @param {Game} game
- * @param {GameState} state
- * @param {string} uid
- * @param {Action} action
- * @returns {GameState}
- */
-export function applyAction(game, state, uid, action) {
+export function applyAction(game, state, uid, action, players) {
   assertPlaying(state);
-  if (action.type !== 'tap') throw new Error('Tap the boost button to score.');
-  const scoreMap = { ...state.scores, [uid]: (state.scores[uid] ?? 0) + 1 };
-  state.scores = scoreMap;
-  state.moves += 1;
-  state.lastAction = { uid, time: state.moves };
-  if (scoreMap[uid] >= state.target) {
-    state.phase = 'finished';
-    state.winnerUid = uid;
-    state.result = 'winner';
+  if (!players.some(p => p.uid === uid)) throw new Error('You are not in this game.');
+  const { tapGapMs } = game.options;
+  const now = Date.now();
+
+  if (tapGapMs > 0) {
+    const lastTap = state.lastTapMs[uid] || 0;
+    if (now - lastTap < tapGapMs) return state; // Too fast, silently ignore
   }
+
+  state.lastTapMs[uid] = now;
+  state.scores[uid] = (state.scores[uid] || 0) + 1;
+
+  if (state.scores[uid] >= game.options.target) {
+    declareWinner(state, uid);
+  }
+
   return state;
 }

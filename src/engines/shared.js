@@ -1,190 +1,98 @@
 /**
- * Helpers shared by every game engine in this folder.
- *
- * An engine is a pure module with exactly two exports:
- *
- *   createInitialState(game, players, seed) -> state   plain JSON, safe to store in Firestore
- *   applyAction(game, state, uid, action, players)     -> next state, or throws with a player-facing message
- *
- * Engines never touch the DOM, the network, `Date.now()` or `Math.random()`. Every "random" choice
- * comes from `makeRandom(seed)` so the same room seed always deals the same game.
+ * Shared utilities for all game engines: deterministic PRNG, deep copy, and player assertions.
  */
 
-/** @typedef {import('../types.js').Game} Game */
-/** @typedef {import('../types.js').Player} Player */
-/** @typedef {import('../types.js').GameState} GameState */
-/** @typedef {import('../types.js').Action} Action */
-/** @typedef {import('../types.js').BaseState} BaseState */
-
-/** @template T @param {T} value @returns {T} */
-export function copy(value) {
-  return structuredClone(value);
-}
-
 /**
- * FNV-1a hash. Used both as a deterministic RNG seed and to decide coin flips without randomness
- * that a client could predict or replay differently.
- *
- * @param {string} text
- * @returns {number} unsigned 32-bit hash
- */
-export function hashNumber(text) {
-  let hash = 2166136261;
-  for (const char of String(text)) {
-    hash ^= char.charCodeAt(0);
-    hash = Math.imul(hash, 16777619);
-  }
-  return hash >>> 0;
-}
-
-/**
- * Seeded pseudo-random generator (mulberry32). Same seed -> same sequence, on every device.
- *
+ * A simple seeded PRNG (mulberry32). Produces the same sequence for the same seed.
  * @param {string} seed
- * @returns {() => number} random float in [0, 1)
+ * @returns {() => number} returns 0–1 floats
  */
-export function makeRandom(seed) {
-  let state = hashNumber(seed) || 0x9e3779b9;
+export function seededRandom(seed) {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) {
+    h = (Math.imul(31, h) + seed.charCodeAt(i)) | 0;
+  }
   return () => {
-    state += 0x6d2b79f5;
-    let value = state;
-    value = Math.imul(value ^ (value >>> 15), value | 1);
-    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
-    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+    h |= 0;
+    h = (h + 0x6d2b79f5) | 0;
+    let t = Math.imul(h ^ (h >>> 15), 1 | h);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
 
 /**
- * Deterministic Fisher-Yates shuffle.
- *
+ * Deep clone a plain object (game state).
  * @template T
- * @param {T[]} values
- * @param {string} seed
- * @returns {T[]}
+ * @param {T} obj
+ * @returns {T}
  */
-export function shuffled(values, seed) {
-  const items = [...values];
-  const random = makeRandom(seed);
-  for (let index = items.length - 1; index > 0; index -= 1) {
-    const other = Math.floor(random() * (index + 1));
-    [items[index], items[other]] = [items[other], items[index]];
-  }
-  return items;
-}
-
-/** @param {Player[]} players
- * @param {string} uid
- * @returns {string} the uid that plays after `uid`, wrapping around and skipping nobody.
- */
-export function nextPlayer(players, uid) {
-  const index = players.findIndex((player) => player.uid === uid);
-  return players[(index + 1 + players.length) % players.length]?.uid ?? uid;
+export function copy(obj) {
+  return JSON.parse(JSON.stringify(obj));
 }
 
 /**
- * @param {Player[]} players
- * @param {Record<string, number>} scores
- * @returns {string | null} the single highest scorer, or null for a tie / an all-zero board
- */
-export function winnerFromScores(players, scores) {
-  const highScore = Math.max(0, ...players.map((player) => scores[player.uid] ?? 0));
-  const winners = players.filter((player) => (scores[player.uid] ?? 0) === highScore);
-  return winners.length === 1 ? winners[0].uid : null;
-}
-
-/** Fields every engine state starts from.
- * @param {Player[]} players
- * @param {string} [firstUid]
- * @returns {BaseState}
- */
-export function newBase(players, firstUid) {
-  return {
-    phase: 'playing',
-    turnUid: firstUid ?? players[0]?.uid ?? null,
-    winnerUid: null,
-    result: null,
-    moves: 0,
-  };
-}
-
-/** @param {string[]} ids @returns {Record<string, number>} a zero score for every player. */
-export function scoresFor(ids) {
-  return Object.fromEntries(ids.map((uid) => [uid, 0]));
-}
-
-/** Ends a score-based game: one clear leader wins, anything else is a draw.
- * @param {GameState} state
- * @param {Player[]} players
- * @param {Record<string, number>} scoreMap
- * @returns {void}
- */
-export function finishByScore(state, players, scoreMap) {
-  const winnerUid = winnerFromScores(players, scoreMap);
-  state.phase = 'finished';
-  state.winnerUid = winnerUid;
-  state.result = winnerUid ? 'winner' : 'draw';
-}
-
-/** @param {GameState} state
- * @throws {Error} when the match is already over.
+ * Throws if the game is already finished.
+ * @param {{ status: string }} state
  */
 export function assertPlaying(state) {
-  if (state.phase !== 'playing') throw new Error('This round is already over.');
-}
-
-/** @param {GameState} state
- * @param {string} uid
- * @throws {Error} when it is not `uid`'s turn (engines without turns simply do not call this).
- */
-export function assertTurn(state, uid) {
-  if (state.turnUid && state.turnUid !== uid) throw new Error('Wait for your turn.');
-}
-
-/** Hands the turn to the next player.
- * @param {GameState} state
- * @param {Player[]} players
- * @param {string} uid
- * @returns {void}
- */
-export function advanceTurn(state, players, uid) {
-  state.turnUid = nextPlayer(players, uid);
+  if (state.status === 'finished') throw new Error('This game is already over.');
 }
 
 /**
- * True when the mark just placed at `index` completes a line of at least `connect`.
- * Used by both grid engines (line, drop): `size` is the row length of the flat board.
+ * Returns the uid of the current turn holder.
+ * @param {{ turnIndex: number }} state
+ * @param {Array<{ uid: string }>} players
+ * @returns {string}
  */
-export function resolveLineWinner(board, size, index, uid, connect) {
-  const row = Math.floor(index / size);
-  const col = index % size;
-  const directions = [[1, 0], [0, 1], [1, 1], [1, -1]];
-  for (const [dx, dy] of directions) {
-    let count = 1;
-    for (const sign of [-1, 1]) {
-      let x = col + dx * sign;
-      let y = row + dy * sign;
-      while (x >= 0 && x < size && y >= 0 && y < size && board[y * size + x] === uid) {
-        count += 1;
-        x += dx * sign;
-        y += dy * sign;
-      }
-    }
-    if (count >= connect) return true;
-  }
-  return false;
+export function currentPlayer(state, players) {
+  return players[state.turnIndex % players.length]?.uid || '';
 }
 
 /**
- * Starting state for the two "first to N" engines (race and rally). They share the shape; only
- * the turn handling differs: race is a real-time free-for-all, rally alternates volleys.
+ * Advances the turn to the next player.
+ * @param {{ turnIndex: number }} state
+ * @param {number} playerCount
  */
-export function createRaceState(game, players) {
-  const ids = players.map((player) => player.uid);
-  return {
-    ...newBase(players),
-    turnUid: game.engine === 'race' ? null : ids[0],
-    scores: scoresFor(ids),
-    target: game.options.target,
-    lastAction: null,
-  };
+export function advanceTurn(state, playerCount) {
+  state.turnIndex = (state.turnIndex + 1) % playerCount;
+}
+
+/**
+ * Sets the winner and finishes the game.
+ * @param {{ status: string, winner: string }} state
+ * @param {string} uid
+ */
+export function declareWinner(state, uid) {
+  state.status = 'finished';
+  state.winner = uid;
+}
+
+/**
+ * Declares a draw.
+ * @param {{ status: string, winner: string }} state
+ */
+export function declareDraw(state) {
+  state.status = 'finished';
+  state.winner = 'draw';
+}
+
+/**
+ * Asserts it is the caller's turn.
+ * @param {string} uid
+ * @param {string} expectedUid
+ */
+export function assertTurn(uid, expectedUid) {
+  if (uid !== expectedUid) throw new Error('It is not your turn.');
+}
+
+/**
+ * Asserts an index is within bounds.
+ * @param {number} index
+ * @param {number} min
+ * @param {number} max
+ */
+export function assertInRange(index, min, max) {
+  if (!Number.isInteger(index) || index < min || index >= max)
+    throw new Error(`Position must be between ${min} and ${max - 1}.`);
 }

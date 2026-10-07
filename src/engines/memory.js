@@ -1,88 +1,112 @@
 /**
- * memory engine — flip two cards; a match scores, and whether it also keeps the turn is up to the
- * room: Emoji Flip passes the turn on every match so three players keep swapping, the other decks
- * award the usual bonus turn. Two decks also start with whole pairs already turned over
- * (`openPairs`), which shrinks the contested deck instead of changing the deck size.
- * Games: Memory Match (6 pairs), Neon Pairs (8 pairs), Emoji Flip (6 pairs, 2 open, no bonus turn),
- * Arcade Pairs (8 pairs, 1 open).
+ * Memory engine: card matching games.
+ *
+ * Options: { pairs: number, openPairs: number, matchKeepsTurn: boolean }
  */
 
-/** @typedef {import('../types.js').Game} Game */
-/** @typedef {import('../types.js').Player} Player */
-/** @typedef {import('../types.js').GameState} GameState */
-/** @typedef {import('../types.js').Action} Action */
+import { seededRandom, assertPlaying, currentPlayer, advanceTurn, declareWinner, assertTurn } from './shared.js';
 
-import { advanceTurn, assertPlaying, assertTurn, finishByScore, newBase, scoresFor, shuffled } from './shared.js';
+const CARD_SYMBOLS = '♠♥♦♣★◆●◎✦□△▽⬡⬢⬟⬠楪♢';
 
-/** Card faces. Keep at least as many entries as the largest `options.pairs` in the catalog. */
-export const MEMORY_ICONS = ['✦', '☻', '♫', '◆', '⚡', '☾', '✿', '◉', '♜', '▲', '●', '▣'];
-
-/** @param {number} index @returns {string} the face shown on a revealed card. */
 export function memoryCardIcon(index) {
-  return MEMORY_ICONS[index % MEMORY_ICONS.length];
+  return CARD_SYMBOLS[index % CARD_SYMBOLS.length];
 }
 
-/**
- * @param {Game} game
- * @param {Player[]} players
- * @param {string} [seed]
- * @returns {GameState}
- */
 export function createInitialState(game, players, seed) {
-  const ids = players.map((player) => player.uid);
-  const pairs = Math.min(Number(game.options.pairs) || 6, MEMORY_ICONS.length);
-  const icons = shuffled(MEMORY_ICONS, `${seed}:${game.id}`).slice(0, pairs);
-  const cards = shuffled([...icons, ...icons], `${seed}:${game.id}:deck`);
-  // Whole pairs already face-up: they belong to nobody, so the contested deck is smaller.
-  const openPairs = Math.max(0, Math.min(Number(game.options.openPairs) || 0, pairs - 1));
-  const matched = [];
-  for (let pair = 0; pair < openPairs; pair += 1) {
-    const face = icons.filter((icon) => !matched.some((index) => cards[index] === icon))[0];
-    if (!face) break;
-    matched.push(cards.indexOf(face), cards.lastIndexOf(face));
+  const rng = seededRandom(seed);
+  const { pairs, openPairs } = game.options;
+  const totalCards = pairs * 2;
+
+  // Create pairs of card indices
+  let cards = [];
+  for (let i = 0; i < pairs; i++) {
+    cards.push(i, i);
   }
+  // Fisher-Yates shuffle
+  for (let i = cards.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [cards[i], cards[j]] = [cards[j], cards[i]];
+  }
+
+  const revealed = Array(totalCards).fill(false);
+  const matched = Array(totalCards).fill(false);
+
+  // Open some pairs
+  const openedPairs = new Set();
+  for (let i = 0; i < Math.min(openPairs, pairs) && openedPairs.size < pairs; i++) {
+    let pairId;
+    do { pairId = Math.floor(rng() * pairs); } while (openedPairs.has(pairId));
+    openedPairs.add(pairId);
+    const first = cards.indexOf(pairId);
+    const second = cards.indexOf(pairId, first + 1);
+    revealed[first] = true;
+    revealed[second] = true;
+    matched[first] = true;
+    matched[second] = true;
+  }
+
   return {
-    ...newBase(players, ids[0]),
+    engine: 'memory',
     cards,
-    opened: [],
+    revealed,
     matched,
-    openPairs,
-    matchKeepsTurn: game.options.matchKeepsTurn !== false,
-    scores: scoresFor(ids),
-    round: 1,
+    turnIndex: 0,
+    selected: [], // indices of currently flipped cards (max 2)
+    scores: Object.fromEntries(players.map(p => [p.uid, 0])),
+    status: 'playing',
+    winner: '',
+    lastFlipped: [],
+    seed,
   };
 }
 
-/**
- * @param {Game} game
- * @param {GameState} state
- * @param {string} uid
- * @param {Action} action
- * @param {Player[]} players
- * @returns {GameState}
- */
 export function applyAction(game, state, uid, action, players) {
   assertPlaying(state);
-  assertTurn(state, uid);
-  const index = Number(action.index);
-  if (!Number.isInteger(index) || index < 0 || index >= state.cards.length || state.matched.includes(index)) {
-    throw new Error('That card is not available.');
-  }
-  if (state.opened.length === 1 && state.opened[0] === index) throw new Error('Flip a different card.');
-  const opened = state.opened.length >= 2 ? [] : [...state.opened];
-  opened.push(index);
-  state.opened = opened;
-  state.moves += 1;
-  if (opened.length === 2) {
-    const [first, second] = opened;
-    if (state.cards[first] === state.cards[second]) {
-      state.matched = [...state.matched, first, second];
-      state.scores[uid] = (state.scores[uid] ?? 0) + 1;
-      if (state.matched.length === state.cards.length) finishByScore(state, players, state.scores);
-      else if (!state.matchKeepsTurn) advanceTurn(state, players, uid);
-    } else {
-      advanceTurn(state, players, uid);
+  const current = currentPlayer(state, players);
+  assertTurn(uid, current);
+  const { index } = action;
+
+  if (index < 0 || index >= state.cards.length) throw new Error('Invalid card.');
+  if (state.matched[index]) throw new Error('That card is already matched.');
+  if (state.revealed[index] && state.selected.includes(index)) throw new Error('That card is already flipped.');
+  if (state.selected.length >= 2) throw new Error('Wait for the turn to resolve.');
+
+  state.selected.push(index);
+  state.revealed[index] = true;
+  state.lastFlipped = [...state.selected];
+
+  if (state.selected.length === 2) {
+    const [a, b] = state.selected;
+    if (state.cards[a] === state.cards[b]) {
+      // Match!
+      state.matched[a] = true;
+      state.matched[b] = true;
+      state.scores[uid] = (state.scores[uid] || 0) + 1;
+      state.selected = [];
+
+      // Check if all matched
+      if (state.matched.every(Boolean)) {
+        // Find winner by highest score
+        let maxScore = -1;
+        let winner = '';
+        for (const [pUid, score] of Object.entries(state.scores)) {
+          if (score > maxScore) { maxScore = score; winner = pUid; }
+        }
+        state.status = 'finished';
+        state.winner = winner;
+        return state;
+      }
+
+      // Match keeps turn?
+      if (game.options.matchKeepsTurn) return state;
+      advanceTurn(state, players.length);
+      return state;
     }
+
+    // No match — hide after a beat (the state keeps revealed=true; the UI animates it)
+    state.selected = [];
+    advanceTurn(state, players.length);
   }
+
   return state;
 }
