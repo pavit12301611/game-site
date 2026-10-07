@@ -145,6 +145,11 @@ short-lived OIDC token, Google exchanges it, and the api functions impersonate a
 `ExternalAccountClient` + `@google-cloud/firestore` (firebase-admin's Firestore refuses a custom
 credential, so Firestore is built directly; firebase-admin is still used for Auth).
 
+> **Fastest path:** run `scripts/wif-setup.sh` (or the `curl | bash` one-liner in its header) in
+> [Google Cloud Shell](https://shell.cloud.google.com) with `TEAM_SLUG` and `PROJECT_NAME` set. It
+> performs every step below and prints the three Vercel env vars at the end. The manual steps are
+> kept here for reference.
+
 The whole setup is three GCP resources, one IAM binding, and three Vercel env vars.
 
 **1. Pick (or create) a service account to impersonate.** This is the identity the functions run as.
@@ -160,7 +165,7 @@ gcloud projects add-iam-policy-binding <PROJECT_ID> \
 
 gcloud projects add-iam-policy-binding <PROJECT_ID> \
   --member="serviceAccount:psd-admin@<PROJECT_ID>.iam.gserviceaccount.com" \
-  --role="roles/identitytoolkit.viewer"  # verify ID tokens / manage Auth users
+  --role="roles/identitytoolkit.admin"  # Auth (verify ID tokens / delete users)
 ```
 
 (`roles/datastore.user` is the Firestore access role; the routes also delete Auth users on account
