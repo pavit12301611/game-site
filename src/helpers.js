@@ -13,10 +13,6 @@ export const RECENT_STORAGE_KEY = 'psd-recent-games';
 export const SOUND_STORAGE_KEY = 'psd-sound-enabled';
 export const DISPLAY_NAME_STORAGE_KEY = 'psd-display-name';
 export const KNOWN_ROOMS_STORAGE_KEY = 'psd-known-rooms';
-/** Device token proving a tester PIN was accepted for the current maintenance window. */
-export const MAINTENANCE_PASS_STORAGE_KEY = 'psd-maintenance-pass';
-export const MAINTENANCE_PIN_LENGTH = 16;
-export const MAINTENANCE_REASON_MAX = 280;
 /** Every room automatically expires and is deleted 1 hour after creation. */
 export const ROOM_TTL_MS = 60 * 60 * 1000;
 export const EXPIRED_ROOM_MESSAGE = 'This room expired after 1 hour and was automatically deleted.';

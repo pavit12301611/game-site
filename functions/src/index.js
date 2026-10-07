@@ -22,7 +22,6 @@ import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { setGlobalOptions } from 'firebase-functions/v2';
 
-import { CALLABLE_CORS_ORIGINS } from './cors.js';
 import { GAMES } from '../vendor/shared/games.js';
 import { onlineItemsForGame } from '../vendor/shared/content/quiz-banks.js';
 import * as engineRegistry from '../vendor/src/engines/index.js';
@@ -85,8 +84,6 @@ const HTTPS_CODE = {
   'room-full': 'failed-precondition',
   'room-started': 'failed-precondition',
   'room-expired': 'failed-precondition',
-  'chat-not-live': 'failed-precondition',
-  'chat-empty': 'invalid-argument',
   'room-not-found': 'not-found',
   'user-not-found': 'not-found',
   'invite-missing': 'not-found',
@@ -114,7 +111,7 @@ function toHttpsError(error) {
  * @param {string} name
  */
 export function callableFor(name) {
-  return onCall({ cors: CALLABLE_CORS_ORIGINS }, async (request) => {
+  return onCall(async (request) => {
     const store = createFirestoreStore(db, { now: () => Date.now() });
     const handler = makeHandlers(store)[name];
     if (typeof handler !== 'function') throw new HttpsError('internal', `Unknown handler ${name}`, { code: 'unknown-handler' });
@@ -140,7 +137,6 @@ export const startRoom = callableFor('startRoom');
 export const claimHost = callableFor('claimHost');
 export const playMove = callableFor('playMove');
 export const rematch = callableFor('rematch');
-export const sendChat = callableFor('sendChat');
 export const blockUser = callableFor('blockUser');
 export const unblockUser = callableFor('unblockUser');
 export const reportProblem = callableFor('reportProblem');

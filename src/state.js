@@ -44,16 +44,6 @@ export const state = {
   onlineActionsPending: 0,
   /** uid -> { lastSeenMs, status } for the current online room (src/online/presence.js). */
   presence: {},
-  /** In-match chat messages for the current live room (src/online/chat.js). Oldest first. */
-  chatMessages: [],
-  /** Whether the chat side-panel is currently open. */
-  chatOpen: false,
-  /** Number of new chat messages that arrived while the panel was closed (for the badge). */
-  chatUnreadCount: 0,
-  /** True while a chat message is being sent through the backend. */
-  chatSending: false,
-  /** Inline error shown under the chat input, if any. */
-  chatError: '',
   /** Server clock minus local clock, measured from our own heartbeat; 0 until known. */
   presenceClockOffsetMs: 0,
   local: null,
@@ -68,29 +58,8 @@ export const state = {
   blocked: [],
   adminData: null,
   adminLoading: false,
-  /** Which admin studio section is open: overview | rooms | players | social | reviews | access | site. */
+  /** Which admin studio section is open: overview | rooms | players | social | reviews | access. */
   adminTab: 'overview',
-  /**
-   * Public `site/status` snapshot. `pending` is true only while the first Firestore read is in
-   * flight, so the arcade does not flash before a closed door is known.
-   */
-  maintenance: {
-    pending: false,
-    loaded: false,
-    enabled: false,
-    reason: '',
-    sessionId: '',
-    pinSalt: '',
-    pinHash: '',
-    updatedAt: null,
-    updatedBy: '',
-  },
-  /** True when this device presented a PIN that matches the current maintenance window. */
-  maintenanceUnlocked: false,
-  /** Plaintext PIN shown once on the admin device that just minted it. Never persisted. */
-  maintenancePlainPin: '',
-  maintenancePinError: '',
-  maintenanceSaving: false,
   /** Public reviews are readable without sign-in; new review writes still require a guest session. */
   reviews: [],
   featuredReview: null,
@@ -142,17 +111,6 @@ export function currentGameState() {
 /** The server clock, as well as this client can tell: what presence ages are measured against. */
 export function presenceNow() {
   return Date.now() + (state.presenceClockOffsetMs || 0);
-}
-
-/**
- * Visitors who are not admins and do not hold a valid tester PIN are locked out while maintenance
- * is on. While the first status snapshot is still in flight the public UI stays closed so the
- * arcade cannot flash open for a moment.
- */
-export function isSiteLocked() {
-  if (state.isAdmin || state.maintenanceUnlocked) return false;
-  if (state.maintenance.enabled) return true;
-  return Boolean(state.maintenance.pending);
 }
 
 /**

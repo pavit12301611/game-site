@@ -55,16 +55,14 @@ export function createFirestoreStore(db, { now = () => Date.now(), toTimestamp }
     return { ...data, expiresAtDate: toTimestamp(expiresAt) };
   };
   const documentPath = (path) => path.split('/');
-  // Firestore paths start with a collection: documents have an even number of segments, while
-  // collections (including nested ones such as rooms/{id}/chat) have an odd number.
   const refOf = (path) => {
     const parts = documentPath(path);
-    if (parts.length % 2 !== 0) throw new Error(`"${path}" is not a document path (it has ${parts.length} segments)`);
+    if (parts.length % 2 === 0) throw new Error(`"${path}" is not a document path (it has ${parts.length} segments)`);
     return db.doc(path);
   };
   const collectionOf = (path) => {
     const parts = documentPath(path);
-    if (parts.length % 2 === 0) throw new Error(`"${path}" is not a collection path (it has ${parts.length} segments)`);
+    if (parts.length % 2 !== 0) throw new Error(`"${path}" is not a collection path (it has ${parts.length} segments)`);
     return db.collection(path);
   };
   const read = async (snapshot) => ({
@@ -131,8 +129,6 @@ export const paths = Object.freeze({
   secret: (roomId) => `rooms/${roomId}/secrets/engine`,
   view: (roomId, uid) => `rooms/${roomId}/views/${uid}`,
   presence: (roomId, uid) => `rooms/${roomId}/presence/${uid}`,
-  chatMessage: (roomId, messageId) => `rooms/${roomId}/chat/${messageId}`,
-  chatCollection: (roomId) => `rooms/${roomId}/chat`,
   friendRequest: (requestId) => `friendRequests/${requestId}`,
   friendship: (a, b) => `friendships/${[a, b].sort().join('_')}`,
   gameInvite: (inviteId) => `gameInvites/${inviteId}`,
