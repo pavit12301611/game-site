@@ -14,8 +14,9 @@ service cloud.firestore {
     //
     // Consequences a reader should know:
     //   * `allow create, update, delete: if false` below is deliberate, not an oversight.
-    //   * The two exceptions that stay client-writable are the ones that are not security decisions:
-    //     presence heartbeats (a client saying "I am here") and admin access management.
+    //   * The exceptions that stay client-writable are the ones that are not security decisions:
+    //     presence heartbeats (a client saying "I am here"), admin access management, and the
+    //     maintenance switch (an admin closing the site - see the maintenance block below).
     //   * Deploy the functions and these rules together. With these rules and no deployed backend,
     //     online play would stop working (and the app says so; see `src/online/callables.js`).
     // ---------------------------------------------------------------------------------------------
@@ -47,6 +48,68 @@ service cloud.firestore {
         && request.resource.data.keys().hasOnly(['admin'])
         && request.resource.data.admin is bool;
       allow delete: if isAdmin() && request.auth.uid != uid;
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Maintenance mode (docs/maintenance-mode.md)
+    //
+    // One public document says whether the site is closed and why. Every visitor reads it without
+    // signing in, so the notice works even with no backend deployed. Rewriting it is admin-only and
+    // pinned to one exact shape, and the access code never appears in it: only the salted digest
+    // does, so a 16-digit code cannot be read out of what a visitor is allowed to fetch. The code
+    // itself lives in maintenanceAccess/active, which a non-admin cannot read at all.
+    // ---------------------------------------------------------------------------------------------
+
+    match /siteStatus/{document} {
+      // Readable by the world (that is the point of a notice), writable only by a verified admin, and
+      // never deletable from a client: switching maintenance off sets enabled = false, so the document
+      // that the rules above describe always exists and says "closed" or "open".
+      allow get: if true;
+      allow list: if false;
+      allow create, update: if isAdmin()
+        && document == 'maintenance'
+        && request.resource.data.keys().hasOnly(['enabled', 'reason', 'updatedAtMs', 'updatedByUid', 'pinHash', 'pinSalt', 'pinExpiresAtMs', 'pinSetAtMs'])
+        && request.resource.data.keys().hasAll(['enabled', 'reason', 'updatedAtMs', 'updatedByUid', 'pinHash', 'pinSalt', 'pinExpiresAtMs', 'pinSetAtMs'])
+        && request.resource.data.enabled is bool
+        && request.resource.data.reason is string
+        && request.resource.data.reason.size() <= 500
+        && request.resource.data.updatedAtMs is int
+        && request.resource.data.updatedByUid == request.auth.uid
+        && request.resource.data.pinHash is string
+        && request.resource.data.pinHash.size() <= 96
+        && request.resource.data.pinSalt is string
+        && request.resource.data.pinSalt.size() <= 32
+        && request.resource.data.pinExpiresAtMs is int
+        && request.resource.data.pinExpiresAtMs >= 0
+        && request.resource.data.pinSetAtMs is int
+        && request.resource.data.pinSetAtMs >= 0;
+      allow delete: if false;
+    }
+
+    match /maintenanceAccess/{document} {
+      // The one document an admin needs to be able to re-read (so the studio can show the code again
+      // after a page reload) and the one that must stay invisible to everyone else. Exactly 16 digits,
+      // one document, expiring on its own.
+      allow get: if isAdmin() && document == 'active';
+      allow list: if false;
+      allow create, update: if isAdmin()
+        && document == 'active'
+        && request.resource.data.keys().hasOnly(['pin', 'pinHash', 'pinSalt', 'expiresAtMs', 'setAtMs', 'hours', 'updatedByUid'])
+        && request.resource.data.keys().hasAll(['pin', 'pinHash', 'pinSalt', 'expiresAtMs', 'setAtMs', 'hours', 'updatedByUid'])
+        && request.resource.data.pin is string
+        && request.resource.data.pin.matches('^[0-9]{16}$')
+        && request.resource.data.pinHash is string
+        && request.resource.data.pinHash.size() <= 96
+        && request.resource.data.pinSalt is string
+        && request.resource.data.pinSalt.size() <= 32
+        && request.resource.data.expiresAtMs is int
+        && request.resource.data.expiresAtMs > 0
+        && request.resource.data.setAtMs is int
+        && request.resource.data.hours is int
+        && request.resource.data.hours >= 1
+        && request.resource.data.hours <= 720
+        && request.resource.data.updatedByUid == request.auth.uid;
+      allow delete: if isAdmin();
     }
 
     match /profiles/{uid} {
@@ -153,35 +216,6 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    match /maintenance/{document} {
-      // Default deny for any document directly under the maintenance collection. The only one
-      // that exists is `status`, which is carved out by the more specific block below.
-      allow read, write: if false;
-    }
-
-    match /maintenance/status {
-      // The public half of maintenance mode: "is the arcade closed, and what should visitors read?".
-      // It holds only safe fields (enabled, message, updatedAtMs, updatedBy) - never the PIN.
-      // Everyone, including signed-out visitors, may read it. Only the admin-verified
-      // adminSetMaintenance backend may write it (it also rotates the PIN), so no client - admin
-      // included - edits maintenance state directly.
-      allow get: if true;
-      allow list: if false;
-      allow create, update, delete: if false;
-
-      match /secrets/{document} {
-        // The 16-digit tester PIN. No client may read or write it, admin included: it is created
-        // by the adminSetMaintenance callable and compared only inside verifyMaintenancePin.
-        allow read, write: if false;
-      }
-
-      match /bypasses/{token} {
-        // A PIN-verified tester's pass. Written by verifyMaintenancePin and checked in
-        // checkMaintenanceBypass; a forged token is just an unknown id, so clients stay out.
-        allow read, write: if false;
-      }
-    }
-
     match /rooms/{roomId} {
       // A room cannot be listed or discovered: the invite URL carries its random document ID. A
       // member of the room reads it (that is the live game snapshot), an admin reads any, and a
@@ -225,6 +259,20 @@ service cloud.firestore {
         // card faces. No client may read or write it, admin included - the operator's tools go
         // through the callables, which return only projections that are safe to show.
         allow read, write: if false;
+      }
+
+      match /chat/{messageId} {
+        // In-match chat. Members of the room may read it in real time while the match is live.
+        // The trusted backend (the `sendChat` callable) writes every message - it re-checks
+        // membership, rate limits, block lists and message length - so there is no client write
+        // path. Chat is permanently deleted the moment the match ends (`purgeRoomChat` in
+        // handlers.js runs when status becomes `finished` and on every rematch); the room's 1-hour
+        // TTL is a secondary safety net via `recursiveDelete(rooms/{roomId})`.
+        function roomData() {
+          return get(/databases/$(database)/documents/rooms/$(roomId)).data;
+        }
+        allow get, list: if signedIn() && (isRoomMember(roomData()) || isAdmin());
+        allow create, update, delete: if false;
       }
     }
   }

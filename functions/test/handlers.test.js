@@ -14,7 +14,7 @@ import { ON_DEVICE_REVIEW_MODEL_ID, ON_DEVICE_REVIEW_MODEL_REVISION } from '../.
 import { ENGINE_POLICY, RATE_LIMITS } from '../../shared/online/policy.js';
 import { onlineItemsForGame, practiceItemsForGame } from '../../shared/content/quiz-banks.js';
 import * as engineRegistry from '../../src/engines/index.js';
-import { MAINTENANCE_BYPASS_TTL_MS, createHandlers, PolicyError, RECENT_AUTH_WINDOW_MS } from '../src/handlers.js';
+import { createHandlers, PolicyError, RECENT_AUTH_WINDOW_MS } from '../src/handlers.js';
 import { cleanupExpiredData, purgeRoom } from '../src/cleanup.js';
 import { createFakeStore } from './fake-store.js';
 
@@ -41,15 +41,12 @@ function backend() {
   const store = createFakeStore({ now: () => clock.nowMs });
   const deletedUsers = [];
   let ids = 0;
-  let pinSeq = 0;
   const deps = {
     store,
     games: GAMES,
     engines,
     onlineBankFor: onlineItemsForGame,
     randomId: (length = 20) => `${(ids += 1).toString(36).padStart(6, '0')}${'a'.repeat(20)}`.slice(0, length),
-    // Counter-backed so a test can see a PIN change: the n-th issued PIN is n in 16 digits.
-    randomDigits: (length) => String(pinSeq += 1).padStart(length, '0'),
     timestampMs: clock.nowMs,
     deleteAuthUser: async (uid) => { deletedUsers.push(uid); },
   };
@@ -366,6 +363,36 @@ test('the host can rematch a finished room, others cannot, and the reset is real
   assert.equal(state.moves, 0);
   assert.equal(state.scores['uid-a'], 0, 'the new match starts from zero');
   assert.notEqual(state.target, undefined);
+});
+
+test('in-match chat works and is purged when the match finishes and on rematch', async () => {
+  const { handlers, dump, store } = backend();
+  await makeAccounts(handlers, [['uid-a', 'alice'], ['uid-b', 'bob']]);
+  const room = await lobby(handlers, { gameId: 'pixel-tac-toe' });
+
+  const sent = await handlers.sendChat({ roomId: room.roomId, text: 'Good game!' }, account('uid-a'));
+  const chatPath = `rooms/${room.roomId}/chat/${sent.messageId}`;
+  assert.equal(dump()[chatPath].text, 'Good game!');
+  assert.equal(dump()[chatPath].uid, 'uid-a');
+
+  const winningMoves = [
+    ['uid-a', 0], ['uid-b', 3], ['uid-a', 1], ['uid-b', 4], ['uid-a', 2],
+  ];
+  for (const [index, [uid, cell]] of winningMoves.entries()) {
+    await handlers.playMove({
+      roomId: room.roomId,
+      action: { index: cell },
+      clientActionId: `chat-finish-${index}`,
+    }, account(uid));
+  }
+  assert.equal(dump()[`rooms/${room.roomId}`].status, 'finished');
+  assert.equal(dump()[chatPath], undefined, 'the winning move deletes the live chat');
+
+  // Rematch purges stragglers as well, including a write that raced with the finishing move.
+  store.seed(chatPath, { uid: 'uid-a', name: 'alice', text: 'late message', createdAtMs: NOW });
+  const rematch = await handlers.rematch({ roomId: room.roomId }, account('uid-a'));
+  assert.equal(rematch.status, 'playing');
+  assert.equal(dump()[chatPath], undefined, 'a rematch starts with no previous-match messages');
 });
 
 test('an expired room refuses everything and reports its code', async () => {
@@ -868,131 +895,4 @@ test('the whole catalog can be created, joined, started and left without an engi
     const left = await handlers.leaveRoom({ roomId: room.roomId }, account(`rival-${seat}-a`));
     assert.equal(left.deleted, false, `${game.id} keeps running when a player leaves`);
   }
-});
-
-// ── Maintenance mode ───────────────────────────────────────────────────────────────────────────
-
-test('maintenance mode is admin-only and the payload must be honest', async () => {
-  const { handlers, store, dump } = backend();
-  await assert.rejects(
-    () => handlers.adminSetMaintenance({ enabled: true }, { uid: '' }),
-    (error) => error.code === 'unauthenticated',
-    'a signed-out visitor cannot touch maintenance',
-  );
-  await assert.rejects(
-    () => handlers.adminSetMaintenance({ enabled: true }, account('uid-a')),
-    (error) => error.code === 'admin-only',
-    'a player without the flag cannot',
-  );
-  store.seed('admins/uid-admin', { admin: true });
-  await assert.rejects(
-    () => handlers.adminSetMaintenance({ enabled: 'yes' }, account('uid-admin')),
-    (error) => error.code === 'invalid-maintenance',
-    'and an honest-looking but wrong type does not get through either',
-  );
-  assert.deepEqual(Object.keys(dump()).filter((key) => key.startsWith('maintenance/')), [], 'refused writes leave no maintenance documents');
-});
-
-test('an admin enables maintenance and a fresh 16-digit PIN is kept server-side only', async () => {
-  const { handlers, store, dump } = backend();
-  store.seed('admins/uid-admin', { admin: true });
-  const result = await handlers.adminSetMaintenance(
-    { enabled: true, message: 'Tuning the arcade - be right back.' },
-    account('uid-admin'),
-  );
-  assert.equal(result.enabled, true);
-  assert.equal(result.message, 'Tuning the arcade - be right back.');
-  assert.match(result.pin, /^[0-9]{16}$/, 'the admin caller is shown the fresh PIN');
-  const status = dump()['maintenance/status'];
-  assert.equal(status.enabled, true);
-  assert.equal(status.message, 'Tuning the arcade - be right back.');
-  assert.equal(status.updatedBy, 'uid-admin');
-  assert.ok(!('pin' in status), 'the public status document never carries the PIN');
-  assert.equal(dump()['maintenance/status/secrets/pin'].pin, result.pin, 'the PIN lives in the client-invisible secret');
-});
-
-test('a window keeps its PIN on re-save, and a new window always gets a fresh one', async () => {
-  const { handlers, store, dump } = backend();
-  store.seed('admins/uid-admin', { admin: true });
-  const first = await handlers.adminSetMaintenance({ enabled: true, message: 'Closed.' }, account('uid-admin'));
-  const resaved = await handlers.adminSetMaintenance({ enabled: true, message: 'Still closed.' }, account('uid-admin'));
-  assert.equal(resaved.pin, first.pin, 'editing the message does not kick testers out of an active window');
-  await handlers.adminSetMaintenance({ enabled: false, message: 'Still closed.' }, account('uid-admin'));
-  const reopened = await handlers.adminSetMaintenance({ enabled: true, message: 'Closed again.' }, account('uid-admin'));
-  assert.notEqual(reopened.pin, first.pin, 'every new maintenance window gets a fresh 16-digit PIN');
-  assert.match(reopened.pin, /^[0-9]{16}$/);
-  assert.equal(dump()['maintenance/status/secrets/pin'].pin, reopened.pin);
-});
-
-test('disabling maintenance removes the PIN and the public flag turns off', async () => {
-  const { handlers, store, dump } = backend();
-  store.seed('admins/uid-admin', { admin: true });
-  await handlers.adminSetMaintenance({ enabled: true, message: 'Closed.' }, account('uid-admin'));
-  const off = await handlers.adminSetMaintenance({ enabled: false, message: 'Closed.' }, account('uid-admin'));
-  assert.equal(off.enabled, false);
-  assert.equal(off.pin, '', 'no PIN is returned for an open arcade');
-  assert.equal(dump()['maintenance/status'].enabled, false);
-  assert.equal(dump()['maintenance/status/secrets/pin'], undefined, 'the secret document is deleted');
-});
-
-test('the tester PIN opens the arcade through a server-checked bypass token', async () => {
-  const { handlers, store, dump } = backend();
-  store.seed('admins/uid-admin', { admin: true });
-  const { pin } = await handlers.adminSetMaintenance({ enabled: true, message: 'Closed.' }, account('uid-admin'));
-
-  const wrong = await handlers.verifyMaintenancePin({ pin: '1234567890123456' }, { uid: '', ip: '10.0.0.1' });
-  assert.deepEqual(wrong, { valid: false, reason: 'wrong-pin' }, 'a wrong PIN is refused');
-
-  const ok = await handlers.verifyMaintenancePin({ pin }, { uid: '', ip: '10.0.0.1' });
-  assert.equal(ok.valid, true);
-  assert.match(ok.token, /^[a-z0-9]{16,32}$/, 'the pass is an opaque random token (the fake randomId is shorter than production, but never looser)');
-  assert.equal(dump()[`maintenance/status/bypasses/${ok.token}`].expiresAtMs, NOW + MAINTENANCE_BYPASS_TTL_MS);
-
-  const check = await handlers.checkMaintenanceBypass({ token: ok.token }, { uid: '' });
-  assert.equal(check.valid, true, 'the stored token re-checks true on a later load');
-
-  const stale = await handlers.checkMaintenanceBypass({ token: 'deadbeefdeadbeef' }, { uid: '' });
-  assert.equal(stale.valid, false, 'an unknown token opens nothing');
-  const malformed = await handlers.checkMaintenanceBypass({ token: ';;' }, { uid: '' });
-  assert.equal(malformed.valid, false, 'and a malformed token cannot even reach the store');
-});
-
-test('bypass tokens die when the window ends or the clock runs them out', async () => {
-  const { handlers, store, dump, advance } = backend();
-  store.seed('admins/uid-admin', { admin: true });
-  const { pin } = await handlers.adminSetMaintenance({ enabled: true, message: 'Closed.' }, account('uid-admin'));
-  const { token } = await handlers.verifyMaintenancePin({ pin }, { uid: '' });
-
-  await handlers.adminSetMaintenance({ enabled: false, message: 'Closed.' }, account('uid-admin'));
-  assert.equal((await handlers.checkMaintenanceBypass({ token }, { uid: '' })).valid, false, 'maintenance off: the pass is meaningless');
-
-  const { pin: pin2 } = await handlers.adminSetMaintenance({ enabled: true, message: 'Closed again.' }, account('uid-admin'));
-  assert.notEqual(pin2, pin);
-  assert.equal((await handlers.checkMaintenanceBypass({ token }, { uid: '' })).valid, false, 'a re-opened window needs the fresh PIN, not the old pass');
-
-  const fresh = await handlers.verifyMaintenancePin({ pin: pin2 }, { uid: '' });
-  advance(MAINTENANCE_BYPASS_TTL_MS + 1);
-  const expired = await handlers.checkMaintenanceBypass({ token: fresh.token }, { uid: '' });
-  assert.equal(expired.valid, false, 'a pass has a hard 24h ceiling');
-  assert.equal(dump()[`maintenance/status/bypasses/${fresh.token}`], undefined, 'expired passes are pruned on the way out');
-});
-
-test('PIN entries are rate-limited so the 16-digit PIN cannot be brute-forced', async () => {
-  const { handlers, store, advance } = backend();
-  store.seed('admins/uid-admin', { admin: true });
-  await handlers.adminSetMaintenance({ enabled: true, message: 'Closed.' }, account('uid-admin'));
-  const context = { uid: '', ip: '10.0.0.9' };
-  const guess = '1234567890123456';
-  for (let i = 0; i < RATE_LIMITS.maintenancePin.max; i += 1) {
-    const attempt = await handlers.verifyMaintenancePin({ pin: guess }, context);
-    assert.equal(attempt.valid, false, `attempt ${i + 1} still answers (a wrong PIN, not a lockout)`);
-  }
-  await assert.rejects(
-    () => handlers.verifyMaintenancePin({ pin: guess }, context),
-    (error) => error.code === 'rate-limited',
-    'the next attempt is refused for the window',
-  );
-  advance(RATE_LIMITS.maintenancePin.windowMs + 1);
-  const after = await handlers.verifyMaintenancePin({ pin: guess }, context);
-  assert.equal(after.valid, false, 'after the window the door answers again (still with a wrong PIN)');
 });

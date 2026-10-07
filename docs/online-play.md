@@ -40,8 +40,25 @@ The backend moves the decisions to a place the browser cannot edit:
 | `functions/src/store.js` | The narrow Firestore adapter the handlers use (`get`/`set`/`query`/`transaction`/`batch`/`recursiveDelete`). |
 | `functions/src/cleanup.js` | Expired-room, finished-room, invite, request, rate-limit and report purging. Idempotent by construction. |
 | `functions/test/` | The backend tests (in-memory `Store` double — no emulator, no Java, no network). |
-| `shared/online/` | Room transitions, projections, identity rules and rate limits. Imported by **both** the browser and the functions. |
+| `shared/online/` | Room transitions, projections, identity rules, rate limits and the maintenance switch. Imported by **both** the browser and the functions. |
 | `functions/vendor/` | Generated mirror of `shared/**` and `src/engines/**`. Never edit; run `node scripts/sync-shared.mjs`. |
+
+### The one exception: maintenance mode writes Firestore directly
+
+Everything above says an online mutation goes through a callable. **Maintenance mode does not**, and
+that is deliberate: a soft "we are being worked on" gate has to work when the backend is exactly the
+thing being worked on, and it protects no data — the notice is a *client-side* decision, and
+`firestore.rules` is what keeps the two documents honest:
+
+- `siteStatus/maintenance` — world-readable (`allow get: if true`, so a signed-out visitor can read the
+  notice), admin-writable only, one fixed document id, never deletable, every field type-checked and the
+  writer's UID pinned to `request.auth.uid`.
+- `maintenanceAccess/active` — the 16-digit testing code, **admin-readable and admin-writable only**, so
+  the person being asked for the code cannot read it, list it or guess their way into a second document.
+
+A deploy of this feature is `firebase deploy --only firestore:rules` plus the app. No function, no new
+environment variable, no index. The whole design — including what the gate does *not* protect — is in
+[docs/maintenance-mode.md](maintenance-mode.md).
 
 The mirror exists because `firebase deploy --only functions` uploads only `functions/`. The relative
 imports (`../../shared/...`) resolve identically on both sides because the layout is preserved.
@@ -137,6 +154,14 @@ are publishing the locked rules). Every line is something the automated suites c
 - [ ] Hit the create-room limit (20/hour) and confirm the error says how long to wait.
 - [ ] Leave a room and wait for the scheduled cleanup: room, secrets, views and presence documents
       are deleted within the 15-minute window.
+- [ ] Maintenance mode end to end: in the admin studio, write a reason and close the site; in a private
+      window (and on a phone, over the network) confirm the notice replaces the site, `#/room/<id>` does
+      not join, and the reason text is what visitors read. Type the 16-digit code on the second device and
+      confirm it opens that device only; "New code" locks it again; "Open the site again" clears the
+      notice, and `maintenanceAccess/active` is gone from the database.
+- [ ] With maintenance on, confirm a non-admin signed-in player cannot write `siteStatus/maintenance`
+      or read `maintenanceAccess/active` (the rules, not the UI, are the boundary), and that the admin's
+      own tab is never locked out.
 - [ ] Local practice still works with the Firebase config removed (and says why online is off).
 - [ ] The deployment's CSP allows callable endpoints: `https://*.cloudfunctions.net` is in
       `connect-src` in `vercel.json` (asserted by `tests/vercel-headers.test.js`). A missing wildcard

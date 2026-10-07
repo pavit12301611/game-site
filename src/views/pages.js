@@ -25,6 +25,16 @@ import {
   buildImprovementIdeas,
   summarizeReviewSentiment,
 } from '../../shared/reviews/agent.js';
+import {
+  MAINTENANCE_PIN_DEFAULT_HOURS,
+  MAINTENANCE_PIN_DIGITS,
+  MAINTENANCE_REASON_MAX,
+  MAINTENANCE_REASON_LINES_MAX,
+  MAINTENANCE_PIN_DURATIONS,
+  formatMaintenancePin,
+  maintenancePinGroupHint,
+} from '../../shared/online/maintenance.js';
+import { renderMaintenanceCodePin } from './maintenance.js';
 
 /** The 640 px picture of a game, used as the backdrop of the game stage heading. */
 function stageArt(game) {
@@ -252,9 +262,10 @@ export function timeAgo(timestamp) {
 }
 
 
-/** The five admin studio tabs. */
+/** The seven admin studio sections. */
 const ADMIN_TABS = [
   ['overview', 'Overview'],
+  ['maintenance', 'Maintenance'],
   ['rooms', 'Rooms'],
   ['players', 'Players'],
   ['social', 'Social'],
@@ -297,31 +308,6 @@ function renderAdminRoomsTable(rooms, { limitRows = Infinity } = {}) {
   return `<div class="admin-table-wrap"><table class="admin-table"><thead><tr><th scope="col">Game</th><th scope="col">Players</th><th scope="col">Status</th><th scope="col">Created</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
-/**
- * The maintenance-mode controls. One save goes through the `adminSetMaintenance` callable,
- * which issues a fresh 16-digit tester PIN whenever maintenance is on; the PIN is shown here
- * for this session (it lives in a client-invisible secret document and is never re-read).
- * @param {Record<string, any>} data
- */
-function renderAdminMaintenance(data) {
-  const m = data.maintenance || { enabled: false, message: '', pin: '' };
-  const pin = m.pin || '';
-  return `<section class="surface admin-table-panel admin-maintenance-panel">
-    <div class="panel-heading"><div><span class="eyebrow">Maintenance mode</span><h2>Close the arcade<span> and let testers in</span></h2></div><span class="admin-live"><i></i> ${m.enabled ? 'ON' : 'OFF'}</span></div>
-    <form data-form="admin-maintenance">
-      <label class="admin-maintenance-toggle"><input type="checkbox" name="enabled" ${m.enabled ? 'checked' : ''} /> Turn maintenance mode ${m.enabled ? 'off' : 'on'}</label>
-      <label class="admin-maintenance-label" for="maintenance-message">Message visitors see</label>
-      <textarea id="maintenance-message" name="message" rows="2" maxlength="280" placeholder="What should players read while the arcade is closed?">${esc(m.message || '')}</textarea>
-      <div class="admin-maintenance-actions"><button class="button button-primary" type="submit">Save maintenance</button></div>
-      ${m.enabled
-        ? (pin
-          ? `<p class="admin-maintenance-pin">Tester PIN (16 digits - share it privately with your testers, never publicly): <code>${esc(pin)}</code></p>`
-          : '<p class="admin-maintenance-pin">A 16-digit tester PIN is active. Save maintenance again to see it - re-saving issues a fresh PIN and voids the old one.</p>')
-        : '<p class="admin-maintenance-pin">While on, every visitor sees the maintenance page instead of the arcade. Testers who type the 16-digit PIN can preview the site, and admins are never locked out.</p>'}
-    </form>
-  </section>`;
-}
-
 function renderAdminOverview(data) {
   const nowMs = presenceNow();
   const activeRooms = data.rooms.filter((room) => !isRoomExpired(room, nowMs));
@@ -337,10 +323,9 @@ function renderAdminOverview(data) {
     ['Pending invites', pendingInvites, 'Game invites unanswered'],
   ];
   return `<div class="admin-metrics">${metrics.map(([label, value, hint]) => `<article><span>${esc(label)}</span><b>${state.adminLoading ? '…' : value}</b><small>${esc(hint)}</small></article>`).join('')}</div>
-    ${renderAdminMaintenance(data)}
     <div class="admin-grid">
       <section class="surface admin-table-panel"><div class="panel-heading"><div><span class="eyebrow">Live room snapshot</span><h2>Recent rooms</h2></div><button class="text-button" data-action="admin-tab" data-tab="rooms">Manage all ${icon('arrow')}</button></div>${renderAdminRoomsTable(activeRooms, { limitRows: 8 })}</section>
-      <aside class="surface admin-powers"><div class="panel-heading"><div><span class="eyebrow">God mode, on</span><h2>What this studio can do</h2></div><span class="admin-live"><i></i> ${GAMES.length} games</span></div><ul class="admin-powers-list"><li><b>Rooms:</b> inspect every room, kick anyone from a waiting lobby, delete a room with its heartbeats.</li><li><b>Players:</b> remove a profile and free its username, so repeat offenders cannot hide.</li><li><b>Social:</b> unlink friend pairs, clear stale requests and game invites.</li><li><b>Access:</b> grant and revoke admin flags without opening the Firebase console.</li></ul><div class="notice-panel"><span>${icon('shield')}</span><div><b>Firestore enforces every button.</b><p>Each action above checks <code>admins/{yourUid}.admin == true</code> on the server. A forged flag in someone else's browser cannot touch this data.</p></div></div></aside>
+      <aside class="surface admin-powers"><div class="panel-heading"><div><span class="eyebrow">God mode, on</span><h2>What this studio can do</h2></div><span class="admin-live"><i></i> ${GAMES.length} games</span></div><ul class="admin-powers-list"><li><b>Rooms:</b> inspect every room, kick anyone from a waiting lobby, delete a room with its heartbeats.</li><li><b>Players:</b> remove a profile and free its username, so repeat offenders cannot hide.</li><li><b>Social:</b> unlink friend pairs, clear stale requests and game invites.</li><li><b>Access:</b> grant and revoke admin flags without opening the Firebase console.</li><li><b>Maintenance:</b> close the site with a reason, and hand out a temporary code that lets one device keep testing.</li></ul><div class="notice-panel"><span>${icon('shield')}</span><div><b>Firestore enforces every button.</b><p>Each action above checks <code>admins/{yourUid}.admin == true</code> on the server. A forged flag in someone else's browser cannot touch this data.</p></div></div></aside>
     </div>`;
 }
 
@@ -417,6 +402,79 @@ function renderAdminAccess(data) {
     <aside class="surface admin-powers"><div class="panel-heading"><div><span class="eyebrow">Safety rails</span><h2>Still enforced by Firestore</h2></div><span>${icon('shield')}</span></div><ul class="admin-powers-list"><li>Nobody can mint their first flag from the client - the <b>first</b> admin is still created in the Firebase console.</li><li>A flag document can only ever contain <code>admin: true/false</code>, nothing else.</li><li>You cannot revoke yourself (rules block it), so the studio can never lock itself out.</li><li>Revoked admins lose access the moment their token refreshes.</li></ul></aside></div>`;
 }
 
+/** A clock label short enough to read in a panel: "today at 21:40" or "Oct 8 at 09:05". */
+function maintenanceTimeLabel(ms) {
+  const time = Number(ms) || 0;
+  if (!time) return 'not set';
+  const date = new Date(time);
+  const clock = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+  if (date.toDateString() === new Date().toDateString()) return `today at ${clock}`;
+  return `${date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} at ${clock}`;
+}
+
+/** How much the studio trusts the maintenance numbers it is showing. */
+function maintenanceSourceLabel(maintenance) {
+  if (maintenance.status === 'live') return 'Read live from Firestore - this panel moves by itself when the document changes.';
+  if (maintenance.status === 'cached') return 'Still showing what this browser saw last time; the live read has not answered yet.';
+  if (maintenance.status === 'error') return `The status document could not be read: ${maintenance.error || 'permission denied'}`;
+  if (maintenance.status === 'unavailable') return 'Firebase is not configured here, so maintenance mode cannot be switched on from this build.';
+  return 'Waiting for the first read of the status document…';
+}
+
+/**
+ * The maintenance studio: the switch, the reason visitors read, and the temporary 16-digit code that
+ * lets a device keep testing while the site is closed. Writes go straight to `siteStatus/maintenance`
+ * and `maintenanceAccess/active` under the rules in `firestore.rules` (admin only, exact shape), so
+ * this panel is a convenience and Firestore is the gatekeeper.
+ */
+function renderAdminMaintenance() {
+  const maintenance = state.maintenance;
+  const on = maintenance.enabled === true;
+  const draft = maintenance.draft || {};
+  const reason = String(draft.reason ?? maintenance.reason ?? '');
+  const hours = Number(draft.hours) || MAINTENANCE_PIN_DEFAULT_HOURS;
+  const access = maintenance.access;
+  const pinLive = on && Boolean(maintenance.pinHash) && !maintenance.pinExpired;
+  const switchButton = on
+    ? `<button class="button button-primary" data-action="maintenance-off" ${state.maintenance.saving ? 'disabled' : ''}>${icon('check')} Open the site again</button>`
+    : `<button class="button button-primary" type="submit" ${state.maintenance.saving ? 'disabled' : ''}>${icon('settings')} Close the site</button>`;
+  const codePanel = on && access?.pin
+    ? `${renderMaintenanceCodePin(access.pin)}
+      <div class="maintenance-panel-foot"><small>Valid until ${esc(maintenanceTimeLabel(access.expiresAtMs))} · ${MAINTENANCE_PIN_DIGITS} digits, grouped ${maintenancePinGroupHint().replace(/^\d+ digits in /, '')}</small><div class="maintenance-actions"><button class="button button-outline button-small" data-action="maintenance-copy-pin" data-pin="${esc(formatMaintenancePin(access.pin, ''))}">${icon('copy')} Copy code</button><button class="button button-quiet button-small" data-action="maintenance-rotate-pin">${icon('spark')} New code</button></div></div>`
+    : on
+      ? `<div class="maintenance-pin-facts"><span>The code for this window is <b>${maintenance.pinExpired ? 'expired' : 'still live'}</b>, but it is kept in an admin-only document, so this panel has to fetch it.</span></div><div class="maintenance-panel-foot"><small>${esc(maintenance.accessError ? `Could not read it: ${maintenance.accessError}` : 'Nothing typed here is stored: the code lives in Firestore, not in this page.')}</small><div class="maintenance-actions"><button class="button button-outline button-small" data-action="maintenance-reveal-pin">${icon('search')} Show the code</button><button class="button button-quiet button-small" data-action="maintenance-rotate-pin">${icon('spark')} New code</button></div></div>`
+      : `<div class="maintenance-pin-facts"><span>No window is open, so no code exists right now. Switching maintenance on mints a fresh ${MAINTENANCE_PIN_DIGITS}-digit code and shows it here once.</span></div>`;
+  return `<section class="maintenance-status-strip">
+    <span class="maintenance-status-pill is-${on ? 'on' : 'off'}"><i></i> ${on ? 'Site closed to visitors' : 'Site open to everyone'}</span>
+    <div class="maintenance-actions">${on ? `<button class="button button-outline" data-action="maintenance-preview-on">${icon('search')} See the notice</button>` : ''}<button class="button button-quiet" data-action="maintenance-reload">${icon('spark')} Re-read status</button></div>
+    <p class="maintenance-note">${esc(maintenanceSourceLabel(maintenance))}${maintenance.updatedAtMs ? ` Switched ${on ? 'on' : 'off'} ${esc(maintenanceTimeLabel(maintenance.updatedAtMs))}.` : ''}</p>
+  </section>
+  <div class="maintenance-grid">
+    <form class="surface maintenance-panel" data-form="admin-maintenance">
+      <div class="panel-heading"><div><span class="eyebrow">What visitors read</span><h2>Reason for the maintenance<span>.</span></h2></div><span class="status-pill ${on ? 'status-waiting' : 'status-playing'}">${on ? 'shown now' : 'saved for next time'}</span></div>
+      <label for="maintenance-reason">Why is the site closed?<textarea id="maintenance-reason" name="reason" rows="5" maxlength="${MAINTENANCE_REASON_MAX + 40}" data-maintenance-reason placeholder="Scheduled maintenance: the arcade is being upgraded. Back within the hour.">${esc(reason)}</textarea></label>
+      <small id="maintenance-reason-count">${reason.length} / ${MAINTENANCE_REASON_MAX} characters · up to ${MAINTENANCE_REASON_LINES_MAX} lines · plain text, no links needed</small>
+      <label for="maintenance-hours">${on ? 'How long should the next testing code stay valid?' : 'How long should a testing code stay valid?'}<select id="maintenance-hours" name="hours" data-maintenance-hours>${MAINTENANCE_PIN_DURATIONS.map((option) => `<option value="${option.hours}" ${option.hours === hours ? 'selected' : ''}>${esc(option.label)}</option>`).join('')}</select></label>
+      <div class="maintenance-panel-foot"><small>${on ? 'Saving the reason does not touch the code, so nobody is locked out by a typo fix.' : 'Closing the site shows this text on the notice and mints a code for one device at a time.'}</small><div class="maintenance-actions">${on ? `<button class="button button-primary" type="button" data-action="maintenance-save-reason">${icon('check')} Save reason</button>` : switchButton}${on ? '' : `<button class="button button-outline" type="button" data-action="maintenance-save-reason">Save for next time</button>`}</div></div>
+    </form>
+    <div class="maintenance-column">
+      <section class="surface maintenance-panel maintenance-code-panel">
+        <div class="panel-heading"><div><span class="eyebrow">Temporary access</span><h2>${MAINTENANCE_PIN_DIGITS}-digit code<span>.</span></h2></div><span class="admin-live"><i></i> ${on ? (pinLive ? 'live' : 'inactive') : 'off'}</span></div>
+        ${codePanel}
+      </section>
+      <aside class="surface admin-powers">
+        <div class="panel-heading"><div><span class="eyebrow">How a device uses it</span><h2>What the notice does</h2></div><span>${icon('shield')}</span></div>
+        <ol class="maintenance-steps">
+          <li><i>1</i><span>Type or paste the code into the notice. Spaces are ignored, so a copied <code>1234 5678 …</code> works as is.</span></li>
+          <li><i>2</i><span>The device is let in for as long as the code is valid - on a phone, a laptop, any browser. Nothing is sent to a friend who does not have the code.</span></li>
+          <li><i>3</i><span>New code, or opening the site again, ends every device pass at once: the pass is only worth as much as the code it came from.</span></li>
+        </ol>
+        <ul class="admin-powers-list"><li><b>Rules, not hope:</b> only an account with <code>admins/{uid}.admin = true</code> can write either document, and the shape of both is fixed in <code>firestore.rules</code>.</li><li><b>Admins never get locked out:</b> your own account always sees the arcade - which is also why closing the site cannot strand you.</li><li><b>It is a soft door:</b> a determined person can open the arcade without the code, so treat maintenance as a notice, not a vault. Player data stays behind rules regardless.</li></ul>
+      </aside>
+    </div>
+  </div>`;
+}
+
 export function renderAdmin() {
   if (!state.isAdmin) return `<section class="admin-denied"><span>${icon('shield')}</span><h1>Restricted area</h1><p>This Firebase account is not marked as an administrator.</p><button class="button button-primary" data-action="navigate" data-page="home">Back to the arcade</button></section>`;
   const data = state.adminData;
@@ -430,6 +488,7 @@ export function renderAdmin() {
   else if (data.error) body = `<div class="notice-panel notice-warn">${esc(data.error)}</div>`;
   else if (tab === 'rooms') body = `<section class="surface admin-table-panel"><div class="panel-heading"><div><span class="eyebrow">Every private room</span><h2>Rooms <i>${activeRooms.length}</i></h2></div><span class="admin-live"><i></i> latest 100 · 1h auto-delete</span></div>${renderAdminRoomsTable(activeRooms)}</section>`;
   else if (tab === 'players') body = `<section class="surface admin-table-panel"><div class="panel-heading"><div><span class="eyebrow">Everyone who claimed a name</span><h2>Players <i>${data.profiles.length}</i></h2></div><span class="admin-live"><i></i> latest 300</span></div>${renderAdminPlayers(data)}</section>`;
+  else if (tab === 'maintenance') body = renderAdminMaintenance();
   else if (tab === 'social') body = renderAdminSocial(data);
   else if (tab === 'reviews') body = renderAdminReviews(data);
   else if (tab === 'access') body = renderAdminAccess(data);
@@ -488,6 +547,62 @@ export function renderHowToPlay(game) {
   return `<details class="how-to-play"><summary><span class="how-to-icon">?</span><span><b>How to play</b><small>${esc(guide.mode)}</small></span><i>⌄</i></summary><div class="how-to-content"><div><span class="eyebrow">Goal</span><p>${esc(guide.goal)}</p></div><div><span class="eyebrow">Controls</span><p>${esc(guide.controls)}</p></div><div><span class="eyebrow">Rules</span><p>${esc(guide.rules)}</p></div><kbd>${esc(guide.shortcut)}</kbd></div></details>`;
 }
 
+/** Format a chat timestamp as a short clock (e.g. "14:03") using local time. */
+function chatClock(ms) {
+  const date = new Date(Number(ms) || Date.now());
+  const hh = String(date.getHours()).padStart(2, '0');
+  const mm = String(date.getMinutes()).padStart(2, '0');
+  return `${hh}:${mm}`;
+}
+
+/**
+ * In-match chat panel. Lives inside the match rail while a live game is in progress.
+ *
+ * Chat is ephemeral: messages are deleted from the database the second the match ends or a
+ * rematch starts (see `purgeRoomChat` in functions/src/handlers.js). The 1-hour room TTL is a
+ * safety net. This UI reflects that contract — when the game is not in the "playing" phase the
+ * panel is not rendered, so there is no way to see messages after the game is over.
+ */
+export function renderChatPanel() {
+  // Chat is only drawn for online live rooms that are currently playing. The lobby and the
+  // finished-result screen have no panel.
+  if (state.local || !state.room || state.room.status !== 'playing') return '';
+  const me = currentUid();
+  const messages = state.chatMessages || [];
+  const open = !!state.chatOpen;
+  const unread = Number(state.chatUnreadCount) || 0;
+  const sending = !!state.chatSending;
+  const error = state.chatError ? `<small class="chat-error">${esc(state.chatError)}</small>` : '';
+  const empty = !messages.length
+    ? `<div class="chat-empty"><span>${icon('chat')}</span><b>Say hi.</b><small>Chat disappears when the match ends — nothing is stored after the game.</small></div>`
+    : '';
+  const list = messages.map((message) => {
+    const mine = message.uid === me;
+    const initial = (message.name || 'P').slice(0, 1).toUpperCase();
+    return `<div class="chat-bubble ${mine ? 'is-mine' : ''}"><span class="chat-bubble-avatar" aria-hidden="true">${esc(initial)}</span><div class="chat-bubble-body"><b>${esc(message.name)}</b><p>${esc(message.text)}</p><small>${esc(chatClock(message.createdAtMs))}</small></div></div>`;
+  }).join('');
+  return `<section class="chat-panel surface" aria-label="In-match chat">
+    <button class="chat-toggle" type="button" data-action="toggle-chat" aria-expanded="${open ? 'true' : 'false'}" aria-controls="chat-panel-body">
+      <span>${icon('chat')} <b>Chat</b></span>
+      ${unread > 0 ? `<span class="chat-unread">${unread > 99 ? '99+' : unread}</span>` : ''}
+      <span class="chat-toggle-chevron">${icon('chevron')}</span>
+    </button>
+    <div class="chat-body" id="chat-panel-body"${open ? '' : ' hidden'}>
+      <div class="chat-log" role="log" aria-live="polite">
+        ${empty}
+        ${list}
+      </div>
+      <form class="chat-form" data-form="chat" data-room-id="${esc(state.roomId || '')}">
+        <label class="sr-only" for="chat-input">Message</label>
+        <input id="chat-input" class="chat-input" name="text" type="text" maxlength="240" placeholder="Say something nice…" autocomplete="off"${sending ? ' disabled' : ''} required>
+        <button class="chat-send" type="submit" aria-label="Send message"${sending ? ' disabled' : ''}>${icon('send')}</button>
+      </form>
+      ${error}
+      <small class="chat-privacy-note">Messages are permanently deleted when the match ends and are never kept for more than an hour.</small>
+    </div>
+  </section>`;
+}
+
 export function renderGameScreen() {
   const game = currentGame();
   const gameState = currentGameState();
@@ -516,6 +631,7 @@ export function renderGameScreen() {
       <div class="stage-foot">${gameState.phase === 'finished' ? `<div class="result-banner ${gameState.winnerUid === me ? 'is-win' : ''}"><span class="result-mark">${gameState.winnerUid === me ? '✦' : gameState.winnerUid ? '◉' : '＝'}</span><div><b>${gameState.winnerUid ? (gameState.winnerUid === me ? 'Nice one — you win!' : `${esc(activeName(gameState.winnerUid, players))} wins this one.`) : 'A perfectly even match.'}</b><small>${gameState.result === 'draw' ? 'Run it back and settle the score.' : 'Well played. Fancy another round?'}</small></div><button class="button button-outline button-small" data-action="play-again" ${pendingActions ? 'disabled title="Finishing sync…"' : ''}>${pendingActions ? 'Syncing…' : 'Play again'} ${icon('arrow')}</button></div>` : `<div class="game-stage-footer"><span>${icon('spark')} ${esc(game.blurb)}</span>${state.local ? '<span>Moves apply instantly on this device</span>' : `<span class="move-sync ${pendingActions ? 'is-syncing' : ''} ${!state.online ? 'is-offline' : ''}" role="status"><i></i>${esc(syncLabel)}</span>`}</div>`}</div>
     </section><aside class="match-rail surface" aria-label="Match players"><div class="match-rail-heading"><div><span class="eyebrow">Match room</span><h2>The players</h2></div><span class="live-tag is-${state.local ? 'local' : state.online ? 'live' : 'offline'}"><i></i> ${state.local ? 'Local' : state.online ? 'Live' : 'Offline'}</span></div><div class="match-player-list">${players.map((player, index) => `<div class="match-player ${player.uid === me ? 'is-me' : ''} ${gameState.turnUid === player.uid ? 'is-turn' : ''} ${presence[player.uid] ? `is-${presence[player.uid].kind}` : ''}"><span class="match-player-avatar player-avatar-${index}">${player.uid === 'local-cpu' ? 'CPU' : esc(player.name.slice(0, 1).toUpperCase())}</span><span class="match-player-copy"><b>${esc(player.name)} ${player.uid === me ? '<i>You</i>' : ''}</b><small>${presence[player.uid]?.detail ? esc(presence[player.uid].detail) : gameState.turnUid === player.uid && gameState.phase !== 'finished' ? 'Playing now' : player.uid === state.room?.hostUid ? 'Room host' : 'In the match'}</small></span>${gameState.scores ? `<strong>${gameState.scores[player.uid] || 0}<small>pts</small></strong>` : gameState.turnUid === player.uid ? `<span class="player-turn-dot"></span>` : ''}</div>`).join('')}</div>
       ${state.local ? `<div class="rail-note"><span>${icon('spark')}</span><div><b>Just you and the browser.</b><small>Want a real rival? Create a room and send a link.</small></div></div><button class="button button-primary rail-main-button" data-action="quick-room">Invite a friend ${icon('arrow')}</button>` : `<div class="room-share-card"><span class="eyebrow">Bring in another player</span><p>Send the room link. They can join as a guest.</p><div class="room-share-actions"><button class="button button-outline" data-action="copy-room-link">${icon('copy')} Copy room link</button><button class="button button-quiet" data-action="share-room-link">${icon('link')} Share</button></div></div>`}
+      ${renderChatPanel()}
       <button class="text-button" data-action="open-report" data-room-id="${esc(state.room?.id || '')}">Report a problem in this game</button>
       <button class="text-button rail-back" data-action="navigate" data-page="catalog">Back to game shelf ${icon('arrow')}</button></aside></div>`;
 }

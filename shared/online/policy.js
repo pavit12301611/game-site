@@ -55,11 +55,9 @@ export const RATE_LIMITS = Object.freeze({
   gameInvite: Object.freeze({ windowMs: 24 * 60 * 60 * 1000, max: 80, label: 'game invites per day' }),
   report: Object.freeze({ windowMs: 24 * 60 * 60 * 1000, max: 10, label: 'reports per day' }),
   review: Object.freeze({ windowMs: 24 * 60 * 60 * 1000, max: 3, label: 'reviews per day' }),
+  sendChat: Object.freeze({ windowMs: 60 * 1000, max: 60, label: 'chat messages per minute' }),
   claimUsername: Object.freeze({ windowMs: 24 * 60 * 60 * 1000, max: 10, label: 'username claims per day' }),
   deleteAccount: Object.freeze({ windowMs: 24 * 60 * 60 * 1000, max: 3, label: 'account deletions per day' }),
-  // Tester PIN entries on the maintenance page: tight, because the PIN is the only gate the
-  // maintenance screen has and a 16-digit PIN must never be brute-forceable.
-  maintenancePin: Object.freeze({ windowMs: 15 * 60 * 1000, max: 10, label: 'maintenance PIN attempts per 15 minutes' }),
 });
 
 /** The action keys each engine understands. Anything else is rejected, never stored. */

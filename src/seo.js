@@ -50,6 +50,10 @@ export const PAGE_META = Object.freeze({
     title: 'Now playing · PSD-gaming',
     description: 'A live round of a browser mini-game, synced through a trusted Firebase backend.',
   },
+  maintenance: {
+    title: 'Back soon — under maintenance · PSD-gaming',
+    description: 'The arcade is being worked on and will be available again shortly. Nothing you saved is lost; players with a temporary access code can still sign in.',
+  },
 });
 
 /** The title for a finished online round, so a tab in the background still says something useful. */

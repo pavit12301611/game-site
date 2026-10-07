@@ -30,6 +30,7 @@ import { presenceNow, state } from '../state.js';
 import { showToast } from '../ui/toast.js';
 import { forgetKnownRoom } from './rooms.js';
 import { callBackend } from './callables.js';
+import { loadMaintenanceAccess } from '../maintenance.js';
 
 /**
  * `db` is null only when Firebase never started; every export below is guarded by `state.isAdmin`,
@@ -68,7 +69,7 @@ export async function loadAdminData() {
   state.adminLoading = true;
   render();
   try {
-    const [roomsSnap, profilesSnap, adminsSnap, friendshipsSnap, requestsSnap, invitesSnap, reviewsSnap, reviewAnnotationsSnap, reviewAgentModelSnap, maintenanceSnap] = await Promise.all([
+    const [roomsSnap, profilesSnap, adminsSnap, friendshipsSnap, requestsSnap, invitesSnap, reviewsSnap, reviewAnnotationsSnap, reviewAgentModelSnap] = await Promise.all([
       getDocs(query(collection(store, 'rooms'), orderBy('createdAt', 'desc'), limit(100))),
       getDocs(query(collection(store, 'profiles'), limit(300))),
       getDocs(query(collection(store, 'admins'), limit(100))),
@@ -78,11 +79,7 @@ export async function loadAdminData() {
       getDocs(query(collection(store, 'reviews'), orderBy('createdAtMs', 'desc'), limit(300))),
       getDocs(query(collection(store, 'reviewAnnotations'), orderBy('createdAtMs', 'desc'), limit(500))),
       getDoc(doc(store, 'reviewAgentModels', 'active')),
-      // The safe half only (the PIN lives in a client-invisible secret document). A missing or
-      // half-written status document degrades to "off" instead of breaking the dashboard.
-      getDoc(doc(store, 'maintenance/status')),
     ]);
-    const maintenanceData = maintenanceSnap.exists() ? maintenanceSnap.data() : null;
     const allRooms = rowsOf(roomsSnap);
     const allInvites = rowsOf(invitesSnap);
     const nowMs = presenceNow();
@@ -93,9 +90,6 @@ export async function loadAdminData() {
     // Expired invites are filtered out of the dashboard; deleting them (and the rooms they point
     // at) is the scheduled backend cleanup's job, not a browser's.
     if (expiredRooms.length) await purgeExpiredAdminRooms(expiredRooms);
-    // The PIN is returned only by the backend at save time; the re-read carries the safe fields,
-    // so the pin the admin just issued stays displayed until the page is reloaded.
-    const previousMaintenance = state.adminData?.maintenance;
     state.adminData = {
       rooms: activeRooms,
       profiles: rowsOf(profilesSnap),
@@ -106,16 +100,14 @@ export async function loadAdminData() {
       reviews: rowsOf(reviewsSnap),
       reviewAnnotations: rowsOf(reviewAnnotationsSnap),
       reviewAgentModel: reviewAgentModelSnap.exists() ? reviewAgentModelSnap.data() : null,
-      maintenance: {
-        enabled: maintenanceData?.enabled === true,
-        message: typeof maintenanceData?.message === 'string' ? maintenanceData.message : '',
-        pin: previousMaintenance?.pin || '',
-      },
       error: '',
     };
   } catch (error) {
-    state.adminData = { error: friendlyError(error), rooms: [], profiles: [], admins: [], friendships: [], requests: [], invites: [], reviews: [], reviewAnnotations: [], reviewAgentModel: null, maintenance: { enabled: false, message: '', pin: state.adminData?.maintenance?.pin || '' } };
+    state.adminData = { error: friendlyError(error), rooms: [], profiles: [], admins: [], friendships: [], requests: [], invites: [], reviews: [], reviewAnnotations: [], reviewAgentModel: null };
   }
+  // The maintenance panel's code lives in an admin-only document, so the studio has to ask for it
+  // separately (and forgets it politely when the read is denied - see `loadMaintenanceAccess`).
+  await loadMaintenanceAccess();
   state.adminLoading = false;
   render();
 }
@@ -222,32 +214,5 @@ export async function adminTrainReviewAgent() {
     showToast(friendlyError(error), 'warning');
     return;
   }
-  await loadAdminData();
-}
-
-/**
- * Toggle maintenance mode and save the visitor message. Everything - the admin check, the
- * message cap, the fresh 16-digit tester PIN and both documents - happens in the
- * `adminSetMaintenance` callable, so this client never writes a maintenance document.
- *
- * The backend answers with the fresh PIN whenever maintenance is on; it is shown in the studio
- * (and the toast) for this session only. Re-saving while on issues a new PIN and voids the old
- * one, which is how an operator rotates tester access.
- * @param {boolean} enabled
- * @param {string} message
- */
-export async function adminSetMaintenance(enabled, message) {
-  const result = await callBackend('adminSetMaintenance', { enabled, message });
-  const pin = typeof result?.pin === 'string' ? result.pin : '';
-  if (state.adminData) {
-    state.adminData.maintenance = {
-      enabled: result?.enabled === true,
-      message: typeof result?.message === 'string' ? result.message : message,
-      pin,
-    };
-  }
-  showToast(result?.enabled
-    ? (pin ? `Maintenance is ON. Tester PIN (share it privately, never in public): ${pin}` : 'Maintenance is ON.')
-    : 'Maintenance is OFF - the arcade is open to everyone.', 'success');
   await loadAdminData();
 }

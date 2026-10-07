@@ -441,54 +441,111 @@ test('a guest holds no profile access, but can still play in a room they joined'
   await ruts.assertSucceeds(setDoc(doc(guest, 'rooms', 'r2', 'presence', GUEST), { status: 'here', lastSeenAt: ts() }));
 });
 
-// ── Maintenance mode: public status, server-only PIN and passes ───────────────────────────────
+// ── Maintenance mode: the notice is public, the code is not ──────────────────────────────────────
 
-test('the maintenance status is world-readable and nothing else under maintenance/ is client-reachable', async (t) => {
+/**
+ * The two documents `src/maintenance.js` writes, in exactly the shape `shared/online/maintenance.js`
+ * builds them. A 16-digit code is assembled here instead of written out: the rules are being tested
+ * for their *shape*, and a repository scattered with credential-shaped literals makes every secret
+ * scan cry wolf.
+ */
+const ACCESS_CODE = Array.from({ length: 16 }, (_, index) => String((index * 7 + 3) % 10)).join('');
+
+function maintenanceStatus(overrides = {}) {
+  return {
+    enabled: true,
+    reason: 'Rooms are moving to a new backend.',
+    updatedAtMs: 1_800_000_000_000,
+    updatedByUid: ALICE,
+    pinHash: `sha256:${'a'.repeat(64)}`,
+    pinSalt: 'a1b2c3d4e5f60718',
+    pinExpiresAtMs: 1_800_000_086_400_000,
+    pinSetAtMs: 1_800_000_000_000,
+    ...overrides,
+  };
+}
+
+function maintenanceAccess(overrides = {}) {
+  return {
+    pin: ACCESS_CODE,
+    pinHash: `sha256:${'a'.repeat(64)}`,
+    pinSalt: 'a1b2c3d4e5f60718',
+    expiresAtMs: 1_800_000_086_400_000,
+    setAtMs: 1_800_000_000_000,
+    hours: 24,
+    updatedByUid: ALICE,
+    ...overrides,
+  };
+}
+
+test('maintenance: the notice is readable by the world, and only an admin can write it', async (t) => {
   if (!ready(t)) return;
   await seed(async (db) => {
-    await setDoc(doc(db, 'maintenance', 'status'), { enabled: true, message: 'Tuning the arcade.', updatedAtMs: 1, updatedBy: ALICE });
-    await setDoc(doc(db, 'maintenance', 'status', 'secrets', 'pin'), { pin: '1234567890123456', updatedAtMs: 1 });
-    await setDoc(doc(db, 'maintenance', 'status', 'bypasses', 'tok1'), { createdAtMs: 1, expiresAtMs: 9_999_999_999_999 });
+    await setDoc(doc(db, 'admins', ALICE), { admin: true });
+    await setDoc(doc(db, 'siteStatus', 'maintenance'), maintenanceStatus());
   });
-  const anon = testEnv.unauthenticatedContext().firestore();
-  const status = await getDoc(doc(anon, 'maintenance', 'status'));
-  assert.equal(status.data().enabled, true, 'a signed-out visitor reads the safe status');
-  assert.equal(status.data().message, 'Tuning the arcade.');
-  assert.ok(!('pin' in status.data()), 'the safe status carries no PIN field');
-  await ruts.assertFails(getDoc(doc(anon, 'maintenance', 'status', 'secrets', 'pin')), 'the 16-digit tester PIN is never public');
-  await ruts.assertFails(getDoc(doc(anon, 'maintenance', 'status', 'bypasses', 'tok1')), 'nor is a verified tester pass');
-  await ruts.assertFails(getDocs(collection(anon, 'maintenance')), 'and nobody lists the maintenance collection');
-});
-
-test('non-admin users cannot write maintenance documents', async (t) => {
-  if (!ready(t)) return;
-  await seed(async (db) => {
-    await setDoc(doc(db, 'maintenance', 'status'), { enabled: true, message: 'Tuning the arcade.', updatedAtMs: 1, updatedBy: ALICE });
-  });
+  const alice = asUser(ALICE);
   const bob = asUser(BOB);
-  await ruts.assertFails(updateDoc(doc(bob, 'maintenance', 'status'), { enabled: false }), 'a player cannot switch maintenance off');
-  await ruts.assertFails(updateDoc(doc(bob, 'maintenance', 'status'), { message: 'Forged by a player' }));
-  await ruts.assertFails(setDoc(doc(bob, 'maintenance', 'status'), { enabled: true, message: 'hijack' }), 'nor overwrite the document');
-  await ruts.assertFails(deleteDoc(doc(bob, 'maintenance', 'status')));
-  await ruts.assertFails(setDoc(doc(bob, 'maintenance', 'status', 'secrets', 'pin'), { pin: '9999999999999999' }), 'nor touch the PIN secret');
-  await ruts.assertFails(setDoc(doc(bob, 'maintenance', 'status', 'bypasses', 'forged'), { createdAtMs: 1, expiresAtMs: 1 }), 'nor mint a tester pass');
-  // An unauthenticated visitor is refused the same way.
   const anon = testEnv.unauthenticatedContext().firestore();
-  await ruts.assertFails(updateDoc(doc(anon, 'maintenance', 'status'), { enabled: false }));
+
+  // A locked-out visitor has no account and no rights: reading the notice is all this is for.
+  await ruts.assertSucceeds(getDoc(doc(anon, 'siteStatus', 'maintenance')), 'the notice is public');
+  await ruts.assertSucceeds(getDoc(doc(bob, 'siteStatus', 'maintenance')));
+  await ruts.assertFails(getDocs(collection(anon, 'siteStatus')), 'and still cannot be listed');
+  await ruts.assertFails(setDoc(doc(anon, 'siteStatus', 'maintenance'), maintenanceStatus()), 'a visitor cannot close the site');
+  await ruts.assertFails(setDoc(doc(bob, 'siteStatus', 'maintenance'), maintenanceStatus()), 'nor can a signed-in player');
+  await ruts.assertFails(setDoc(doc(bob, 'siteStatus', 'maintenance'), maintenanceStatus({ updatedByUid: BOB })), 'a non-admin write fails on the admin check first');
+
+  await ruts.assertSucceeds(setDoc(doc(alice, 'siteStatus', 'maintenance'), maintenanceStatus()), 'the admin studio writes it');
+  await ruts.assertSucceeds(setDoc(doc(alice, 'siteStatus', 'maintenance'), maintenanceStatus({ enabled: false, reason: '', pinHash: '', pinSalt: '', pinExpiresAtMs: 0, pinSetAtMs: 0 })), 'opening the site again is a flag, not a delete');
+  await ruts.assertFails(deleteDoc(doc(alice, 'siteStatus', 'maintenance')), 'so the document a locked-out browser reads always exists');
+  await ruts.assertFails(setDoc(doc(alice, 'siteStatus', 'other-window'), maintenanceStatus()), 'one document, one id: no second notice');
+  await ruts.assertFails(setDoc(doc(alice, 'siteStatus', 'maintenance'), maintenanceStatus({ updatedByUid: BOB })), 'nobody signs a notice as somebody else');
+  await ruts.assertFails(setDoc(doc(alice, 'siteStatus', 'maintenance'), maintenanceStatus({ reason: 'x'.repeat(501) })), 'the notice is capped at 500 characters');
+  await ruts.assertFails(setDoc(doc(alice, 'siteStatus', 'maintenance'), { ...maintenanceStatus(), pin: ACCESS_CODE }), 'the code itself never goes in the public document');
+  await ruts.assertFails(setDoc(doc(alice, 'siteStatus', 'maintenance'), maintenanceStatus({ pinSalt: 'nope', pinHash: 'x'.repeat(120) })), 'a digest has to fit the column');
+  await ruts.assertFails(setDoc(doc(alice, 'siteStatus', 'maintenance'), maintenanceStatus({ enabled: 'yes' })), 'types are checked, not just names');
 });
 
-test('maintenance writes go through the backend even for a verified admin', async (t) => {
+test('maintenance: the access code is admin-only, exactly sixteen digits, and it expires', async (t) => {
   if (!ready(t)) return;
   await seed(async (db) => {
-    await setDoc(doc(db, 'admins', CAROL), { admin: true });
-    await setDoc(doc(db, 'maintenance', 'status'), { enabled: true, message: 'Tuning the arcade.', updatedAtMs: 1, updatedBy: CAROL });
+    await setDoc(doc(db, 'admins', ALICE), { admin: true });
+    await setDoc(doc(db, 'siteStatus', 'maintenance'), maintenanceStatus());
+    await setDoc(doc(db, 'maintenanceAccess', 'active'), maintenanceAccess());
   });
-  const carol = asUser(CAROL);
-  // The admin can read the status (the public get covers everyone) ...
-  await ruts.assertSucceeds(getDoc(doc(carol, 'maintenance', 'status')));
-  // ... but the actual write still has to be the adminSetMaintenance callable, which rotates the
-  // PIN server-side. A direct client write could not, so the rules refuse it even for an admin.
-  await ruts.assertFails(updateDoc(doc(carol, 'maintenance', 'status'), { enabled: false }), 'no direct admin write: PIN rotation would be skipped');
-  await ruts.assertFails(setDoc(doc(carol, 'maintenance', 'status', 'secrets', 'pin'), { pin: '9999999999999999' }), 'the secret is backend-only, admin included');
-  await ruts.assertFails(setDoc(doc(carol, 'maintenance', 'status', 'bypasses', 'forged'), { createdAtMs: 1, expiresAtMs: 1 }));
+  const alice = asUser(ALICE);
+  const bob = asUser(BOB);
+  const anon = testEnv.unauthenticatedContext().firestore();
+
+  // The whole point of the second document: the person being asked for a code cannot read it.
+  await ruts.assertFails(getDoc(doc(anon, 'maintenanceAccess', 'active')), 'a locked-out visitor cannot read the code');
+  await ruts.assertFails(getDoc(doc(bob, 'maintenanceAccess', 'active')), 'nor can a player');
+  await ruts.assertFails(getDocs(collection(bob, 'maintenanceAccess')), 'and nothing enumerates it');
+  await ruts.assertSucceeds(getDoc(doc(alice, 'maintenanceAccess', 'active')), 'the studio re-reads it to show the code again');
+
+  await ruts.assertSucceeds(setDoc(doc(alice, 'maintenanceAccess', 'active'), maintenanceAccess()), 'an admin mints a code');
+  await ruts.assertFails(setDoc(doc(bob, 'maintenanceAccess', 'active'), maintenanceAccess()), 'a non-admin cannot');
+  for (const pin of [ACCESS_CODE.slice(0, 15), `${ACCESS_CODE}7`, '4917 3380 1256 9042', 'abcdef0123456789']) {
+    await ruts.assertFails(setDoc(doc(alice, 'maintenanceAccess', 'active'), maintenanceAccess({ pin })), `a code is sixteen digits, not "${pin}"`);
+  }
+  await ruts.assertFails(setDoc(doc(alice, 'maintenanceAccess', 'active'), maintenanceAccess({ hours: 0 })), 'a code that never expires is not a temporary code');
+  await ruts.assertFails(setDoc(doc(alice, 'maintenanceAccess', 'active'), maintenanceAccess({ hours: 1000 })), 'nor one that waits longer than a month');
+  await ruts.assertFails(setDoc(doc(alice, 'maintenanceAccess', 'active'), maintenanceAccess({ expiresAtMs: 0 })), 'and it has to carry the moment it stops working');
+  await ruts.assertFails(setDoc(doc(alice, 'maintenanceAccess', 'active'), { ...maintenanceAccess(), note: 'for QA' }), 'nothing else travels with it');
+  await ruts.assertFails(setDoc(doc(alice, 'maintenanceAccess', 'other'), maintenanceAccess()), 'one document, one id');
+  await ruts.assertSucceeds(deleteDoc(doc(alice, 'maintenanceAccess', 'active')), 'opening the site destroys the code');
+});
+
+test('maintenance: an expired code and a live notice are different things to the rules', async (t) => {
+  if (!ready(t)) return;
+  // Nothing here evaluates time: the app compares `pinExpiresAtMs` with its own clock, and the rules
+  // only guarantee the numbers are there to compare. This test pins that division of work, because a
+  // rule that "helpfully" refused an already-expired document would break the studio's own cleanup.
+  await seed(async (db) => setDoc(doc(db, 'admins', ALICE), { admin: true }));
+  const alice = asUser(ALICE);
+  const expired = Date.now() - 60_000;
+  await ruts.assertSucceeds(setDoc(doc(alice, 'siteStatus', 'maintenance'), maintenanceStatus({ pinExpiresAtMs: expired })), 'a stale window is still writable');
+  await ruts.assertSucceeds(setDoc(doc(alice, 'maintenanceAccess', 'active'), maintenanceAccess({ expiresAtMs: expired })), 'and its code can be recorded and re-read');
+  await ruts.assertSucceeds(getDoc(doc(alice, 'siteStatus', 'maintenance')));
 });
