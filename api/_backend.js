@@ -65,6 +65,39 @@ const HTTPS_CODE = {
   'account-required': 'failed-precondition',
   'username-taken': 'already-exists',
   'already-friends': 'already-exists',
+  // extra mappings for codes that previously fell through to the generic 400
+  'unknown-game': 'invalid-argument',
+  'bad-room-size': 'invalid-argument',
+  'invalid-username': 'invalid-argument',
+  'invalid-review-rating': 'invalid-argument',
+  'invalid-review-game': 'invalid-argument',
+  'review-too-short': 'invalid-argument',
+  'invalid-review-label': 'invalid-argument',
+  'review-agent-needs-labels': 'failed-precondition',
+  'invalid-request': 'invalid-argument',
+  'request-handled': 'failed-precondition',
+  'profile-missing': 'failed-precondition',
+  'profile-exists': 'already-exists',
+  'self-request': 'failed-precondition',
+  'not-friends': 'failed-precondition',
+  'host-only': 'failed-precondition',
+  'already-in-room': 'failed-precondition',
+  'not-in-room': 'failed-precondition',
+  'room-finished': 'failed-precondition',
+  'already-started': 'failed-precondition',
+  'needs-players': 'failed-precondition',
+  'not-playing': 'failed-precondition',
+  'not-finished': 'failed-precondition',
+  'host-still-here': 'failed-precondition',
+  'unknown-admin-action': 'invalid-argument',
+  'missing-uid': 'invalid-argument',
+  'invalid-block': 'invalid-argument',
+  'report-too-short': 'invalid-argument',
+  'state-too-large': 'resource-exhausted',
+  'confirm-required': 'failed-precondition',
+  'method-not-allowed': 'invalid-argument',
+  'invalid-json': 'invalid-argument',
+  'unknown-handler': 'invalid-argument',
 };
 
 /** The HTTP status codes those Firebase-style statuses stand for. */
@@ -194,6 +227,19 @@ function resolveBackend() {
 /** The resolved backend, cached across warm invocations. @type {{ db: any, auth: any } | null} */
 let cachedBackend = null;
 
+/** CORS headers needed because the browser sends Authorization and triggers a preflight. */
+function setCorsHeaders(res, req) {
+  const origin = req?.headers?.origin || req?.headers?.Origin || '*';
+  // Echo the requesting origin when present (needed for credentialed preview hosts *.e2b.app),
+  // otherwise allow any origin for same-site fetches.
+  try { res.setHeader('Access-Control-Allow-Origin', origin || '*'); } catch {}
+  try { res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS'); } catch {}
+  try { res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With'); } catch {}
+  try { res.setHeader('Access-Control-Max-Age', '600'); } catch {}
+  // Vary ensures caches key on Origin.
+  try { res.setHeader('Vary', 'Origin'); } catch {}
+}
+
 /**
  * Recovers the caller's uid from the `Authorization: Bearer <idToken>` header.
  * A missing header yields an empty uid (the handler then decides whether that is allowed); a
@@ -205,14 +251,28 @@ async function authFromRequest(req) {
   const header = req.headers?.authorization || req.headers?.Authorization || '';
   const match = /^Bearer\s+(.+)$/i.exec(String(header));
   if (!match) return { uid: '', token: {} };
-  const decoded = await resolveBackend().auth.verifyIdToken(match[1]);
+  let backend;
+  try {
+    backend = resolveBackend();
+  } catch (error) {
+    throw new Error(`Backend not configured: ${error?.message || error}`, { cause: error });
+  }
+  const decoded = await backend.auth.verifyIdToken(match[1]);
   return { uid: decoded.uid, token: decoded };
 }
 
 /** Reads and parses the JSON body, tolerating Vercel's already-parsed object and a raw string. */
 function readBody(req) {
   if (req.body && typeof req.body === 'object') return req.body;
-  if (typeof req.body === 'string' && req.body) return JSON.parse(req.body);
+  if (typeof req.body === 'string' && req.body) {
+    try { return JSON.parse(req.body); } catch { throw new Error('invalid-json'); }
+  }
+  // Vercel may provide body as Buffer when bodyParser disabled; handle it.
+  if (req.body && typeof req.body === 'object' && Buffer.isBuffer(req.body)) {
+    const text = req.body.toString('utf8');
+    if (!text) return {};
+    return JSON.parse(text);
+  }
   return {};
 }
 
@@ -237,6 +297,12 @@ function backend() {
  * @param {any} res
  */
 export async function handleCallable(name, req, res) {
+  setCorsHeaders(res, req);
+  // Preflight: the browser sends OPTIONS before POST when Authorization is present.
+  if (req.method && req.method.toUpperCase() === 'OPTIONS') {
+    res.status(204).end();
+    return;
+  }
   if (req.method && req.method.toUpperCase() !== 'POST') {
     res.status(405).json({ code: 'method-not-allowed', message: 'Use POST for this endpoint.' });
     return;
@@ -245,7 +311,13 @@ export async function handleCallable(name, req, res) {
   let body;
   try {
     body = readBody(req);
-  } catch {
+  } catch (error) {
+    const isInvalidJson = String(error?.message || '').includes('invalid-json') || error instanceof SyntaxError;
+    if (isInvalidJson) {
+      res.status(400).json({ code: 'invalid-json', message: 'The request body was not valid JSON.' });
+      return;
+    }
+    console.error(`[psd-gaming] ${name} failed to read body`, error);
     res.status(400).json({ code: 'invalid-json', message: 'The request body was not valid JSON.' });
     return;
   }
@@ -254,7 +326,16 @@ export async function handleCallable(name, req, res) {
   let token = {};
   try {
     ({ uid, token } = await authFromRequest(req));
-  } catch {
+  } catch (error) {
+    const msg = String(error?.message || '');
+    if (msg.includes('Backend not configured')) {
+      console.error(`[psd-gaming] ${name} backend misconfigured`, error);
+      res.status(500).json({
+        code: 'backend-misconfigured',
+        message: 'The online backend is not configured on this deployment. Set FIREBASE_SERVICE_ACCOUNT or the Workload Identity Federation variables in Vercel and redeploy. See docs/online-play.md.',
+      });
+      return;
+    }
     res.status(401).json({
       code: 'unauthenticated',
       message: 'Sign in (or continue as a guest) before using online features.',
@@ -262,8 +343,19 @@ export async function handleCallable(name, req, res) {
     return;
   }
 
+  let handlers;
   try {
-    const handlers = backend();
+    handlers = backend();
+  } catch (error) {
+    console.error(`[psd-gaming] ${name} could not build backend`, error);
+    res.status(500).json({
+      code: 'backend-misconfigured',
+      message: error?.message || 'The online backend is not configured correctly.',
+    });
+    return;
+  }
+
+  try {
     const handler = handlers[name];
     if (typeof handler !== 'function') {
       res.status(500).json({ code: 'unknown-handler', message: `Unknown handler ${name}.` });
@@ -281,6 +373,8 @@ export async function handleCallable(name, req, res) {
     const code = String(error?.code || 'internal');
     const details = error && typeof error.details === 'object' ? error.details : {};
     const retryAfterMs = Number(details.retryAfterMs) || 0;
+    // Ensure CORS headers are present even on errors.
+    setCorsHeaders(res, req);
     res.status(statusNumber(statusForCode(code))).json({
       code,
       message: error?.message || 'The online service hit an unexpected problem. Please try again.',
@@ -299,18 +393,39 @@ export async function handleCallable(name, req, res) {
  * @param {any} res
  */
 export async function handleCleanup(req, res) {
+  setCorsHeaders(res, req);
+  if (req.method && req.method.toUpperCase() === 'OPTIONS') {
+    res.status(204).end();
+    return;
+  }
+  // Vercel Cron sends GET, manual callers may POST; both are allowed.
   const secret = process.env.CRON_SECRET;
   if (secret) {
-    const header = String(req.headers?.authorization || '');
-    const query = String(req.query?.secret || '');
-    const ok = header === `Bearer ${secret}` || query === secret;
+    const header = String(req.headers?.authorization || req.headers?.Authorization || '');
+    const query = String(req.query?.secret || req.url?.split('secret=')[1] || '');
+    // Support ?secret=xxx even when req.query is not parsed (plain Node).
+    let querySecret = query;
+    try {
+      const url = new URL(req.url || '/', 'http://localhost');
+      querySecret = url.searchParams.get('secret') || querySecret;
+    } catch {}
+    // Also allow header without Bearer prefix for cron simplicity.
+    const ok = header === `Bearer ${secret}` || header === secret || querySecret === secret;
     if (!ok) {
       res.status(401).json({ code: 'unauthenticated', message: 'A valid cron secret is required.' });
       return;
     }
   }
+  let backend;
   try {
-    const store = createFirestoreStore(resolveBackend().db, {
+    backend = resolveBackend();
+  } catch (error) {
+    console.error('[psd-gaming] cleanup backend misconfigured', error);
+    res.status(500).json({ code: 'backend-misconfigured', message: error?.message || 'Backend not configured.' });
+    return;
+  }
+  try {
+    const store = createFirestoreStore(backend.db, {
       now: () => Date.now(),
       toTimestamp: (ms) => Timestamp.fromMillis(ms),
     });
